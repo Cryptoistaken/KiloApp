@@ -480,7 +480,6 @@ private fun MineRow(
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = n.flag, fontSize = 20.sp, modifier = Modifier.width(28.dp))
             Column(Modifier.weight(1f)) {
                 Text(
