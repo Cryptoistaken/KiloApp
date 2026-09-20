@@ -13,6 +13,7 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
@@ -65,6 +66,7 @@ class SmsMenuOverlay(
     private val handler = Handler(Looper.getMainLooper())
     private val tickHandler = Handler(Looper.getMainLooper())
     private var rootView: FrameLayout? = null
+    private var panelView: LinearLayout? = null
     private var scrollView: ScrollView? = null
     private var listView: LinearLayout? = null
     private var emptyView: ImageView? = null
@@ -76,6 +78,16 @@ class SmsMenuOverlay(
     private var generating = false
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
+
+    // While the range field is focused the IME covers the lower part of the
+    // overlay — push the panel up so its bottom stays above the keyboard.
+    private val globalLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+        val root = rootView ?: return@OnGlobalLayoutListener
+        if (!root.isAttachedToWindow) return@OnGlobalLayoutListener
+        val search = searchInput ?: return@OnGlobalLayoutListener
+        if (!search.hasFocus()) return@OnGlobalLayoutListener
+        repositionPanelAboveIme(root)
+    }
 
     fun show(bubbleCenterX: Int, bubbleCenterY: Int, bubbleSizePx: Int) {
         if (isShowing()) return
@@ -108,6 +120,7 @@ class SmsMenuOverlay(
         listView = list
         scrollView = scroll
         emptyView = empty
+        panelView = panel
         searchInput = input
         genWrap = genW
         genLabel = genT
@@ -131,11 +144,24 @@ class SmsMenuOverlay(
                 false
             }
         }
+        // Tapping the field focuses it and raises the keyboard; it stays
+        // focused until Enter submits, a tap elsewhere in the panel unfocuses
+        // it, or the popup closes.
+        input.setOnClickListener {
+            input.requestFocus()
+            showKeyboard(input)
+        }
+        input.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) showKeyboard(input)
+        }
         genT.setOnClickListener { submitRange() }
         close.setOnClickListener {
             input.setText("")
             hide()
         }
+        // Taps on panel background (not the field, Gen, X, or a row) drop
+        // field focus and hide the keyboard; the popup stays open.
+        panel.setOnClickListener { clearFieldFocus() }
 
         val bounds = contentBounds()
         val panelWidth = minOf(
@@ -192,10 +218,14 @@ class SmsMenuOverlay(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             overlayType(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            0,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
+        // Shrink the window above the keyboard so the panel can be pushed
+        // clear of the IME while the range field is focused (same as the
+        // proxy popup — a FLAG_NOT_FOCUSABLE window can never take input).
+        params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
 
         root.alpha = 0f
         try {
@@ -205,6 +235,8 @@ class SmsMenuOverlay(
             listView = null
             return
         }
+
+        root.viewTreeObserver.addOnGlobalLayoutListener(globalLayoutListener)
 
         root.setOnClickListener { hide() }
         panel.isClickable = true
@@ -283,9 +315,27 @@ class SmsMenuOverlay(
     private fun hideKeyboard() {
         try {
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            rootView?.let { imm.hideSoftInputFromWindow(it.windowToken, 0) }
+            val token = searchInput?.windowToken ?: rootView?.windowToken
+            if (token != null) imm.hideSoftInputFromWindow(token, 0)
         } catch (_: Exception) {
         }
+    }
+
+    private fun showKeyboard(input: EditText) {
+        try {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Unfocus the range field + hide the keyboard; popup stays open. */
+    private fun clearFieldFocus() {
+        try {
+            searchInput?.clearFocus()
+        } catch (_: Exception) {
+        }
+        hideKeyboard()
     }
 
     private val tickRunnable = object : Runnable {
@@ -358,13 +408,20 @@ class SmsMenuOverlay(
         tickHandler.removeCallbacksAndMessages(null)
         generating = false
         val root = rootView
-        if (root != null && root.isAttachedToWindow) {
+        if (root != null) {
             try {
-                windowManager.removeView(root)
+                root.viewTreeObserver.removeOnGlobalLayoutListener(globalLayoutListener)
             } catch (_: Exception) {
+            }
+            if (root.isAttachedToWindow) {
+                try {
+                    windowManager.removeView(root)
+                } catch (_: Exception) {
+                }
             }
         }
         rootView = null
+        panelView = null
         scrollView = null
         listView = null
         emptyView = null
@@ -422,6 +479,28 @@ class SmsMenuOverlay(
         val b = displayBounds()
         val i = systemBarInsets()
         return Rect(i.left, i.top, b.width() - i.right, b.height() - i.bottom)
+    }
+
+    /**
+     * When the range field is focused the IME covers the lower part of the
+     * overlay (SOFT_INPUT_ADJUST_RESIZE shrinks the window), so push the panel
+     * up so its bottom stays above the top of the keyboard — same as the
+     * proxy popup.
+     */
+    private fun repositionPanelAboveIme(root: View) {
+        val panel = panelView ?: return
+        val displayH = displayBounds().height()
+        val imeHeight = (displayH - root.height).coerceAtLeast(0)
+        if (imeHeight <= 0) return
+        val bounds = contentBounds()
+        val panelBottom = panel.top + panel.height
+        val limitBottom = displayH - imeHeight
+        if (panelBottom > limitBottom) {
+            val delta = panelBottom - limitBottom
+            val lp = panel.layoutParams as? FrameLayout.LayoutParams ?: return
+            lp.topMargin = (lp.topMargin - delta).coerceAtLeast(bounds.top)
+            panel.requestLayout()
+        }
     }
 
     private fun overlayType(): Int =
