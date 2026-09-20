@@ -3,6 +3,8 @@ package net.typeblog.socks.util
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -54,6 +56,12 @@ object SmsNotify {
             .build()
         manager(context)?.notify(notifId, notification)
         buzz(context)
+        try {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("SMS code", code))
+        } catch (_: Exception) {
+            // Copy buttons on the notification remain as fallback.
+        }
         SmsLog.log(context, "OTP", "shown $code for $display")
     }
 
