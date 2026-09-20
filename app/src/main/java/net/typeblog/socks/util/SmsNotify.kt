@@ -6,6 +6,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
 import net.typeblog.socks.MainActivity
 import net.typeblog.socks.R
@@ -35,8 +38,7 @@ object SmsNotify {
         )
     }
 
-    fun showCode(context: Context, display: String, code: String, message: String) {
-        if (code.isEmpty()) return
+    fun showCode(context: Context, display: String, code: String, message: String) {        if (code.isEmpty()) return
         ensureChannel(context)
         val notifId = (display + code).hashCode()
         val copyIntent = Intent(context, SmsCopyReceiver::class.java).apply {
@@ -66,6 +68,39 @@ object SmsNotify {
             .addAction(0, "Copy $code", copyPending)
             .build()
         manager(context)?.notify(notifId, notification)
+        buzz(context)
+    }
+
+    /** Short tick for arrivals and copies (OTP shown, number copied). */
+    fun buzz(context: Context) {
+        vibrate(context, longArrayOf(0, 60), intArrayOf(0, VibrationEffect.DEFAULT_AMPLITUDE))
+    }
+
+    /** Double tick for failures (provision returned nothing). */
+    fun buzzFail(context: Context) {
+        vibrate(
+            context, longArrayOf(0, 80, 60, 80),
+            intArrayOf(0, VibrationEffect.DEFAULT_AMPLITUDE, 0, VibrationEffect.DEFAULT_AMPLITUDE)
+        )
+    }
+
+    private fun vibrate(context: Context, timings: LongArray, amplitudes: IntArray) {
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vm?.defaultVibrator?.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+            } else {
+                @Suppress("DEPRECATION")
+                val v = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                if (Build.VERSION.SDK_INT >= 26) {
+                    v?.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                } else {
+                    @Suppress("DEPRECATION") v?.vibrate(timings.sum())
+                }
+            }
+        } catch (_: Exception) {
+            // No vibrator: haptics are best-effort.
+        }
     }
 
     fun cancel(context: Context, notifId: Int) {

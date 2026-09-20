@@ -469,6 +469,7 @@ object SmsWatcher {
             busy = false
             if (g == null || g.full.isEmpty()) {
                 fail("No numbers available, try again")
+                app?.let { SmsNotify.buzzFail(it) }
                 onDone(null)
                 return@launch
             }

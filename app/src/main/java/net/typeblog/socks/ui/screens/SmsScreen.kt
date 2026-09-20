@@ -57,6 +57,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -116,6 +118,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val prefs = remember { PreferenceManager.getDefaultSharedPreferences(context) }
     val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
 
     var page by remember { mutableStateOf(0) } // 0 main, 1 nums, 2 feed, 3 stats
     var rangeText by remember { mutableStateOf(prefs.getString(RANGE_KEY, "") ?: "") }
@@ -155,6 +158,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     fun tapCopy(text: String) {
         if (text.isEmpty()) return
         clipboard.setText(AnnotatedString(text))
+        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
         copied = text + "Copied"
     }
 

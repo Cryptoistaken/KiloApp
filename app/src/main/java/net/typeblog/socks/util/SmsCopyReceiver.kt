@@ -19,6 +19,7 @@ class SmsCopyReceiver : BroadcastReceiver() {
         try {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             clipboard?.setPrimaryClip(ClipData.newPlainText("SMS code", code))
+            SmsNotify.buzz(context)
         } catch (e: Exception) {
             // Background clipboard access may be blocked; the code stays
             // visible in the notification itself as fallback.
