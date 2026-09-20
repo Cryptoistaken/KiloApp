@@ -290,13 +290,20 @@ class SmsMenuOverlay(
     /** Enter / Gen: blur + close the keyboard, lock ~1.2s, generate once. */
     private fun submitRange() {
         if (generating || !isShowing()) return
-        val digits = searchInput?.text?.toString()?.filter { it.isDigit() } ?: ""
+        val raw = searchInput?.text?.toString() ?: ""
+        // Full typed/pasted text (e.g. 23762XXX) stays visible in the field
+        // like the HTML mockup — only digits feed the provision prefix.
+        val digits = raw.filter { it.isDigit() }
         if (digits.isEmpty()) return
         generating = true
         hideKeyboard()
         searchInput?.clearFocus()
         genLabel?.alpha = 0f
         genSpin?.visibility = View.VISIBLE
+        // Provisioning is async (network): the number lands in SmsWatcher.mine
+        // AFTER onGenerate returns, so renderLive() here would paint too
+        // early. Watch for the fresh entry instead (bounded, self-stopping).
+        val t0 = java.lang.System.currentTimeMillis()
         handler.postDelayed({
             try {
                 onGenerate(digits)
@@ -307,7 +314,7 @@ class SmsMenuOverlay(
             genSpin?.visibility = View.GONE
             if (isShowing()) {
                 renderLive()
-                startTick()
+                watchForFreshNumber(t0)
             }
         }, 1200)
     }
@@ -354,6 +361,32 @@ class SmsMenuOverlay(
         if (SmsWatcher.hasWaiting()) {
             tickHandler.postDelayed(tickRunnable, 1000)
         }
+    }
+
+    // Re-render until the just-provisioned number lands in mine (or 30s
+    // pass): the gateway call resolves after onGenerate returns, so a single
+    // render would miss it. Once it lands, startTick() takes over the live
+    // mm:ss + code updates.
+    private val watchRunnable = object : Runnable {
+        var t0 = 0L
+        var left = 0
+        override fun run() {
+            if (!isShowing() || left <= 0) return
+            left--
+            renderLive()
+            if (SmsWatcher.mine.any { it.born >= t0 }) {
+                startTick()
+            } else {
+                tickHandler.postDelayed(this, 1000)
+            }
+        }
+    }
+
+    private fun watchForFreshNumber(t0: Long) {
+        tickHandler.removeCallbacks(watchRunnable)
+        watchRunnable.t0 = t0
+        watchRunnable.left = 30
+        tickHandler.postDelayed(watchRunnable, 1000)
     }
 
     private fun renderLive() {
