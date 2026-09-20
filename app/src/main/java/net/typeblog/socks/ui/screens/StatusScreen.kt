@@ -41,7 +41,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -319,8 +318,7 @@ fun StatusScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
-        val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
-        val logoSrc = if (isDarkTheme) R.drawable.logo_dark else R.drawable.logo_light
+        val logoSrc = R.drawable.app_logo
 
         Row(
             modifier = Modifier
