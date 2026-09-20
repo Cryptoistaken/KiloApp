@@ -1046,7 +1046,11 @@ class FloatingControlService : Service() {
                     } ?: v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(120).start()
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    if (abs(event.rawX - initialRawX) > touchSlop || abs(event.rawY - initialRawY) > touchSlop) {
+                    // While the circle menu is open the trigger is its anchor:
+                    // lock dragging so the hamburger can never detach from its
+                    // items. The tap on ACTION_UP still toggles (closes).
+                    val menuOpen = isCircleStyle() && circleMenu?.isShowing() == true
+                    if (!menuOpen && (abs(event.rawX - initialRawX) > touchSlop || abs(event.rawY - initialRawY) > touchSlop)) {
                         dragging = true
                         longPressHandler.removeCallbacks(longPressRunnable)
                     }
@@ -1295,6 +1299,13 @@ class FloatingControlService : Service() {
     }
 
     private fun openBubbleMenu() {
+        // Long-press while the menu is already open keeps it as-is (no
+        // re-show flicker) — and must not strand longPressFired=true, which
+        // would swallow the next tap on the hamburger.
+        if (isCircleStyle() && circleMenu?.isShowing() == true) {
+            longPressFired = false
+            return
+        }
         longPressFired = true
         bubbleView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         if (isCircleStyle()) {
@@ -1305,6 +1316,10 @@ class FloatingControlService : Service() {
     }
 
     private fun showCircleMenu() {
+        // Never re-show over an open menu: CircleBubbleMenu.show() tears the
+        // overlay down first, which would visibly detach the trigger from
+        // its items. Tap toggles via toggleCircleMenu(); long-press no-ops.
+        if (circleMenu?.isShowing() == true) return
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         // HTML lock-line under the Proxy bubble: red while connecting,
         // green once protected (flag + country when known).
@@ -1366,21 +1381,44 @@ class FloatingControlService : Service() {
             bubbleView?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         } catch (_: Exception) {
         }
-        if (circleMenu?.isShowing() == true) circleMenu?.hide() else showCircleMenu()
+        // Swap the glyph immediately on EVERY tap (open AND close) so the
+        // trigger never lags the menu — the close path must not wait for
+        // the item fly-home animation to finish.
+        if (circleMenu?.isShowing() == true) {
+            setCircleGlyph(open = false)
+            circleMenu?.hide()
+        } else {
+            showCircleMenu()
+        }
     }
 
     // HTML trigger swap: Menu glyph normally, X while the menu is open.
-    // Exact mockup: 200ms opacity + blur(10px)->blur(0) swap, with the whole-
-    // trigger blur held ~1s per tap. The blur lands on the whole trigger
-    // button (like the mockup's filtered motion.span), not just the glyph —
-    // API 31+; older devices keep the crossfade.
-    private fun setCircleGlyph() {
+    // Exact mockup: 200ms opacity + blur(10px)->blur(0) swap on the whole
+    // trigger button, on EVERY open and close tap — API 31+; older devices
+    // keep the crossfade. Drawable + tag update synchronously (never inside
+    // an animator end-action) so a remove/add or a fast double-tap can never
+    // strand the wrong glyph; the 200ms fade is purely cosmetic.
+    private var circleGlyphGen = 0
+    private fun setCircleGlyph(open: Boolean? = null) {
         if (!isCircleStyle()) return
         try {
             val iv = iconView ?: return
             val trigger = bubbleVisualView
-            val target = if (circleMenu?.isShowing() == true) R.drawable.ic_close_x else R.drawable.ic_menu_burger
-            if (iv.tag == target) return
+            val showX = open ?: (circleMenu?.isShowing() == true)
+            val target = if (showX) R.drawable.ic_close_x else R.drawable.ic_menu_burger
+            if (iv.tag == target && iv.visibility == View.VISIBLE) return
+            circleGlyphGen++
+            val gen = circleGlyphGen
+            try {
+                iv.animate().cancel()
+            } catch (_: Exception) {
+            }
+            iv.visibility = View.VISIBLE
+            progressBar?.visibility = View.GONE
+            iv.setImageResource(target)
+            iv.setColorFilter(Color.WHITE)
+            iv.tag = target
+            iv.alpha = 0f
             val blurOn = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
             try {
                 if (blurOn) {
@@ -1390,22 +1428,10 @@ class FloatingControlService : Service() {
                 }
             } catch (_: Exception) {
             }
-            iv.animate().alpha(0f).setDuration(200).withEndAction {
+            iv.animate().alpha(1f).setDuration(200).withEndAction {
+                if (gen != circleGlyphGen) return@withEndAction
                 try {
-                    iv.visibility = View.VISIBLE
-                    progressBar?.visibility = View.GONE
-                    iv.setImageResource(target)
-                    iv.setColorFilter(Color.WHITE)
-                    iv.tag = target
-                    iv.animate().alpha(1f).setDuration(200).withEndAction {
-                        // Hold the whole-trigger blur ~1s per tap, then clear.
-                        pollHandler.postDelayed({
-                            try {
-                                if (blurOn) trigger?.setRenderEffect(null)
-                            } catch (_: Exception) {
-                            }
-                        }, 600)
-                    }.start()
+                    if (blurOn) trigger?.setRenderEffect(null)
                 } catch (_: Exception) {
                 }
             }.start()
@@ -1841,11 +1867,21 @@ class FloatingControlService : Service() {
 
         when (state) {
             BubbleState.CONNECTING -> {
-                iconView?.visibility = View.GONE
-                progressBar?.visibility = View.VISIBLE
-                progressBar?.indeterminateDrawable?.mutate()?.setTint(Color.WHITE)
-                timerView?.visibility = View.GONE
-                stopTimer()
+                if (isCircleStyle()) {
+                    // Circle trigger keeps its Menu/X glyph while connecting —
+                    // VPN state lives on the Proxy item's lock, like the HTML
+                    // mockup. Never hide the glyph for the spinner here: that
+                    // stomped the X while the menu was open.
+                    setCircleGlyph()
+                    timerView?.visibility = View.GONE
+                    stopTimer()
+                } else {
+                    iconView?.visibility = View.GONE
+                    progressBar?.visibility = View.VISIBLE
+                    progressBar?.indeterminateDrawable?.mutate()?.setTint(Color.WHITE)
+                    timerView?.visibility = View.GONE
+                    stopTimer()
+                }
                 startBreathing(circle)
             }
             BubbleState.CONNECTED -> {
