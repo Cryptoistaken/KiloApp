@@ -18,13 +18,14 @@ import (
 )
 
 var (
-	cacheMu    sync.Mutex
-	feedCache  []FeedHit
-	otpCache   []OtpHit
-	lastFeedAt int64
-	lastOtpAt  int64
-	reqTotal   int64
-	reqByRoute = map[string]int64{}
+	cacheMu     sync.Mutex
+	feedCache   []FeedHit
+	otpCache    []OtpHit
+	injectCache []OtpHit // test-injected SMS; merged into otpCache on every refresh
+	lastFeedAt  int64
+	lastOtpAt   int64
+	reqTotal    int64
+	reqByRoute  = map[string]int64{}
 )
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -112,13 +113,22 @@ func refreshOtps() {
 			kept = append(kept, o)
 		}
 	}
+	cacheMu.Lock()
+	now := time.Now().UnixMilli()
+	var injKept []OtpHit
+	for _, o := range injectCache {
+		if now-o.Time < 10*60*1000 {
+			injKept = append(injKept, o)
+			kept = append(kept, o)
+		}
+	}
+	injectCache = injKept
 	sort.Slice(kept, func(i, j int) bool { return kept[i].Time > kept[j].Time })
 	if len(kept) > 500 {
 		kept = kept[:500]
 	}
-	cacheMu.Lock()
 	otpCache = kept
-	lastOtpAt = time.Now().UnixMilli()
+	lastOtpAt = now
 	cacheMu.Unlock()
 	pushFreshOtps(kept)
 }
@@ -387,6 +397,44 @@ func handleOtp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "code": latest, "msgs": msgs, "now": time.Now().UnixMilli()})
 }
 
+// handleInject is POST /v1/admin/inject — test-only fake SMS delivery.
+// The hit lives in injectCache (~10 min, survives refreshOtps) and is
+// pushed to SSE subscribers, so the app shows it like a real OTP.
+func handleInject(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Number string `json:"number"`
+		Code   string `json:"code"`
+		Text   string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": "bad json"})
+		return
+	}
+	number := digitsOnly(strings.TrimPrefix(strings.TrimSpace(body.Number), "+"))
+	if number == "" {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": "number required"})
+		return
+	}
+	text := strings.TrimSpace(body.Text)
+	code := strings.TrimSpace(body.Code)
+	if text == "" && code != "" {
+		text = code + " is your Facebook confirmation code"
+	}
+	if code == "" {
+		_, _, code = Classify(text)
+	}
+	hit := OtpHit{Number: number, Message: text, Time: time.Now().UnixMilli(), Provider: "inject"}
+	cacheMu.Lock()
+	injectCache = append(injectCache, hit)
+	otpCache = append([]OtpHit{hit}, otpCache...)
+	if len(otpCache) > 500 {
+		otpCache = otpCache[:500]
+	}
+	cacheMu.Unlock()
+	pushFreshOtps([]OtpHit{hit})
+	writeJSON(w, 200, map[string]any{"ok": true, "number": number, "code": code})
+}
+
 func handleMeta(w http.ResponseWriter, r *http.Request) {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
@@ -560,6 +608,13 @@ func main() {
 			return
 		}
 		handleStats(w, r)
+	}, true))
+	mux.HandleFunc("/v1/admin/inject", wrap(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeJSON(w, 405, map[string]any{"ok": false, "error": "method not allowed"})
+			return
+		}
+		handleInject(w, r)
 	}, true))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"ok": false, "error": "unknown route"})

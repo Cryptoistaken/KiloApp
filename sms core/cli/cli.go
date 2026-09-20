@@ -137,9 +137,20 @@ func main() {
 		}
 		_, out := call("GET", "/v1/otp?number="+args[0], nil, false)
 		dump(out)
+	case "inject":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: kilocli inject <full-number> <code> [text...]")
+			os.Exit(1)
+		}
+		body := map[string]any{"number": args[0], "code": args[1]}
+		if len(args) > 2 {
+			body["text"] = strings.Join(args[2:], " ")
+		}
+		_, out := call("POST", "/v1/admin/inject", body, true)
+		dump(out)
 	default:
 		fmt.Printf("usage: kilocli <cmd> [args]  (KILO_GATEWAY=%s)\n", base)
-		fmt.Println("  health | pool | enable <id...> | stats | feed [n] | meta | get <range> | otp <number>")
+		fmt.Println("  health | pool | enable <id...> | stats | feed [n] | meta | get <range> | otp <number> | inject <number> <code> [text]")
 		if cmd != "" && cmd != "--help" && cmd != "-h" {
 			os.Exit(1)
 		}
