@@ -27,8 +27,10 @@ object UpdateChecker {
         val body: String
     )
 
-    private const val UPDATE_URL =
-        "https://api.github.com/repos/Cryptoistaken/KiloApp/releases/latest"
+    // Release feed owner/repo comes from BuildConfig (set per-app in
+    // build.gradle), so no code edit is needed when forking.
+    private val UPDATE_URL =
+        "https://api.github.com/repos/${BuildConfig.UPDATE_REPO}/releases/latest"
     private const val USER_AGENT = "KiloApp-Updater"
     private const val TIMEOUT_MILLIS = 8000
     private const val DOWNLOAD_CONNECT_TIMEOUT = 30_000

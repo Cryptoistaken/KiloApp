@@ -29,6 +29,10 @@ android {
 
     defaultConfig {
         applicationId "com.kiloapp.app"
+        // Per-app identity baked at build time: the self-updater reads this
+        // from BuildConfig, so forks never need a code edit to point at
+        // their own release feed.
+        buildConfigField "String", "UPDATE_REPO", '"Cryptoistaken/KiloApp"'
         minSdk 21
         targetSdk 36
         versionCode baseVersionCode
