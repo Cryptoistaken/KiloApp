@@ -27,6 +27,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -46,11 +49,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -213,95 +218,92 @@ fun BubbleSettingsScreen(
                 title = "Circle"
             )
 
-            // Circle-menu alignment: gated on the Circle bubble. Each option
-            // carries a live mini preview of that exact arrangement.
-            Text(
-                "Menu alignment",
-                style = MaterialTheme.typography.titleSmall,
-                color = if (circleActive) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
-            )
-            val alignOptions = listOf(
-                CIRCLE_SMALL to "Small circle",
-                CIRCLE_UP to "Up",
-                CIRCLE_DOWN to "Down",
-                CIRCLE_RIGHT to "Right",
-                CIRCLE_LEFT to "Left"
-            )
-            alignOptions.forEach { (value, label) ->
-                val selected = circleAlign == value
-                Surface(
-                    modifier = Modifier.fillMaxWidth().clickable(enabled = circleActive) {
-                        prefs.edit().putString(PREF_CIRCLE_ALIGN, value).apply()
-                        circleAlign = value
+            // Circle menu options: only shown while the Circle bubble is
+            // selected. One live preview below animates between alignments
+            // and sizes; the slider is the tick-strip from the HTML mockup.
+            if (circleActive) {
+                Text(
+                    "Menu alignment",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+                )
+                val alignOptions = listOf(
+                    CIRCLE_SMALL to "Small circle",
+                    CIRCLE_UP to "Up",
+                    CIRCLE_DOWN to "Down",
+                    CIRCLE_RIGHT to "Right",
+                    CIRCLE_LEFT to "Left"
+                )
+                alignOptions.forEach { (value, label) ->
+                    val selected = circleAlign == value
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            prefs.edit().putString(PREF_CIRCLE_ALIGN, value).apply()
+                            circleAlign = value
+                        },
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow,
+                        tonalElevation = if (selected) 2.dp else 0.dp
+                    ) {
+                        Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = selected,
+                                onClick = {
+                                    prefs.edit().putString(PREF_CIRCLE_ALIGN, value).apply()
+                                    circleAlign = value
+                                }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                Text(
+                    "Button size",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+                )
+                TickSlider(
+                    value = circleSize,
+                    onChange = {
+                        circleSize = it
+                        prefs.edit().putInt(PREF_CIRCLE_SIZE, it).apply()
                     },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     shape = RoundedCornerShape(16.dp),
-                    color = if (selected && circleActive) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = if (selected && circleActive) 2.dp else 0.dp
+                    color = MaterialTheme.colorScheme.surfaceContainerLow
                 ) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = selected,
-                            onClick = if (circleActive) ({
-                                prefs.edit().putString(PREF_CIRCLE_ALIGN, value).apply()
-                                circleAlign = value
-                            }) else null,
-                            enabled = circleActive
+                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                        CircleAlignPreview(
+                            align = circleAlign,
+                            buttonDp = (circleSize * 0.45f).roundToInt().coerceAtLeast(16),
+                            boxW = 220,
+                            boxH = 150
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Medium,
-                            color = if (circleActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                            modifier = Modifier.weight(1f)
-                        )
-                        CircleAlignPreview(align = value, buttonDp = 15, boxW = 116, boxH = 76, dimmed = !circleActive)
                     }
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(16.dp))
             }
-
-            // Button size slider + full-size live preview of the selection.
-            Text(
-                "Button size (${circleSize}dp)",
-                style = MaterialTheme.typography.titleSmall,
-                color = if (circleActive) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
-            )
-            Slider(
-                value = circleSize.toFloat(),
-                onValueChange = {
-                    circleSize = it.roundToInt()
-                    prefs.edit().putInt(PREF_CIRCLE_SIZE, it.roundToInt()).apply()
-                },
-                valueRange = CIRCLE_SIZE_MIN.toFloat()..CIRCLE_SIZE_MAX.toFloat(),
-                steps = (CIRCLE_SIZE_MAX - CIRCLE_SIZE_MIN) - 1,
-                enabled = circleActive,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Surface(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow
-            ) {
-                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    CircleAlignPreview(
-                        align = circleAlign,
-                        buttonDp = (circleSize * 0.45f).roundToInt().coerceAtLeast(16),
-                        boxW = 220,
-                        boxH = 150,
-                        dimmed = !circleActive
-                    )
-                }
-            }
-            Spacer(Modifier.height(16.dp))
         }
     }
 }
 
 @Composable
-private fun SelectableStyleRow(    selected: Boolean,
+private fun SelectableStyleRow(
+    selected: Boolean,
     onClick: () -> Unit,
     icon: androidx.compose.ui.graphics.painter.Painter,
     title: String
@@ -322,39 +324,90 @@ private fun SelectableStyleRow(    selected: Boolean,
 }
 
 /**
+ * Tick-strip slider from the HTML mockup: tick bars light up to the value
+ * and an invisible slider on top captures the scrub. No buttons.
+ */
+@Composable
+private fun TickSlider(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val ticks = 25
+    val frac = (value - CIRCLE_SIZE_MIN).toFloat() / (CIRCLE_SIZE_MAX - CIRCLE_SIZE_MIN)
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "${value}dp",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.width(52.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(modifier = Modifier.weight(1f).height(30.dp)) {
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                repeat(ticks) { k ->
+                    val on = k.toFloat() / (ticks - 1) <= frac
+                    Box(
+                        modifier = Modifier
+                            .width(2.dp)
+                            .height(if (on) 20.dp else 10.dp)
+                            .clip(CircleShape)
+                            .background(if (on) Color.White else Color.White.copy(alpha = 0.18f))
+                    )
+                }
+            }
+            Slider(
+                value = value.toFloat(),
+                onValueChange = { onChange(it.roundToInt()) },
+                valueRange = CIRCLE_SIZE_MIN.toFloat()..CIRCLE_SIZE_MAX.toFloat(),
+                steps = (CIRCLE_SIZE_MAX - CIRCLE_SIZE_MIN) - 1,
+                modifier = Modifier.fillMaxSize().alpha(0f)
+            )
+        }
+    }
+}
+
+/**
  * Live diagram of the floating circle menu: center bubble + the 4 option
  * bubbles (Proxy/SMS/Sheet/Name) in the exact arrangement [align] produces
- * on screen. Same math as [net.typeblog.socks.CircleBubbleMenu], scaled to
- * the preview box. [dimmed] fades it when the Circle style isn't selected.
+ * on screen. Same math as [net.typeblog.socks.CircleBubbleMenu]. Item
+ * positions and sizes animate, so switching alignment or scrubbing the
+ * size plays the transition live.
  */
 @Composable
 private fun CircleAlignPreview(
     align: String,
     buttonDp: Int,
     boxW: Int,
-    boxH: Int,
-    dimmed: Boolean
+    boxH: Int
 ) {
-    val gap = buttonDp + 12
-    val off = buttonDp + 14
-    val r = buttonDp * 2 + 24
-    val pts: List<Pair<Int, Int>> = when (align) {
-        CIRCLE_UP -> List(4) { 0 to -(off + it * gap) }
-        CIRCLE_DOWN -> List(4) { 0 to (off + it * gap) }
-        CIRCLE_RIGHT -> List(4) { (off + it * gap) to 0 }
-        CIRCLE_LEFT -> List(4) { (-(off + it * gap)) to 0 }
-        else -> listOf(0 to -r, r to 0, 0 to r, -r to 0)
+    val abtn by animateDpAsState(buttonDp.dp, spring(), label = "btn")
+    val gap = abtn + 12.dp
+    val off = abtn + 14.dp
+    // Tight ring around the anchor: visibly smaller than any line spread.
+    val r = abtn + 28.dp
+    fun pt(i: Int): Pair<Dp, Dp> = when (align) {
+        CIRCLE_UP -> 0.dp to -(off + gap * i)
+        CIRCLE_DOWN -> 0.dp to (off + gap * i)
+        CIRCLE_RIGHT -> (off + gap * i) to 0.dp
+        CIRCLE_LEFT -> (-(off + gap * i)) to 0.dp
+        else -> listOf(0.dp to -r, r to 0.dp, 0.dp to r, -r to 0.dp)[i]
     }
-    val half = buttonDp / 2
-    val minX = minOf(-half, pts.minOf { it.first - half })
-    val maxX = maxOf(half, pts.maxOf { it.first + half })
-    val minY = minOf(-half, pts.minOf { it.second - half })
-    val maxY = maxOf(half, pts.maxOf { it.second + half })
+    val raw = List(4) { pt(it) }
+    val half = abtn / 2
+    val minX = minOf(-half, raw.minOf { it.first - half })
+    val maxX = maxOf(half, raw.maxOf { it.first + half })
+    val minY = minOf(-half, raw.minOf { it.second - half })
+    val maxY = maxOf(half, raw.maxOf { it.second + half })
     // Center the content (anchor + items) inside the box.
-    val cx = boxW / 2 - (minX + maxX) / 2
-    val cy = boxH / 2 - (minY + maxY) / 2
-    val alpha = if (dimmed) 0.35f else 1f
-    val centerDp = (buttonDp * 1.2f).roundToInt().coerceAtLeast(18)
+    val cx = boxW.dp / 2 - (minX + maxX) / 2
+    val cy = boxH.dp / 2 - (minY + maxY) / 2
+    val centerDp = (abtn * 1.2f).coerceAtLeast(18.dp)
     val icons = listOf(
         R.drawable.ic_proton_lock_open_filled_2 to Color(0xFFCC2D4F),
         R.drawable.ic_tab_sms to Color(0xFF18181B),
@@ -362,38 +415,40 @@ private fun CircleAlignPreview(
         R.drawable.ic_name_person to Color(0xFF18181B)
     )
     Box(modifier = Modifier.size(boxW.dp, boxH.dp)) {
-        // Center bubble.
+        // Center bubble: dark orb + menu glyph, like the Circle style.
         Box(
             modifier = Modifier
-                .offset(((cx - centerDp / 2)).dp, ((cy - centerDp / 2)).dp)
-                .size(centerDp.dp)
+                .offset(cx - centerDp / 2, cy - centerDp / 2)
+                .size(centerDp)
                 .clip(CircleShape)
-                .background(Color(0xFF27272A).copy(alpha = alpha)),
+                .background(Color(0xFF27272A)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                painter = painterResource(R.drawable.ic_proton_lock_open_filled_2),
+                painter = painterResource(R.drawable.ic_menu_burger),
                 contentDescription = null,
-                tint = Color(0xFFCC2D4F).copy(alpha = alpha),
-                modifier = Modifier.size((centerDp * 0.45f).roundToInt().dp)
+                tint = Color.White,
+                modifier = Modifier.size(centerDp * 0.45f)
             )
         }
-        // The 4 option bubbles.
-        pts.forEachIndexed { i, (x, y) ->
+        // The 4 option bubbles, animated to their targets.
+        raw.forEachIndexed { i, (tx, ty) ->
+            val ax by animateDpAsState(tx, spring(), label = "x$i")
+            val ay by animateDpAsState(ty, spring(), label = "y$i")
             val (icon, tint) = icons[i]
             Box(
                 modifier = Modifier
-                    .offset((cx + x - half).dp, (cy + y - half).dp)
-                    .size(buttonDp.dp)
+                    .offset(cx + ax - half, cy + ay - half)
+                    .size(abtn)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = alpha)),
+                    .background(Color.White),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     painter = painterResource(icon),
                     contentDescription = null,
-                    tint = tint.copy(alpha = alpha),
-                    modifier = Modifier.size((buttonDp * 0.4f).roundToInt().coerceAtLeast(8).dp)
+                    tint = tint,
+                    modifier = Modifier.size((abtn * 0.4f).coerceAtLeast(8.dp))
                 )
             }
         }
