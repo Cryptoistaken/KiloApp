@@ -278,10 +278,10 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 )
                 is Sheet.Countries -> {
                     val rows = remember(sh.method, countries.size, feed.size) {
-                        countries.mapNotNull { c ->
+                        countries.map { c ->
                             val hits = feed.count { it.method == sh.method && it.range.startsWith(c.prefix) }
-                            if (hits < 5) null else CountryRow(c, hits)
-                        }.sortedByDescending { it.hits }.take(10)
+                            CountryRow(c, hits)
+                        }.sortedByDescending { it.hits }
                     }
                     val label = methodCounts.firstOrNull { it.method == sh.method }?.label ?: sh.method
                     CountrySheet(
