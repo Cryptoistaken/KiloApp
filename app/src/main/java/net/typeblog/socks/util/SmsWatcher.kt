@@ -1,7 +1,11 @@
 package net.typeblog.socks.util
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -10,8 +14,11 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlin.jvm.Volatile
 import net.typeblog.socks.BuildConfig
@@ -496,27 +503,101 @@ object SmsWatcher {
             )
             mine.add(0, n)
             save()
-            app?.let { SmsOtpService.start(it) }
+            app?.let {
+                SmsOtpService.start(it)
+                armHeartbeat(it)
+            }
             onDone(n)
         }
     }
 
     private fun pollOtps() {
         scope.launch {
-            mine.toList().forEach { n ->
-                launch {
-                    if (n.code != null) return@launch
-                    val st = withContext(Dispatchers.IO) { SmsGateway.otp(n.full) } ?: return@launch
-                    val code = st.code?.ifEmpty { null }
-                        ?: st.msgs.lastOrNull { it.first.isNotEmpty() }?.first
-                    if (code.isNullOrEmpty()) return@launch
-                    n.code = code
-                    n.svc = "Facebook"
-                    n.msgs.clear()
-                    st.msgs.forEach { n.msgs.add(SmsMsg(it.first, it.second, n.born)) }
-                    save()
-                    app?.let { SmsNotify.showCode(it, n.display, code, st.msgs.lastOrNull()?.second ?: "") }
+            try {
+                pollOnce()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** One awaitable OTP sweep over all waiting numbers (parallel). */
+    private suspend fun pollOnce() = supervisorScope {
+        mine.toList().map { n ->
+            async {
+                if (n.code != null) return@async
+                val st = withContext(Dispatchers.IO) { SmsGateway.otp(n.full) } ?: return@async
+                val code = st.code?.ifEmpty { null }
+                    ?: st.msgs.lastOrNull { it.first.isNotEmpty() }?.first
+                if (code.isNullOrEmpty()) return@async
+                n.code = code
+                n.svc = "Facebook"
+                n.msgs.clear()
+                st.msgs.forEach { n.msgs.add(SmsMsg(it.first, it.second, n.born)) }
+                save()
+                app?.let { SmsNotify.showCode(it, n.display, code, st.msgs.lastOrNull()?.second ?: "") }
+            }
+        }.awaitAll()
+    }
+
+    fun hasWaiting(): Boolean {
+        val t = System.currentTimeMillis()
+        return mine.any { it.code == null && t - it.born < SMS_EXPIRE_SEC * 1000 }
+    }
+
+    /**
+     * RTC_WAKEUP heartbeat every 30s while numbers wait. Coroutine timers
+     * and sockets can freeze with the process in background (vendor
+     * freezers, Doze); an alarm still wakes the process briefly so at
+     * least the poll runs. Self-chaining: each fire re-arms, stops when
+     * nothing waits. Exact on API 31+ only with user grant, else inexact.
+     */
+    fun armHeartbeat(context: Context) {
+        try {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val pi = heartbeatPending(context)
+            try {
+                am.cancel(pi)
+            } catch (_: Exception) {
+            }
+            if (!hasWaiting()) return
+            val at = System.currentTimeMillis() + 30_000
+            if (Build.VERSION.SDK_INT >= 31) {
+                if (am.canScheduleExactAlarms()) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+                else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            } else if (Build.VERSION.SDK_INT >= 23) {
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            } else {
+                @Suppress("DEPRECATION") am.setExact(AlarmManager.RTC_WAKEUP, at, pi)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun heartbeatPending(context: Context): PendingIntent {
+        val i = Intent(context, SmsAlarmReceiver::class.java).setAction(SmsAlarmReceiver.ACTION_POLL)
+        return PendingIntent.getBroadcast(
+            context, 2001, i,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
+    /** Alarm entry: poll once, re-arm the chain, release the receiver. */
+    fun onHeartbeat(context: Context, finish: () -> Unit) {
+        start(context.applicationContext)
+        if (!hasWaiting()) {
+            finish()
+            return
+        }
+        scope.launch {
+            try {
+                pollOnce()
+            } catch (_: Exception) {
+            } finally {
+                try {
+                    armHeartbeat(context.applicationContext)
+                } catch (_: Exception) {
                 }
+                finish()
             }
         }
     }

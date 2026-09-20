@@ -1,8 +1,14 @@
 package net.typeblog.socks.ui.screens
 
 import android.Manifest
+import android.app.AlarmManager
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -309,6 +315,36 @@ fun SmsScreen(modifier: Modifier = Modifier) {
 private data class MethodCount(val method: String, val label: String, val hits: Int)
 private data class CountryRow(val country: SmsCountry, val hits: Int)
 
+private fun openBackgroundSettings(ctx: Context) {
+    // Battery exemption first (lets the watch run with the app closed),
+    // then the exact-alarm grant (lets the 30s heartbeat fire in Doze).
+    try {
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (pm != null && !pm.isIgnoringBatteryOptimizations(ctx.packageName)) {
+            ctx.startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:${ctx.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            return
+        }
+    } catch (_: Exception) {
+    }
+    try {
+        if (Build.VERSION.SDK_INT >= 31) {
+            val am = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            if (am != null && !am.canScheduleExactAlarms()) {
+                ctx.startActivity(
+                    Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        }
+    } catch (_: Exception) {
+    }
+}
+
 private sealed class Sheet {
     data object Methods : Sheet()
     data class Countries(val method: String) : Sheet()
@@ -335,6 +371,37 @@ private fun SmsTopBar(title: String, onBack: () -> Unit) {
             titleContentColor = MaterialTheme.colorScheme.onSurface
         )
     )
+}
+
+@Composable
+private fun BgWatchBanner(waiting: Boolean, now: Long) {
+    if (!waiting) return
+    val ctx = LocalContext.current
+    val restricted = remember(now) {
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val batteryOk = pm?.isIgnoringBatteryOptimizations(ctx.packageName) != false
+        val alarmOk = if (Build.VERSION.SDK_INT >= 31) {
+            (ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager)?.canScheduleExactAlarms() != false
+        } else true
+        !(batteryOk && alarmOk)
+    }
+    if (!restricted) return
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp)).padding(12.dp)
+    ) {
+        Text(text = "Background SMS may stall", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Allow background running so codes arrive with the app closed.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = { openBackgroundSettings(ctx) }, modifier = Modifier.fillMaxWidth()) {
+            Text("Allow background")
+        }
+    }
 }
 
 @Composable
@@ -409,6 +476,7 @@ private fun MainPage(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
             )
+            BgWatchBanner(mine.any { it.code == null }, now)
             SectionHead("Today analysis", onOpenStats)
             SwipeBox(onRight = onOpenStats, onLeft = onOpenStats, rightLabel = "Open", leftLabel = "Open", padBottom = 0.dp) {
                 StatTiles(total, otpCount, pct, onOpenStats)

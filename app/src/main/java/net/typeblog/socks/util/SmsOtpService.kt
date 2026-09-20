@@ -69,6 +69,7 @@ class SmsOtpService : Service() {
             return START_NOT_STICKY
         }
         SmsWatcher.start(this)
+        SmsWatcher.armHeartbeat(this)
         try {
             goForeground(pendingCount())
         } catch (e: Exception) {
