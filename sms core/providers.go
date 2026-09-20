@@ -299,6 +299,51 @@ type OtpHit struct {
 }
 
 var codeRe = regexp.MustCompile(`\b(\d{4,8})\b`)
+var fbDashRe = regexp.MustCompile(`FB[- ]`)
+var junkSidRe = regexp.MustCompile(`^(SMS|OTHER|UNKNOWN|\d+)$`)
+
+// isJunkSid mirrors the bot's JUNK_SID filter, plus masked "***" services.
+func isJunkSid(sid string) bool {
+	s := strings.ToUpper(strings.TrimSpace(sid))
+	return s == "" || strings.Contains(s, "*") || junkSidRe.MatchString(s)
+}
+
+// DetectSid mirrors detectSid() in the bot: brand from message text.
+func DetectSid(msg string) string {
+	m := strings.ToUpper(msg)
+	switch {
+	case strings.Contains(m, "MESSENGER"):
+		return "MESSENGER"
+	case strings.Contains(m, "FACEBOOK") || fbDashRe.MatchString(m):
+		return "FACEBOOK"
+	case strings.Contains(m, "INSTAGRAM"):
+		return "INSTAGRAM"
+	case strings.Contains(m, "WHATSAPP"):
+		return "WHATSAPP"
+	case strings.Contains(m, "TELEGRAM"):
+		return "TELEGRAM"
+	case strings.Contains(m, "DISCORD"):
+		return "DISCORD"
+	case strings.Contains(m, "TWITTER") || strings.Contains(m, " X "):
+		return "TWITTER"
+	case strings.Contains(m, "TIKTOK"):
+		return "TIKTOK"
+	case strings.Contains(m, "SNAPCHAT"):
+		return "SNAPCHAT"
+	case strings.Contains(m, "GOOGLE") || strings.Contains(m, "GMAIL"):
+		return "GOOGLE"
+	}
+	return "SMS"
+}
+
+// CleanSid replaces junk/masked upstream service names with the
+// message-detected brand, exactly like the working bot.
+func CleanSid(sid, msg string) string {
+	if isJunkSid(sid) {
+		return DetectSid(msg)
+	}
+	return strings.ToUpper(strings.TrimSpace(sid))
+}
 
 // Classify mirrors the bot's classifyOTP: code + forgot/create + FB app tag.
 func Classify(msg string) (app, method, code string) {
@@ -359,7 +404,7 @@ func FetchFeed(prov Provider) []FeedHit {
 				tm = time.Now().UnixMilli()
 			}
 			out = append(out, FeedHit{Message: otp, Range: str(m, "number"),
-				Sid: svc, Time: tm, App: app, Method: method, Provider: prov.ID})
+				Sid: CleanSid(svc, otp), Time: tm, App: app, Method: method, Provider: prov.ID})
 		}
 		return out
 	}
@@ -374,7 +419,7 @@ func FetchFeed(prov Provider) []FeedHit {
 		}
 		app, method, _ := Classify(str(m, "message"))
 		out = append(out, FeedHit{Message: str(m, "message"), Range: str(m, "range"),
-			Sid: str(m, "sid"), Time: toInt64(m["time"]),
+			Sid: CleanSid(str(m, "sid"), str(m, "message")), Time: toInt64(m["time"]),
 			App: app, Method: method, Provider: prov.ID})
 	}
 	return out

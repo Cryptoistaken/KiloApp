@@ -287,7 +287,7 @@ func handleFeed(w http.ResponseWriter, r *http.Request) {
 		if h.App == "" {
 			app, _, _ = Classify(h.Message)
 		}
-		svc := strings.ToUpper(h.Sid)
+		svc := CleanSid(h.Sid, h.Message)
 		if svc == "" {
 			svc = "SMS"
 		}

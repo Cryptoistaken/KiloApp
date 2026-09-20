@@ -71,12 +71,10 @@ import kotlinx.coroutines.delay
 import net.typeblog.socks.R
 import net.typeblog.socks.util.SMS_EXPIRE_SEC
 import net.typeblog.socks.util.SmsCountry
-import net.typeblog.socks.util.SmsGateway
+import net.typeblog.socks.util.SmsMsg
 import net.typeblog.socks.util.SmsNum
 import net.typeblog.socks.util.SmsWatcher
-import net.typeblog.socks.util.smsFlagFor
 import net.typeblog.socks.util.smsIsRangePat
-import net.typeblog.socks.util.smsNameFlagForIso
 import net.typeblog.socks.util.smsTimeAgo
 import java.util.Calendar
 import kotlin.math.roundToInt
@@ -187,7 +185,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (page) {
             0 -> MainPage(
-                now = now, mine = mine, expired = expired, feed = feed,
+                now = now, mine = mine, expired = expired,
                 rangeText = rangeText,
                 onRange = {
                     rangeText = it
@@ -199,7 +197,6 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 onOpenFeed = { page = 2 },
                 onOpenStats = { page = 3 },
                 onOpenMine = { sheet = Sheet.Item(it) },
-                onOpenLive = { sheet = Sheet.Live(it) },
                 onRegen = ::onRegen,
                 onCopy = ::tapCopy,
                 copied = copied,
@@ -224,9 +221,9 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 copied = copied,
             )
             2 -> FeedPage(
-                now = now, feed = feed,
+                now = now, mine = mine, expired = expired,
                 onBack = { page = 0 },
-                onOpen = { sheet = Sheet.Live(it) },
+                onOpen = { sheet = Sheet.Item(it) },
                 onCopy = ::tapCopy,
                 copied = copied,
             )
@@ -259,18 +256,8 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                     },
                 )
                 is Sheet.Item -> ItemSheet(
-                    num = sh.num, live = null, now = now,
+                    num = sh.num, now = now,
                     onCopy = ::tapCopy, copied = copied,
-                    onGet = {},
-                )
-                is Sheet.Live -> ItemSheet(
-                    num = null, live = sh.item, now = now,
-                    onCopy = ::tapCopy, copied = copied,
-                    onGet = {
-                        SmsWatcher.provision(sh.item.range.ifEmpty { "229016XXX" }) { n ->
-                            if (n != null) sheet = Sheet.Item(n)
-                        }
-                    },
                 )
             }
             Spacer(Modifier.height(16.dp))
@@ -282,9 +269,9 @@ private sealed class Sheet {
     data object Countries : Sheet()
     data class Confirm(val country: SmsCountry) : Sheet()
     data class Item(val num: SmsNum) : Sheet()
-    data class Live(val item: SmsGateway.FeedItem) : Sheet()
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SmsTopBar(title: String, onBack: () -> Unit) {
     TopAppBar(
@@ -352,7 +339,6 @@ private fun MainPage(
     now: Long,
     mine: List<SmsNum>,
     expired: List<SmsNum>,
-    feed: List<SmsGateway.FeedItem>,
     rangeText: String,
     onRange: (String) -> Unit,
     onGet: (String) -> Unit,
@@ -361,13 +347,14 @@ private fun MainPage(
     onOpenFeed: () -> Unit,
     onOpenStats: () -> Unit,
     onOpenMine: (SmsNum) -> Unit,
-    onOpenLive: (SmsGateway.FeedItem) -> Unit,
     onRegen: (SmsNum) -> Unit,
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    val otpCount = mine.sumOf { it.msgs.size } + expired.sumOf { it.msgs.size }
-    val total = mine.size + expired.size
+    val all = mine + expired
+    val recent = all.flatMap { n -> n.msgs.map { n to it } }.sortedByDescending { it.second.at }
+    val otpCount = all.sumOf { it.msgs.size }
+    val total = all.size
     val pct = if (total == 0) 0 else (mine.count { it.code != null } + expired.count { it.code != null }) * 100 / total
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         item {
@@ -414,7 +401,7 @@ private fun MainPage(
             }
         }
         item { SectionHead("Live", onOpenFeed) }
-        if (feed.isEmpty()) {
+        if (recent.isEmpty()) {
             item {
                 Text(
                     text = "No OTPs yet",
@@ -424,8 +411,8 @@ private fun MainPage(
                 )
             }
         } else {
-            items(feed.take(3), key = { it.masked + it.at }) { f ->
-                FeedRow(f, now, onOpenLive, onCopy, copied)
+            items(recent.take(3)) { (n, m) ->
+                ReceivedRow(n, m, now, onOpenMine, onCopy, copied)
             }
         }
     }
@@ -497,30 +484,27 @@ private fun MineRow(
 }
 
 @Composable
-private fun FeedRow(
-    f: SmsGateway.FeedItem,
+private fun ReceivedRow(
+    n: SmsNum,
+    m: SmsMsg,
     now: Long,
-    onOpen: (SmsGateway.FeedItem) -> Unit,
+    onOpen: (SmsNum) -> Unit,
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp))
-            .clickable(onClick = { onOpen(f) })
+            .clickable(onClick = { onOpen(n) })
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        svcIcon(f.svc)?.let {
-            Image(
-                painter = painterResource(it),
-                contentDescription = null,
-                modifier = Modifier.size(22.dp).padding(end = 8.dp)
-            )
+        if (n.flag.isNotEmpty()) {
+            Text(text = n.flag, fontSize = 20.sp, modifier = Modifier.width(28.dp))
         }
         Column(Modifier.weight(1f)) {
             Text(
-                text = f.masked,
+                text = n.display,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.bodySmall,
@@ -528,7 +512,7 @@ private fun FeedRow(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "${f.svc} - ${f.appName} - ${smsTimeAgo(f.at, now)}",
+                text = "${n.svc.ifEmpty { n.country }} - ${smsTimeAgo(m.at, now)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -536,12 +520,12 @@ private fun FeedRow(
             )
         }
         Text(
-            text = if (copied == f.code + "Copied" && f.code.isNotEmpty()) "Copied" else f.code,
+            text = if (copied == m.code + "Copied" && m.code.isNotEmpty()) "Copied" else m.code,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.bodySmall,
             color = CodeGreen,
-            modifier = Modifier.clickable(enabled = f.code.isNotEmpty()) { onCopy(f.code) }
+            modifier = Modifier.clickable(enabled = m.code.isNotEmpty()) { onCopy(m.code) }
         )
     }
 }
@@ -637,21 +621,26 @@ private fun NumsPage(
 @Composable
 private fun FeedPage(
     now: Long,
-    feed: List<SmsGateway.FeedItem>,
+    mine: List<SmsNum>,
+    expired: List<SmsNum>,
     onBack: () -> Unit,
-    onOpen: (SmsGateway.FeedItem) -> Unit,
+    onOpen: (SmsNum) -> Unit,
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
+    val received = remember(mine.size, expired.size) {
+        (mine + expired).flatMap { n -> n.msgs.map { n to it } }
+            .sortedByDescending { it.second.at }
+    }
     Column(Modifier.fillMaxSize()) {
         SmsTopBar(title = "Live", onBack = onBack)
         Spacer(Modifier.height(8.dp))
-        if (feed.isEmpty()) {
+        if (received.isEmpty()) {
             Text("No OTPs yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         LazyColumn(Modifier.fillMaxSize()) {
-            items(feed.take(20), key = { it.masked + it.at }) { f ->
-                FeedRow(f, now, onOpen, onCopy, copied)
+            items(received.take(50)) { (n, m) ->
+                ReceivedRow(n, m, now, onOpen, onCopy, copied)
             }
         }
     }
@@ -816,7 +805,6 @@ private fun CountrySheet(countries: List<SmsCountry>, onPick: (SmsCountry) -> Un
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(text = ">", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
             }
             HorizontalDivider()
         }
@@ -838,36 +826,27 @@ private fun ConfirmSheet(country: SmsCountry, busy: Boolean, onGet: () -> Unit) 
 
 @Composable
 private fun ItemSheet(
-    num: SmsNum?,
-    live: SmsGateway.FeedItem?,
+    num: SmsNum,
     now: Long,
     onCopy: (String) -> Unit,
     copied: String?,
-    onGet: () -> Unit,
 ) {
-    val flag = num?.flag ?: live?.iso?.let { smsFlagFor(it) }.orEmpty()
-    val number = num?.display ?: (live?.masked ?: "")
-    val isExpired = num != null && num.born + SMS_EXPIRE_SEC * 1000 <= now
-    val liveCty = live?.iso?.let { smsNameFlagForIso(it).first }.orEmpty()
-    val sub = when {
-        num != null -> subLine(num, now) + if (isExpired) " - expired" else ""
-        live != null -> listOf(live.svc, liveCty, smsTimeAgo(live.at, now)).filter { it.isNotEmpty() }.joinToString(" - ")
-        else -> ""
-    }
-    val code = num?.code ?: live?.code
-    val left = if (num != null) ((num.born + SMS_EXPIRE_SEC * 1000 - now) / 1000).coerceAtLeast(0) else 0
-    val waiting = num != null && num.code == null && !isExpired
+    val isExpired = num.born + SMS_EXPIRE_SEC * 1000 <= now
+    val sub = subLine(num, now) + if (isExpired) " - expired" else ""
+    val code = num.code
+    val left = ((num.born + SMS_EXPIRE_SEC * 1000 - now) / 1000).coerceAtLeast(0)
+    val waiting = num.code == null && !isExpired
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (flag.isNotEmpty()) Text(text = flag, fontSize = 30.sp, modifier = Modifier.width(40.dp))
+            if (num.flag.isNotEmpty()) Text(text = num.flag, fontSize = 30.sp, modifier = Modifier.width(40.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = number,
+                    text = num.display,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.clickable(enabled = num != null) { num?.let { onCopy(it.full) } }
+                    modifier = Modifier.clickable { onCopy(num.full) }
                 )
                 Text(text = sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -882,10 +861,8 @@ private fun ItemSheet(
                 )
             }
         }
-        if (num != null) {
-            Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                ExpiryRing(left, SMS_EXPIRE_SEC, isExpired)
-            }
+        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+            ExpiryRing(left, SMS_EXPIRE_SEC, isExpired)
         }
         if (waiting) {
             Text(
@@ -895,8 +872,7 @@ private fun ItemSheet(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             )
         }
-        val msgs: List<Pair<String, String>> = num?.msgs?.map { it.code to it.text }
-            ?: (if (live != null && live.code.isNotEmpty()) listOf(live.code to live.msg) else emptyList())
+        val msgs: List<Pair<String, String>> = num.msgs.map { it.code to it.text }
         msgs.reversed().forEach { (c, t) ->
             Column(
                 Modifier.fillMaxWidth().padding(bottom = 8.dp)
@@ -924,21 +900,10 @@ private fun ItemSheet(
                 }
             }
         }
-        if (num == null || num.code != null) {
-            val svcName = live?.svc?.ifEmpty { "Facebook" } ?: "Facebook"
-            FactRow("Service", svcName, null, onCopy, copied, icon = svcIcon(svcName))
+        if (num.code != null) {
+            FactRow("Service", "Facebook", null, onCopy, copied, icon = svcIcon("Facebook"))
         }
-        if (live != null) {
-            val method = live.methodLabel.ifEmpty { live.method }
-            if (method.isNotEmpty()) FactRow("Method", method, null, onCopy, copied)
-            if (live.lang.isNotEmpty()) FactRow("Language", live.lang, null, onCopy, copied)
-        }
-        val range = num?.range ?: live?.range.orEmpty()
-        if (range.isNotEmpty()) FactRow("Range", range, range, onCopy, copied)
-        if (live != null) {
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onGet, modifier = Modifier.fillMaxWidth()) { Text("Get") }
-        }
+        if (num.range.isNotEmpty()) FactRow("Range", num.range, num.range, onCopy, copied)
     }
 }
 
