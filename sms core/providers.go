@@ -412,6 +412,33 @@ func FetchOtps(prov Provider) []OtpHit {
 	return out
 }
 
+// AppLabel mirrors appLabel() in the bot: FB_LITE -> FB Lite.
+func AppLabel(a string) string {
+	switch a {
+	case "FB_WEB":
+		return "FB Web"
+	case "FB_MAIN":
+		return "FB Main"
+	case "FB_LITE":
+		return "FB Lite"
+	case "IG_MAIN":
+		return "Ig Main"
+	case "IG_LITE":
+		return "Ig Lite"
+	case "IG_WEB":
+		return "Ig Web"
+	}
+	return a
+}
+
+// MethodLabel mirrors methodLabel() in the bot: create -> Create New.
+func MethodLabel(m string) string {
+	if m == "create" {
+		return "Create New"
+	}
+	return "Forgot Password"
+}
+
 // MaskMiddle hides one middle digit: the group-feed convention.
 func MaskMiddle(full string) string {
 	s := strings.TrimSpace(full)

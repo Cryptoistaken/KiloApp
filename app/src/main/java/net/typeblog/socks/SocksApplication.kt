@@ -7,6 +7,7 @@ import net.typeblog.socks.util.Constants.PREF_ADV_APP_LIST
 import net.typeblog.socks.util.Constants.PREF_ADV_PER_APP
 import net.typeblog.socks.util.Constants.PREF_SPLIT_SINGLE_MODE_MIGRATED
 import net.typeblog.socks.util.ProfileManager
+import net.typeblog.socks.util.SmsWatcher
 
 class SocksApplication : Application() {
     override fun onCreate() {
@@ -15,6 +16,9 @@ class SocksApplication : Application() {
         // Ensure default preference values are set before reading
         PreferenceManager.setDefaultValues(this, R.xml.settings, false)
         migrateSplitSingleMode()
+        // App-scoped SMS polling + OTP notifications (SMS tab state
+        // outlives the tab; runs while the app process is alive).
+        SmsWatcher.start(this)
     }
 
     /**

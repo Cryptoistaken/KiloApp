@@ -106,6 +106,134 @@ func refreshOtps() {
 	otpCache = kept
 	lastOtpAt = time.Now().UnixMilli()
 	cacheMu.Unlock()
+	pushFreshOtps(kept)
+}
+
+// --- SSE push: one stream per app, keyed by subscribed numbers ---------
+
+var (
+	subMu    sync.Mutex
+	subs     = map[string]map[chan []byte]struct{}{}
+	lastPush int64
+)
+
+func pushFreshOtps(kept []OtpHit) {
+	var fresh []OtpHit
+	cacheMu.Lock()
+	for _, o := range kept {
+		if o.Time > lastPush {
+			fresh = append(fresh, o)
+		}
+	}
+	for _, o := range fresh {
+		if o.Time > lastPush {
+			lastPush = o.Time
+		}
+	}
+	cacheMu.Unlock()
+	for _, o := range fresh {
+		_, _, code := Classify(o.Message)
+		body, _ := json.Marshal(map[string]any{
+			"number": digitsOnly(o.Number), "code": code,
+			"text": o.Message, "at": o.Time,
+		})
+		event := append([]byte("event: otp\ndata: "), body...)
+		event = append(event, '\n', '\n')
+		subMu.Lock()
+		for ch := range subs[digitsOnly(o.Number)] {
+			select {
+			case ch <- event:
+			default: // slow reader: drop, it still has polling fallback
+			}
+		}
+		subMu.Unlock()
+	}
+}
+
+func subscribe(numbers []string) (chan []byte, func()) {
+	ch := make(chan []byte, 8)
+	subMu.Lock()
+	for _, n := range numbers {
+		n = digitsOnly(n)
+		if n == "" {
+			continue
+		}
+		set := subs[n]
+		if set == nil {
+			set = map[chan []byte]struct{}{}
+			subs[n] = set
+		}
+		set[ch] = struct{}{}
+	}
+	subMu.Unlock()
+	return ch, func() {
+		subMu.Lock()
+		for set := range subs {
+			delete(subs[set], ch)
+			if len(subs[set]) == 0 {
+				delete(subs, set)
+			}
+		}
+		subMu.Unlock()
+	}
+}
+
+// handleStream serves GET /v1/stream?numbers=a,b,c as SSE: replays cached
+// OTPs for the subscribed numbers, then pushes new ones as they arrive.
+// Heartbeat comment every 25s keeps NAT/proxies from idling out.
+func handleStream(w http.ResponseWriter, r *http.Request) {
+	numbers := strings.Split(r.URL.Query().Get("numbers"), ",")
+	ch, unsub := subscribe(numbers)
+	defer unsub()
+
+	cacheMu.Lock()
+	var replay []OtpHit
+	for _, o := range otpCache {
+		for _, n := range numbers {
+			if n != "" && digitsOnly(o.Number) == digitsOnly(n) {
+				replay = append(replay, o)
+			}
+		}
+	}
+	cacheMu.Unlock()
+	sort.Slice(replay, func(i, j int) bool { return replay[i].Time < replay[j].Time })
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, 500, map[string]any{"ok": false, "error": "streaming unsupported"})
+		return
+	}
+	for _, o := range replay {
+		_, _, code := Classify(o.Message)
+		body, _ := json.Marshal(map[string]any{
+			"number": digitsOnly(o.Number), "code": code,
+			"text": o.Message, "at": o.Time,
+		})
+		_, _ = w.Write(append(append([]byte("event: otp\ndata: "), body...), '\n', '\n'))
+	}
+	flusher.Flush()
+
+	beat := time.NewTicker(25 * time.Second)
+	defer beat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev := <-ch:
+			if _, err := w.Write(ev); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-beat.C:
+			if _, err := w.Write([]byte(":ping\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 var rangeRe = regexp.MustCompile(`[^0-9X]`)
@@ -151,6 +279,7 @@ func handleFeed(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, map[string]any{
 			"masked": MaskMiddle(h.Range), "svc": svc, "method": method, "app": app,
+			"appLabel": AppLabel(app), "methodLabel": MethodLabel(method),
 			"code": code, "msg": h.Message, "range": h.Range, "at": h.Time,
 		})
 		if len(items) >= limit {
@@ -384,6 +513,13 @@ func main() {
 			return
 		}
 		handleMeta(w, r)
+	}, false))
+	mux.HandleFunc("/v1/stream", wrap(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			writeJSON(w, 405, map[string]any{"ok": false, "error": "method not allowed"})
+			return
+		}
+		handleStream(w, r)
 	}, false))
 	mux.HandleFunc("/v1/admin/pool", wrap(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

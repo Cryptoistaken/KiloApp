@@ -33,6 +33,13 @@ android {
         // from BuildConfig, so forks never need a code edit to point at
         // their own release feed.
         buildConfigField "String", "UPDATE_REPO", '"Cryptoistaken/KiloApp"'
+        // SMS gateway (Go backend on Railway): base URL baked with env
+        // override; the global app key comes ONLY from the SMS_API_KEY env
+        // (CI secret) so it is never committed to the repo.
+        def smsGatewayUrl = System.getenv('SMS_GATEWAY_URL')
+        buildConfigField "String", "SMS_GATEWAY_URL", '"' + ((smsGatewayUrl != null && smsGatewayUrl.length() > 0) ? smsGatewayUrl : "https://kiloapp.up.railway.app") + '"'
+        def smsApiKey = System.getenv('SMS_API_KEY')
+        buildConfigField "String", "SMS_API_KEY", '"' + ((smsApiKey != null) ? smsApiKey : "") + '"'
         minSdk 21
         targetSdk 36
         versionCode baseVersionCode

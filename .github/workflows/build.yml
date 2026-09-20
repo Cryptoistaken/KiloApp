@@ -76,6 +76,8 @@ jobs:
           KILO_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KILO_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KILO_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          SMS_API_KEY: ${{ secrets.SMS_API_KEY }}
+          SMS_GATEWAY_URL: ${{ secrets.SMS_GATEWAY_URL }}
 
       - name: Compute version code
         id: vc
