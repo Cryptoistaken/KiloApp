@@ -187,8 +187,9 @@ codebase stays clean without future cleanups:
 | `MainActivity.kt` | Compose host activity, entry point, launcher |
 | `SocksApplication.kt` | Application class (init, context wiring) + one-time single-mode split migration (wipes global/per-profile split config, keeps proxy profiles, split starts OFF) |
 | `SocksVpnService.kt` | **Engine** — VpnService + tun2socks/pdnsd spawn, tunnelling, notifications, stats, IP check. NEVER modify for UI. Split is Include-only: `configure()` forces allow-list, skips own UID, falls back to full tunnel on empty effective list; `onStartCommand` logs `bypass` + app count. |
-| `FloatingControlService.kt` | Floating bubble (60dp) + flag pill overlays, long-press popup; WindowManager, SYSTEM_ALERT_WINDOW |
+| `FloatingControlService.kt` | Floating bubble (60dp) + flag pill overlays, long-press popup; WindowManager, SYSTEM_ALERT_WINDOW. Circle style shares lock visuals; long-press opens CircleBubbleMenu (Proxy tap toggles, Proxy long-press opens country menu, SMS provisions+copies, Name copies, Sheet placeholder) |
 | `BubbleMenuOverlay.kt` | Popup overlay shown near bubble: country list, search, positioning; window params/IME handling |
+| `CircleBubbleMenu.kt` | Circle-menu overlay: Proxy/SMS/Sheet/Name bubbles around the anchor, alignment + size from prefs, scrim dismiss |
 | `BootReceiver.kt` | BOOT_COMPLETED + MY_PACKAGE_REPLACED auto-start receiver (restores VPN for auto-connect profiles and the floating bubble after reboot and after in-app updates) |
 | `System.kt` | JNI bridge (sendfd) |
 
@@ -215,6 +216,7 @@ Notes on the merged notification/dot pass:
 | `SmsWatcher.kt` | App-scoped SMS state (my/expired numbers, feed, countries, 1s ticker, 7-min expiry sweep, SSE push stream with 5s-OTP-poll fallback, 60s feed refresh); fires OTP notifications, outlives the SMS tab |
 | `SmsNotify.kt` | OTP arrival notifications (code in title + Copy action); plain ASCII |
 | `SmsCopyReceiver.kt` | Manifest receiver for the notification Copy button (copies code, dismisses) |
+| `NamesRepo.kt` | Random-name pool for the circle menu (assets/names.txt, one per line) |
 | `ThemeMode.kt` | Effective theme (manual theme_mode override, else device) + themedContext for -night inflation |
 | `Utility.kt` | **ENGINE** — pdnsd conf, ip lookups, usage-stats keys, misc helpers. NEVER modify for UI |
 
@@ -225,7 +227,7 @@ Notes on the merged notification/dot pass:
   - `ProxyCard.kt` — Minimal card: square, borderless (transparent 1dp keeps picked outline + layout), lifted `surfaceContainer` tile on `surface` page (`--tile` in mock), flag-emoji / server-glyph icon slot, name + app-green dot (hidden offline), host without port, Used total only. Whole card taps to `onSelect` (detail sheet, or pick in pickMode). No chips, no buttons. Long-press (`onLongPress`) enters multi-select and picks the card; picked cards (`checked`) use the overlay style (primary border + primaryContainer tint, no checkbox). Swipe right opens Edit (black bg + white pencil), swipe left deletes immediately with a 5s Undo snackbar (no confirm); swipe disabled in pickMode/multi-select.
   - `ProfileDetailSheet.kt` — Bottom sheet opened by tapping a card: icon + name + sub, Provider/Type + Used/Server(no port) facts, Copy (clipboard `host:port:user:pass`, flips to bold Copied with icon hidden, no Toast) / Test (SocksTester + Toast) / Edit / Duplicate (`duplicateProfile` in ProxiesScreen, `Profile.copyTo`, no engine change) / Delete rows with `ic_sheet_*` icons (`lucide_copy` for Copy). Delete reuses the existing confirm dialog. Opens fully expanded (`skipPartiallyExpanded`).
 - `navigation/AppNavigation.kt` — NavHost destinations (incl. `theme` route)
-- `screens/` — BubbleSettingsScreen, CountriesScreen, RecentsScreen (full recents list from Home See all; taps select AND connect via `VpnViewModel.pickAndConnectCountry`, bottom bar hidden), SmsScreen (SMS tab: mockup port — main/numbers/live/activity pages + country/confirm/item sheets, state in `SmsWatcher`, OTP notifications with Copy action), DebugLogsScreen, ProxiesScreen (list + swipe + dialogs + FAB; form lives in AddEditProxySheet; Home pick mode keeps full functionality, only tap selects + returns), AddEditProxySheet (add/edit form + proxy-string parse), SettingsScreen, SplitTunnelingScreen, StatusScreen (Home: Profile picker field + hero ConnectionCard with country selector + Data used + Connection details + Recents at the bottom; home country picks return via `VpnViewModel.pickCountry`), ThemeScreen, AdvancedSettingsScreen
+- `screens/` — BubbleSettingsScreen (Lock/Classic/Circle styles; Circle gates alignment options each with a live 4-icon preview + button-size slider + full preview), CountriesScreen, RecentsScreen (full recents list from Home See all; taps select AND connect via `VpnViewModel.pickAndConnectCountry`, bottom bar hidden), SmsScreen (SMS tab: mockup port — main/numbers/live/activity pages + country/confirm/item sheets, state in `SmsWatcher`, OTP notifications with Copy action), DebugLogsScreen, ProxiesScreen (list + swipe + dialogs + FAB; form lives in AddEditProxySheet; Home pick mode keeps full functionality, only tap selects + returns), AddEditProxySheet (add/edit form + proxy-string parse), SettingsScreen, SplitTunnelingScreen, StatusScreen (Home: Profile picker field + hero ConnectionCard with country selector + Data used + Connection details + Recents at the bottom; home country picks return via `VpnViewModel.pickCountry`), ThemeScreen, AdvancedSettingsScreen
   - `AdvancedSettingsScreen.kt` — Advanced Settings page (Accelerator master + Primary checker + Checker mode + Cache last IP + Proxy health probe + Recheck interval + Cache proxy DNS). Engine honors prefs only while master is ON.
   - `ThemeScreen.kt` — Theme picker page: Light / Dark / Device theme cards with mini phone previews; writes PREF_THEME_MODE.
   - `SplitTunnelingScreen.kt` — Include-only single mode: feature header + toggle card (enabling jumps to Included page) + Included-apps row. Three pages: main, Included (dedicated list + FAB to add, empty state, minus to remove), Add apps (searchable full list, + flips to check). Same engine prefs minus bypass (`PREF_ADV_PER_APP` / `PREF_ADV_APP_LIST`; legacy `PREF_ADV_APP_BYPASS` ignored, removed from `settings.xml`). Picker hides own package, prunes stale entries on open, auto-turns split OFF when leaving with zero effective apps. IP-address rows skipped: engine has no IP split-tunneling support. Included page opens directly via `startOnApps` arg (refuse-to-connect link).
@@ -260,7 +262,7 @@ Notes on the merged notification/dot pass:
 - `networkSecurityConfig="@xml/network_security_config"`
 
 ### Resources — `app/src/main/res/`
-- `assets/` — (empty; NetShield blocklists were removed — NetShield is now cloud-only)
+- `assets/` — names.txt (circle-menu Name pool); NetShield blocklists were removed — NetShield is now cloud-only
 - `layout/` — `app_item.xml`, `bubble_menu.xml` (bubble popup panel), `bubble_country_row.xml`, `notification_action.xml` (RemoteViews layout for the notification Connect/Disconnect pill)
 - `drawable/` — lucide_* icons, menu_panel_bg, search_input_bg, signal_dot, logo_*, launcher, notification_pill, notification icons (pill button background)
 - `font/` — Geist family TTFs (bold/medium/mono/pixel etc.)
