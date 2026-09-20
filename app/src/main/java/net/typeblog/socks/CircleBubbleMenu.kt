@@ -42,8 +42,8 @@ import net.typeblog.socks.util.Constants.CIRCLE_UP
  * covering only its anchor->slot travel segment (NOT_FOCUSABLE +
  * NOT_TOUCH_MODAL). Taps anywhere else fall through to the app below and
  * never collapse the menu — it only closes via the trigger bubble or one of
- * its 4 actions. Trade-off: the shared-layer -360 spin on close is dropped
- * (impossible across separate windows); travel + stagger + shrink remain.
+ * its 4 actions. The close -360 spin is reproduced per item around the same
+ * anchor pivot, so the shared-layer rotation looks identical.
  */
 class CircleBubbleMenu(
     private val context: Context,
@@ -333,8 +333,9 @@ class CircleBubbleMenu(
 
     /**
      * Animated close, per alignment like the HTML: circle items spring home
-     * forward; lines cascade home in reverse (last-in-first-out).
-     * Trigger shake/pulse runs via [onCloseAnim].
+     * forward while spinning -360 around the anchor (the shared-layer spin,
+     * reproduced per item); lines cascade home in reverse (last-in-first-out)
+     * with no spin. Trigger shake/pulse runs via [onCloseAnim].
      */
     fun hide() {
         if (!isShowing() || hiding) return
@@ -380,6 +381,37 @@ class CircleBubbleMenu(
                 .setStartDelay(d + 180L).setDuration(150).start()
         }
         springs = newSprings
+        if (!line) {
+            // HTML closeAnimationCallback spins the shared items-layer -360
+            // while the items spring home. Separate windows can't share one
+            // layer, so each item rotates around the same anchor pivot with
+            // the same linear duration — the composite is that rigid spin,
+            // plus the HTML's 1px blur while it turns (API 31+).
+            val linear = android.view.animation.LinearInterpolator()
+            btnViews.forEachIndexed { i, btn ->
+                val (dx, dy) = slots.getOrElse(i) { Pair(0f, 0f) }
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        btn.setRenderEffect(
+                            android.graphics.RenderEffect.createBlurEffect(
+                                1f, 1f, android.graphics.Shader.TileMode.CLAMP
+                            )
+                        )
+                    }
+                } catch (_: Exception) {
+                }
+                try {
+                    btn.pivotX = dx
+                    btn.pivotY = dy
+                    android.animation.ObjectAnimator.ofFloat(btn, "rotation", 0f, -360f).apply {
+                        duration = totalMs
+                        interpolator = linear
+                        start()
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
         // Failsafe: never trap windows if an animator is cancelled.
         handler.postDelayed({ finishRemove() }, totalMs + 400L)
     }
