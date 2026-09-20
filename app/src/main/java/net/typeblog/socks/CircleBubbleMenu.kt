@@ -49,7 +49,9 @@ class CircleBubbleMenu(
         val size = (sizeDp * density).toInt().coerceAtLeast(1)
         val gap = size + (12 * density).toInt()
         val off = size + (14 * density).toInt()
-        val r = size * 2 + (24 * density).toInt()
+        // Small circle stays tight around the anchor — visibly smaller
+        // than any line spread.
+        val r = size + (28 * density).toInt()
         val pts: List<Pair<Int, Int>> = when (align) {
             CIRCLE_UP -> List(4) { 0 to -(off + it * gap) }
             CIRCLE_DOWN -> List(4) { 0 to (off + it * gap) }

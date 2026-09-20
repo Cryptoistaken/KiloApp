@@ -149,8 +149,7 @@ class FloatingControlService : Service() {
     fun getBubbleStyle(): String = bubbleStyle
     fun isLockStyle(): Boolean = bubbleStyle == Constants.BUBBLE_STYLE_LOCK
     private fun isCircleStyle(): Boolean = bubbleStyle == BUBBLE_STYLE_CIRCLE
-    // Lock + Circle share the lock visuals; only the long-press menu differs.
-    private fun isLockVisual(): Boolean = isLockStyle() || isCircleStyle()
+    // Circle shares the classic orb; its glyph is always the menu icon.
 
     // Effective app theme (manual Settings > Theme override, else device):
     // the bubble spinner and the "Connecting" label follow it, status colors
@@ -458,7 +457,7 @@ class FloatingControlService : Service() {
         bubbleStyle = PreferenceManager.getDefaultSharedPreferences(this)
             .getString(PREF_BUBBLE_STYLE, BUBBLE_STYLE_LOCK) ?: BUBBLE_STYLE_LOCK
         val density = resources.displayMetrics.density
-        if (isLockVisual()) {
+        if (isLockStyle()) {
             val sizePx = (96 * density).toInt()
             bubbleSizePx = sizePx
             bubbleGrowMarginPx = 0
@@ -656,7 +655,7 @@ class FloatingControlService : Service() {
     }
 
     private fun updateFlagPill() {
-        if (isLockVisual()) {
+        if (isLockStyle()) {
             flagPillView?.visibility = View.GONE
             return
         }
@@ -788,7 +787,7 @@ class FloatingControlService : Service() {
 
     private fun updateStatusLabel() {
         val tv = statusLabelView ?: return
-        if (!isLockVisual()) { tv.visibility = View.GONE; return }
+        if (!isLockStyle()) { tv.visibility = View.GONE; return }
         when (state) {
             BubbleState.DISCONNECTED -> {
                 tv.text = "Unprotected"
@@ -1564,7 +1563,7 @@ class FloatingControlService : Service() {
         animateGradientTransition(oldState, state)
         stopBreathing()
 
-        if (isLockVisual()) {
+        if (isLockStyle()) {
             when (state) {
                 BubbleState.CONNECTING -> {
                     iconView?.apply { visibility = View.GONE }
@@ -1614,7 +1613,13 @@ class FloatingControlService : Service() {
             }
             BubbleState.CONNECTED -> {
                 progressBar?.visibility = View.GONE
-                if (getConnectedSince() > 0L) {
+                if (isCircleStyle()) {
+                    iconView?.visibility = View.VISIBLE
+                    iconView?.setImageResource(R.drawable.ic_menu_burger)
+                    iconView?.setColorFilter(Color.WHITE)
+                    timerView?.visibility = View.GONE
+                    stopTimer()
+                } else if (getConnectedSince() > 0L) {
                     iconView?.visibility = View.GONE
                     timerView?.visibility = View.VISIBLE
                     updateTimerText()
@@ -1633,7 +1638,7 @@ class FloatingControlService : Service() {
             BubbleState.DISCONNECTED -> {
                 iconView?.visibility = View.VISIBLE
                 progressBar?.visibility = View.GONE
-                iconView?.setImageResource(R.drawable.ic_bubble_play)
+                iconView?.setImageResource(if (isCircleStyle()) R.drawable.ic_menu_burger else R.drawable.ic_bubble_play)
                 iconView?.setColorFilter(Color.WHITE)
                 timerView?.visibility = View.GONE
                 stopTimer()
@@ -1749,7 +1754,7 @@ class FloatingControlService : Service() {
     }
 
     private fun updateTimerText() {
-        if (isLockVisual() && lockFlashing) return
+        if (isLockStyle() && lockFlashing) return
         val view = timerView ?: return
         val connectedSince = getConnectedSince()
         val elapsed = if (connectedSince > 0L) {
@@ -1757,7 +1762,7 @@ class FloatingControlService : Service() {
         } else {
             0L
         }
-        if (isLockVisual()) {
+        if (isLockStyle()) {
             view.setTextColor(Color.BLACK)
             view.textSize = 11f
             view.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -1928,7 +1933,7 @@ class FloatingControlService : Service() {
 
     /** Solid fill color per bubble state (start == end, so the gradient renders flat). */
     private fun stateGradient(state: BubbleState): Pair<Int, Int> {
-        if (isLockVisual()) {
+        if (isLockStyle()) {
             val t = Color.TRANSPARENT
             return Pair(t, t)
         }
