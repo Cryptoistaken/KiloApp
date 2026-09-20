@@ -54,7 +54,16 @@ import net.typeblog.socks.util.Constants.ACTION_START_VPN
 import net.typeblog.socks.util.Constants.ACTION_STOP_VPN
 import net.typeblog.socks.util.Constants.ACTION_VPN_STATE_CHANGED
 import net.typeblog.socks.util.Constants.BUBBLE_STYLE_CLASSIC
+import net.typeblog.socks.util.Constants.BUBBLE_STYLE_CIRCLE
 import net.typeblog.socks.util.Constants.BUBBLE_STYLE_LOCK
+import net.typeblog.socks.util.Constants.CIRCLE_SIZE_DEFAULT
+import net.typeblog.socks.util.Constants.CIRCLE_SMALL
+import net.typeblog.socks.util.Constants.PREF_CIRCLE_ALIGN
+import net.typeblog.socks.util.Constants.PREF_CIRCLE_SIZE
+import android.content.ClipData
+import android.content.ClipboardManager
+import net.typeblog.socks.util.NamesRepo
+import net.typeblog.socks.util.SmsWatcher
 import net.typeblog.socks.util.Constants.PREF_BUBBLE_STYLE
 import net.typeblog.socks.util.Constants.PREF_THEME_MODE
 import net.typeblog.socks.util.Constants.PREF_BUBBLE_X
@@ -139,6 +148,9 @@ class FloatingControlService : Service() {
 
     fun getBubbleStyle(): String = bubbleStyle
     fun isLockStyle(): Boolean = bubbleStyle == Constants.BUBBLE_STYLE_LOCK
+    private fun isCircleStyle(): Boolean = bubbleStyle == BUBBLE_STYLE_CIRCLE
+    // Lock + Circle share the lock visuals; only the long-press menu differs.
+    private fun isLockVisual(): Boolean = isLockStyle() || isCircleStyle()
 
     // Effective app theme (manual Settings > Theme override, else device):
     // the bubble spinner and the "Connecting" label follow it, status colors
@@ -161,6 +173,7 @@ class FloatingControlService : Service() {
     private var longPressHandler = Handler(Looper.getMainLooper())
     private var longPressFired = false
     private var menuOverlay: BubbleMenuOverlay? = null
+    private var circleMenu: CircleBubbleMenu? = null
 
     private val longPressRunnable = Runnable { openBubbleMenu() }
 
@@ -274,6 +287,15 @@ class FloatingControlService : Service() {
             onExitRequested = { stopFloatingBubble() },
             onDismissed = { longPressFired = false }
         )
+        circleMenu = CircleBubbleMenu(
+            this,
+            onProxyTap = { circleMenu?.hide(); handleTap() },
+            onProxyLongPress = { circleMenu?.hide(); openCountryMenu() },
+            onSmsTap = { circleMenu?.hide(); provisionSmsNumber() },
+            onSheetTap = { circleMenu?.hide(); toast("SheetSubmit coming soon") },
+            onNameTap = { copyRandomName() },
+            onDismissed = { longPressFired = false }
+        )
         prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == PREF_BUBBLE_STYLE) {
                 val newStyle = PreferenceManager.getDefaultSharedPreferences(this)
@@ -306,6 +328,7 @@ class FloatingControlService : Service() {
         super.onConfigurationChanged(newConfig)
         refreshWindowManager()
         menuOverlay?.onConfigurationChanged()
+        circleMenu?.hide()
         reClampBubblePosition()
         val nightYes = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -408,6 +431,7 @@ class FloatingControlService : Service() {
         }
         longPressHandler.removeCallbacks(longPressRunnable)
         menuOverlay?.hide()
+        circleMenu?.hide()
         persistBubblePosition()
         removeFlagPillFromWindow()
         removeStatusLabelFromWindow()
@@ -434,7 +458,7 @@ class FloatingControlService : Service() {
         bubbleStyle = PreferenceManager.getDefaultSharedPreferences(this)
             .getString(PREF_BUBBLE_STYLE, BUBBLE_STYLE_LOCK) ?: BUBBLE_STYLE_LOCK
         val density = resources.displayMetrics.density
-        if (isLockStyle()) {
+        if (isLockVisual()) {
             val sizePx = (96 * density).toInt()
             bubbleSizePx = sizePx
             bubbleGrowMarginPx = 0
@@ -632,7 +656,7 @@ class FloatingControlService : Service() {
     }
 
     private fun updateFlagPill() {
-        if (isLockStyle()) {
+        if (isLockVisual()) {
             flagPillView?.visibility = View.GONE
             return
         }
@@ -764,7 +788,7 @@ class FloatingControlService : Service() {
 
     private fun updateStatusLabel() {
         val tv = statusLabelView ?: return
-        if (!isLockStyle()) { tv.visibility = View.GONE; return }
+        if (!isLockVisual()) { tv.visibility = View.GONE; return }
         when (state) {
             BubbleState.DISCONNECTED -> {
                 tv.text = "Unprotected"
@@ -1231,6 +1255,21 @@ class FloatingControlService : Service() {
     private fun openBubbleMenu() {
         longPressFired = true
         bubbleView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        if (isCircleStyle()) {
+            val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+            circleMenu?.show(
+                (params?.x ?: 0) + bubbleWindowSizePx / 2,
+                (params?.y ?: 0) + bubbleWindowSizePx / 2,
+                prefs.getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL,
+                prefs.getInt(PREF_CIRCLE_SIZE, CIRCLE_SIZE_DEFAULT),
+                state == BubbleState.CONNECTED
+            )
+            return
+        }
+        openCountryMenu()
+    }
+
+    private fun openCountryMenu() {
         if (menuOverlay == null) {
             menuOverlay = BubbleMenuOverlay(
                 this,
@@ -1257,6 +1296,53 @@ class FloatingControlService : Service() {
             ProxyProviders.detectType(p.getServer(), p.getUsername()) != ProxyProviders.TYPE_CUSTOM
         } catch (_: Exception) {
             false
+        }
+    }
+
+    private fun copyText(text: String) {
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("KiloApp", text))
+        } catch (e: Exception) {
+            Log.w(TAG, "clipboard copy failed", e)
+        }
+    }
+
+    private fun toast(msg: String) {
+        try {
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.w(TAG, "toast failed", e)
+        }
+    }
+
+    private fun copyRandomName() {
+        try {
+            val name = NamesRepo.random(this)
+            copyText(name)
+            bubbleView?.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+            toast("Copied $name")
+        } catch (e: Exception) {
+            Log.e(TAG, "Name copy failed", e)
+        }
+        circleMenu?.hide()
+    }
+
+    private fun provisionSmsNumber() {
+        try {
+            SmsWatcher.start(this)
+            val pat = SmsWatcher.countries.firstOrNull()?.prefix?.ifEmpty { null } ?: "228"
+            SmsWatcher.provision(pat) { n ->
+                if (n == null) {
+                    toast("No numbers available, try again")
+                } else {
+                    copyText(n.display)
+                    toast("Number copied: ${n.display}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "SMS provision from bubble failed", e)
+            toast("SMS unavailable right now")
         }
     }
 
@@ -1478,7 +1564,7 @@ class FloatingControlService : Service() {
         animateGradientTransition(oldState, state)
         stopBreathing()
 
-        if (isLockStyle()) {
+        if (isLockVisual()) {
             when (state) {
                 BubbleState.CONNECTING -> {
                     iconView?.apply { visibility = View.GONE }
@@ -1663,7 +1749,7 @@ class FloatingControlService : Service() {
     }
 
     private fun updateTimerText() {
-        if (isLockStyle() && lockFlashing) return
+        if (isLockVisual() && lockFlashing) return
         val view = timerView ?: return
         val connectedSince = getConnectedSince()
         val elapsed = if (connectedSince > 0L) {
@@ -1671,7 +1757,7 @@ class FloatingControlService : Service() {
         } else {
             0L
         }
-        if (isLockStyle()) {
+        if (isLockVisual()) {
             view.setTextColor(Color.BLACK)
             view.textSize = 11f
             view.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -1842,7 +1928,7 @@ class FloatingControlService : Service() {
 
     /** Solid fill color per bubble state (start == end, so the gradient renders flat). */
     private fun stateGradient(state: BubbleState): Pair<Int, Int> {
-        if (isLockStyle()) {
+        if (isLockVisual()) {
             val t = Color.TRANSPARENT
             return Pair(t, t)
         }
