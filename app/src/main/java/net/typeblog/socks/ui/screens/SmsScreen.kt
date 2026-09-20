@@ -158,7 +158,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     fun tapCopy(text: String) {
         if (text.isEmpty()) return
         clipboard.setText(AnnotatedString(text))
-        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         copied = text + "Copied"
     }
 
