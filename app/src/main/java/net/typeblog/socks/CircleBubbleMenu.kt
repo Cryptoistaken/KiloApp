@@ -108,8 +108,11 @@ class CircleBubbleMenu(
         }
         val openStaggerMs = if (isLineAlign(align)) openStaggerLineMs else openStaggerCircleMs
 
+        // Outside taps are swallowed (never fall through to apps below) but
+        // never collapse the menu — it only closes via the trigger bubble
+        // or one of its 4 actions.
         val root = FrameLayout(context).apply {
-            setOnClickListener { hide() }
+            isClickable = true
         }
         // Pivot at the anchor so the layer orbits it on close.
         val box = FrameLayout(context).apply {
