@@ -1,27 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- KiloApp logo (G mark). Single source for in-app usages. Solid blue
+     on the top arc: Compose/VectorDrawable cannot render the SVG linear
+     gradient via aapt:attr, PNGs keep the full gradient. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/apk/res-auto"
     android:width="256dp"
     android:height="256dp"
     android:viewportWidth="256"
     android:viewportHeight="256">
     <path android:fillColor="#FFEA4335" android:pathData="M173.2 82.8c25 25 25 65.5 0 90.5c-12.5 12.5-12.5 32.8 0 45.2c12.5 12.5 32.8 12.5 45.3 0c50-50 50-131 0-181z" />
-    <path android:pathData="M218.4 37.5c-50-50-130.9-50-180.9 0s-50 131 0 181l45.3-45.2c-25-25-25-65.5 0-90.5s65.5-25 90.5 0c12.5 12.5 32.8 12.5 45.3 0c12.3-12.5 12.3-32.8-0.2-45.3">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:type="linear"
-                android:startX="0"
-                android:startY="128"
-                android:endX="256"
-                android:endY="128">
-                <item android:offset="0" android:color="#FF246FDB" />
-                <item android:offset="0.0552" android:color="#FF2973DF" />
-                <item android:offset="0.2781" android:color="#FF377DEB" />
-                <item android:offset="0.5491" android:color="#FF3F83F2" />
-                <item android:offset="1" android:color="#FF4285F4" />
-            </gradient>
-        </aapt:attr>
-    </path>
+    <path android:fillColor="#FF4285F4" android:pathData="M218.4 37.5c-50-50-130.9-50-180.9 0s-50 131 0 181l45.3-45.2c-25-25-25-65.5 0-90.5s65.5-25 90.5 0c12.5 12.5 32.8 12.5 45.3 0c12.3-12.5 12.3-32.8-0.2-45.3" />
     <path android:fillColor="#FFFBBC04" android:pathData="m218.4 218.5l-45.3-45.2c-25 25-65.5 25-90.5 0l-45.3 45.2c50.2 50 131.1 50 181.1 0" />
     <path android:fillColor="#FFEA4335" android:pathData="M173.2 173.3c12.5-12.5 32.7-12.5 45.2 0s12.5 32.8 0 45.3s-32.7 12.5-45.2 0s-12.5-32.8 0-45.3" />
     <path android:fillColor="#FF34A853" android:pathData="M37.5 173.3c12.5-12.5 32.7-12.5 45.2 0s12.5 32.8 0 45.3s-32.7 12.5-45.2 0s-12.5-32.8 0-45.3" />
