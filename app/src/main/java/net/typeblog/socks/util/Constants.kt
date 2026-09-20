@@ -53,8 +53,20 @@ object Constants {
     const val PREF_BUBBLE_STYLE = "bubble_style"
     const val BUBBLE_STYLE_LOCK = "lock"
     const val BUBBLE_STYLE_CLASSIC = "classic"
+    const val BUBBLE_STYLE_CIRCLE = "circle"
     const val PREF_BUBBLE_X = "bubble_x"
     const val PREF_BUBBLE_Y = "bubble_y"
+    // Floating circle menu (long-press on the bubble): 4 bubbles around it.
+    const val PREF_CIRCLE_ALIGN = "circle_align"
+    const val CIRCLE_SMALL = "circle-small"
+    const val CIRCLE_UP = "line-up"
+    const val CIRCLE_DOWN = "line-bottom"
+    const val CIRCLE_RIGHT = "line-right"
+    const val CIRCLE_LEFT = "line-left"
+    const val PREF_CIRCLE_SIZE = "circle_size"
+    const val CIRCLE_SIZE_DEFAULT = 48
+    const val CIRCLE_SIZE_MIN = 36
+    const val CIRCLE_SIZE_MAX = 72
     const val PREF_SKIPPED_UPDATE_VERSION = "skipped_update_version"
     // Split-tunnel: single Include-only mode. Global keys (PREF_ADV_*) are the
     // single source of truth (written by SplitTunnelingScreen); the legacy
