@@ -223,23 +223,48 @@ object SmsWatcher {
 
     /**
      * SSE push stream: one connection while any number is still waiting,
-     * subscribed to exactly those numbers. Reconnects with backoff.
-     * Events feed the same update + notify path as the poll fallback.
+     * subscribed to exactly those numbers. Reconnects with backoff, with
+     * fast-fail protection so a broken route can never hammer the backend:
+     * connections living under 15s count as fast fails; 3 in a row park
+     * the loop for 60s, and attempts are always >= 10s apart.
      */
     private suspend fun streamLoop() {
         var backoff = 5000L
+        var fastFails = 0
+        var lastAttempt = 0L
         while (true) {
             val waiting = mine.filter { it.code == null }.map { it.full }
             if (waiting.isEmpty() || !SmsGateway.isConfigured) {
                 delay(5000)
                 continue
             }
+            val sinceAttempt = System.currentTimeMillis() - lastAttempt
+            if (sinceAttempt < 10000) {
+                delay(10000 - sinceAttempt)
+            }
+            lastAttempt = System.currentTimeMillis()
+            val connectedAt = lastAttempt
             try {
                 withContext(Dispatchers.IO) { readStream(waiting) }
+                // Clean server-side close: normal reconnect, keep base backoff.
                 backoff = 5000L
+                fastFails = 0
             } catch (e: Exception) {
-                delay(backoff)
-                backoff = (backoff * 2).coerceAtMost(30000L)
+                val lived = System.currentTimeMillis() - connectedAt
+                if (lived < 15000) {
+                    fastFails++
+                } else {
+                    fastFails = 0
+                    backoff = 5000L
+                }
+                if (fastFails >= 3) {
+                    delay(60000)
+                    fastFails = 0
+                    backoff = 10000L
+                } else {
+                    delay(backoff)
+                    backoff = (backoff * 2).coerceAtMost(30000L)
+                }
             }
         }
     }

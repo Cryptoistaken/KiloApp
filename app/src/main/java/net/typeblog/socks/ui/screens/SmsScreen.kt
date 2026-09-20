@@ -203,7 +203,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 copied = copied,
             )
             3 -> StatsPage(now = now, mine = mine, expired = expired, onBack = { page = 0 },
-                onCopy = ::tapCopy, copied = copied),
+                onCopy = ::tapCopy, copied = copied)
         }
         if (error.isNotEmpty() && now - errorAt < 5000) {
             Text(
