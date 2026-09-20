@@ -15,8 +15,9 @@ import net.typeblog.socks.R
 
 /**
  * OTP arrival notifications for numbers taken in the SMS tab.
- * The code stays visible in the title (readable even if the
- * background clipboard copy is blocked) plus a Copy action button.
+ * Just the number and the code, each with its own copy button.
+ * The code also stays visible in the title (readable even if the
+ * background clipboard copy is blocked).
  * All user text is plain ASCII.
  */
 object SmsNotify {
@@ -38,38 +39,44 @@ object SmsNotify {
         )
     }
 
-    fun showCode(context: Context, display: String, code: String, message: String) {        if (code.isEmpty()) return
+    fun showCode(context: Context, display: String, code: String, message: String) {
+        if (code.isEmpty()) return
         ensureChannel(context)
         val notifId = (display + code).hashCode()
-        val copyIntent = Intent(context, SmsCopyReceiver::class.java).apply {
-            action = "$ACTION_COPY.$notifId"
-            putExtra(EXTRA_CODE, code)
-            putExtra(EXTRA_NOTIF, notifId)
-        }
-        val copyPending = PendingIntent.getBroadcast(
-            context, notifId, copyIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val openIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val openPending = PendingIntent.getActivity(
-            context, notifId, openIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val body = if (message.isNotEmpty()) "$display: $message" else display
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("SMS code $code")
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setContentIntent(openPending)
+            .setContentTitle(code)
+            .setContentText(display)
+            .setContentIntent(openPending(context, notifId))
             .setAutoCancel(true)
-            .addAction(0, "Copy $code", copyPending)
+            .addAction(0, "Copy $code", copyPending(context, notifId, "code", code))
+            .addAction(0, "Copy number", copyPending(context, notifId, "num", display))
             .build()
         manager(context)?.notify(notifId, notification)
         buzz(context)
         SmsLog.log(context, "OTP", "shown $code for $display")
+    }
+
+    private fun copyPending(context: Context, notifId: Int, kind: String, text: String): PendingIntent {
+        val copyIntent = Intent(context, SmsCopyReceiver::class.java).apply {
+            action = "$ACTION_COPY.$notifId.$kind"
+            putExtra(EXTRA_CODE, text)
+            putExtra(EXTRA_NOTIF, notifId)
+        }
+        return PendingIntent.getBroadcast(
+            context, "$notifId.$kind".hashCode(), copyIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
+    private fun openPending(context: Context, notifId: Int): PendingIntent {
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            context, notifId, openIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
     }
 
     /** Short tick for arrivals and copies (OTP shown, number copied). */
