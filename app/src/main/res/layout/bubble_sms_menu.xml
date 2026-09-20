@@ -16,8 +16,9 @@
         android:layout_marginStart="0dp"
         android:layout_marginTop="0dp">
 
-        <!-- Range bar: like the proxy searchbar. Empty = X closes;
-             valid range = X swaps to the Gen pill. -->
+        <!-- Range bar: same shell as the proxy searchbar. The idle exit icon
+             sits inside the field exactly like the proxy popup
+             (ic_exit_duotone); a valid range hides it and shows Gen. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="44dp"
@@ -26,23 +27,39 @@
             android:paddingStart="8dp"
             android:paddingEnd="8dp">
 
-            <EditText
-                android:id="@+id/sms_range"
+            <FrameLayout
                 android:layout_width="0dp"
-                android:layout_height="34dp"
-                android:layout_weight="1"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:background="@drawable/search_input_bg"
-                android:hint="Range e.g. 228"
-                android:textSize="11sp"
-                android:textColor="#18181B"
-                android:textColorHint="#71717A"
-                android:singleLine="true"
-                android:inputType="phone"
-                android:imeOptions="actionGo"
-                android:importantForAutofill="no"
-                android:alpha="0.9" />
+                android:layout_height="wrap_content"
+                android:layout_weight="1">
+
+                <EditText
+                    android:id="@+id/sms_range"
+                    android:layout_width="match_parent"
+                    android:layout_height="34dp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="34dp"
+                    android:background="@drawable/search_input_bg"
+                    android:hint="Range e.g. 228"
+                    android:textSize="11sp"
+                    android:textColor="#18181B"
+                    android:textColorHint="#71717A"
+                    android:singleLine="true"
+                    android:inputType="phone"
+                    android:imeOptions="actionGo"
+                    android:importantForAutofill="no"
+                    android:alpha="0.9" />
+
+                <ImageButton
+                    android:id="@+id/sms_close"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:layout_gravity="center_vertical|end"
+                    android:layout_marginEnd="2dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Close"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_exit_duotone" />
+            </FrameLayout>
 
             <FrameLayout
                 android:id="@+id/sms_gen_wrap"
@@ -74,15 +91,6 @@
                     android:indeterminateTint="#71717A"
                     android:visibility="gone" />
             </FrameLayout>
-
-            <ImageButton
-                android:id="@+id/sms_close"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Close"
-                android:padding="8dp"
-                android:src="@drawable/ic_close_x" />
         </LinearLayout>
 
         <View
@@ -90,31 +98,37 @@
             android:layout_height="1dp"
             android:background="#E4E4E7" />
 
-        <ScrollView
-            android:id="@+id/sms_scroll"
+        <!-- Body: list scrolls; the empty doodle is centered in this same
+             area (not parked below it). -->
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:overScrollMode="never"
-            android:scrollbars="vertical"
             android:layout_marginTop="2dp">
 
-            <LinearLayout
-                android:id="@+id/sms_list"
+            <ScrollView
+                android:id="@+id/sms_scroll"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingBottom="4dp" />
-        </ScrollView>
+                android:layout_height="match_parent"
+                android:overScrollMode="never"
+                android:scrollbars="vertical">
 
-        <ImageView
-            android:id="@+id/sms_empty"
-            android:layout_width="72dp"
-            android:layout_height="72dp"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="56dp"
-            android:contentDescription="No numbers yet"
-            android:src="@drawable/ic_sms_empty"
-            android:visibility="gone" />
+                <LinearLayout
+                    android:id="@+id/sms_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingBottom="4dp" />
+            </ScrollView>
+
+            <ImageView
+                android:id="@+id/sms_empty"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:layout_gravity="center"
+                android:contentDescription="No numbers yet"
+                android:src="@drawable/ic_sms_empty"
+                android:visibility="gone" />
+        </FrameLayout>
     </LinearLayout>
 </FrameLayout>

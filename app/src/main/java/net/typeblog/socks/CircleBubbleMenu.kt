@@ -10,7 +10,6 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -34,7 +33,8 @@ import net.typeblog.socks.util.Constants.CIRCLE_UP
  * anchor and their slot; open stagger 20ms circle / 60ms lines; close stagger
  * 70ms forward for circle, reverse cascade for lines; items-layer spins a full
  * turn ONLY for circle (lines return straight, like the HTML); buttons grow
- * 1.1x on press (touch equivalent of the mockup's hover grow).
+ * 1.1x on press (touch equivalent of the mockup's hover grow). No hover
+ * labels — the mockup's cm-item-label was removed.
  *
  * Full-screen scrim: tap outside dismisses. Proxy supports long-press
  * (opens the country menu); the rest are taps.
@@ -131,53 +131,10 @@ class CircleBubbleMenu(
             Triple(R.drawable.ic_name_person, Color.parseColor("#18181B"), 0.4f)
         )
         val taps = listOf(onProxyTap, onSmsTap, onSheetTap, onNameTap)
-        val labels = listOf("Proxy", "SMS", "Sheet", "Name")
         val metrics = context.resources.displayMetrics
         // HTML items are (size - 2); trigger is full size.
         val itemSize = (size - 2 * density).toInt().coerceAtLeast(1)
         val margin = itemSize / 2 + (8 * density).toInt()
-
-        // Touch equivalent of the mockup's hover label (cm-item-label):
-        // one reusable tag shown under the pressed bubble, hidden on release.
-        val pressLabel = android.widget.TextView(context).apply {
-            textSize = 12f
-            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setShadowLayer(4f, 0f, 2f, Color.argb(160, 0, 0, 0))
-            visibility = View.GONE
-        }
-        fun showPressLabel(text: String, cx: Int, top: Int) {
-            try {
-                pressLabel.text = text
-                (pressLabel.layoutParams as? FrameLayout.LayoutParams)?.let {
-                    it.leftMargin = cx
-                    it.topMargin = top
-                }
-                if (pressLabel.parent == null) {
-                    box.addView(
-                        pressLabel,
-                        FrameLayout.LayoutParams(
-                            FrameLayout.LayoutParams.WRAP_CONTENT,
-                            FrameLayout.LayoutParams.WRAP_CONTENT,
-                            Gravity.TOP or Gravity.START
-                        ).apply {
-                            leftMargin = cx
-                            topMargin = top
-                        }
-                    )
-                }
-                pressLabel.visibility = View.VISIBLE
-                pressLabel.post { pressLabel.translationX = -pressLabel.width / 2f }
-            } catch (_: Exception) {
-            }
-        }
-        fun hidePressLabel() {
-            try {
-                pressLabel.visibility = View.GONE
-            } catch (_: Exception) {
-            }
-        }
 
         val built = mutableListOf<FrameLayout>()
         val deltas = mutableListOf<Pair<Float, Float>>()
@@ -216,7 +173,6 @@ class CircleBubbleMenu(
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         } catch (_: Exception) {
                         }
-                        hidePressLabel()
                         onSmsLongPress()
                     }
                     setOnTouchListener { v, ev ->
@@ -224,23 +180,12 @@ class CircleBubbleMenu(
                             MotionEvent.ACTION_DOWN -> {
                                 lpFired = false
                                 v.animate().scaleX(1.1f).scaleY(1.1f).setDuration(100).start()
-                                try {
-                                    val loc = IntArray(2)
-                                    v.getLocationOnScreen(loc)
-                                    showPressLabel(
-                                        labels[1],
-                                        loc[0] + v.width / 2,
-                                        loc[1] + v.height + (4 * density).toInt()
-                                    )
-                                } catch (_: Exception) {
-                                }
                                 handler.postDelayed(lpRunnable, 550)
                                 false
                             }
                             MotionEvent.ACTION_UP -> {
                                 handler.removeCallbacks(lpRunnable)
                                 v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
-                                hidePressLabel()
                                 if (lpFired) {
                                     lpFired = false
                                     true
@@ -263,7 +208,6 @@ class CircleBubbleMenu(
                             MotionEvent.ACTION_CANCEL -> {
                                 handler.removeCallbacks(lpRunnable)
                                 v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
-                                hidePressLabel()
                                 lpFired = false
                                 true
                             }
@@ -275,28 +219,9 @@ class CircleBubbleMenu(
                         when (ev.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
                                 v.animate().scaleX(1.1f).scaleY(1.1f).setDuration(100).start()
-                                try {
-                                    val loc = IntArray(2)
-                                    v.getLocationOnScreen(loc)
-                                    val cx = loc[0] + v.width / 2
-                                    // Proxy already carries its status line
-                                    // below it — float its tag above instead.
-                                    val top = if (i == 0) {
-                                        loc[1] - (20 * density).toInt()
-                                    } else {
-                                        loc[1] + v.height + (4 * density).toInt()
-                                    }
-                                    showPressLabel(labels[i], cx, top)
-                                } catch (_: Exception) {
-                                }
                             }
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
                                 v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
-                        }
-                        if (ev.actionMasked == MotionEvent.ACTION_UP ||
-                            ev.actionMasked == MotionEvent.ACTION_CANCEL
-                        ) {
-                            hidePressLabel()
                         }
                         false
                     }

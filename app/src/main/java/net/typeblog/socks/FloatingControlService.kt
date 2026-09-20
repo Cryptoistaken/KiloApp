@@ -1362,13 +1362,18 @@ class FloatingControlService : Service() {
     }
 
     private fun toggleCircleMenu() {
+        try {
+            bubbleView?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        } catch (_: Exception) {
+        }
         if (circleMenu?.isShowing() == true) circleMenu?.hide() else showCircleMenu()
     }
 
     // HTML trigger swap: Menu glyph normally, X while the menu is open.
-    // Exact mockup: 200ms opacity + blur(10px)->blur(0) swap. The blur lands
-    // on the whole trigger button (like the mockup's filtered motion.span),
-    // not just the glyph — API 31+; older devices keep the crossfade.
+    // Exact mockup: 200ms opacity + blur(10px)->blur(0) swap, with the whole-
+    // trigger blur held ~1s per tap. The blur lands on the whole trigger
+    // button (like the mockup's filtered motion.span), not just the glyph —
+    // API 31+; older devices keep the crossfade.
     private fun setCircleGlyph() {
         if (!isCircleStyle()) return
         try {
@@ -1393,10 +1398,13 @@ class FloatingControlService : Service() {
                     iv.setColorFilter(Color.WHITE)
                     iv.tag = target
                     iv.animate().alpha(1f).setDuration(200).withEndAction {
-                        try {
-                            if (blurOn) trigger?.setRenderEffect(null)
-                        } catch (_: Exception) {
-                        }
+                        // Hold the whole-trigger blur ~1s per tap, then clear.
+                        pollHandler.postDelayed({
+                            try {
+                                if (blurOn) trigger?.setRenderEffect(null)
+                            } catch (_: Exception) {
+                            }
+                        }, 600)
                     }.start()
                 } catch (_: Exception) {
                 }
@@ -1407,8 +1415,8 @@ class FloatingControlService : Service() {
 
     // Exact HTML MenuTrigger.closeAnimation: shake loop (translateX
     // [0,2,-2,0,2,-2,0]) repeating through the whole close while the trigger
-    // grows 1.0 -> 1.15 -> 1.3 (capped 1.5) with a whitening wash, then snaps
-    // back in 100ms.
+    // grows 1.0 -> 1.15 -> 1.3 (capped 1.5), then snaps back in 100ms.
+    // No color wash: the trigger stays #27272A throughout.
     private fun playMenuClosePulse() {
         val v = bubbleVisualView ?: bubbleView ?: return
         try {
@@ -1422,7 +1430,6 @@ class FloatingControlService : Service() {
                 shake.start()
             } catch (_: Exception) {
             }
-            val bg = (v.background as? GradientDrawable)?.mutate() as? GradientDrawable
             val steps = listOf(1f, 1.15f, 1.3f)
             fun step(i: Int) {
                 if (i >= steps.size) {
@@ -1435,29 +1442,15 @@ class FloatingControlService : Service() {
                             .setInterpolator(android.view.animation.OvershootInterpolator(2f))
                             .withEndAction {
                                 try {
-                                    bg?.setColor(Color.parseColor("#27272A"))
+                                    v.translationX = 0f
                                 } catch (_: Exception) {
                                 }
                             }.start()
                     } catch (_: Exception) {
                     }
-                    try {
-                        v.translationX = 0f
-                    } catch (_: Exception) {
-                    }
                     return
                 }
                 val s = steps[i].coerceAtMost(1.5f)
-                try {
-                    // #27272A washed toward white, like the HTML color-mix.
-                    val wash = when (i) {
-                        0 -> Color.parseColor("#3A3A3E")
-                        1 -> Color.parseColor("#52525B")
-                        else -> Color.parseColor("#71717A")
-                    }
-                    bg?.setColor(wash)
-                } catch (_: Exception) {
-                }
                 try {
                     v.animate().scaleX(s).scaleY(s).setDuration(35).withEndAction {
                         v.postDelayed({ step(i + 1) }, 70)

@@ -65,6 +65,7 @@ class SmsMenuOverlay(
     private val handler = Handler(Looper.getMainLooper())
     private val tickHandler = Handler(Looper.getMainLooper())
     private var rootView: FrameLayout? = null
+    private var scrollView: ScrollView? = null
     private var listView: LinearLayout? = null
     private var emptyView: ImageView? = null
     private var searchInput: EditText? = null
@@ -105,6 +106,7 @@ class SmsMenuOverlay(
             return
         }
         listView = list
+        scrollView = scroll
         emptyView = empty
         searchInput = input
         genWrap = genW
@@ -311,7 +313,9 @@ class SmsMenuOverlay(
 
     private fun render(list: LinearLayout, numbers: List<SmsNum>) {
         list.removeAllViews()
-        emptyView?.visibility = if (numbers.isEmpty()) View.VISIBLE else View.GONE
+        val empty = numbers.isEmpty()
+        emptyView?.visibility = if (empty) View.VISIBLE else View.GONE
+        scrollView?.visibility = if (empty) View.GONE else View.VISIBLE
         numbers.forEach { n -> list.addView(makeRow(n)) }
     }
 
@@ -361,6 +365,7 @@ class SmsMenuOverlay(
             }
         }
         rootView = null
+        scrollView = null
         listView = null
         emptyView = null
         searchInput = null
