@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -60,7 +62,8 @@ fun SettingsScreen(
     onNavigateToBubbleSettings: () -> Unit,
     onNavigateToDebugLogs: () -> Unit,
     onNavigateToAdvanceSettings: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateBack: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val prefs = PreferenceManager.getDefaultSharedPreferences(context)
@@ -113,6 +116,19 @@ fun SettingsScreen(
             .fillMaxSize()
             .padding(horizontal = 16.dp)
     ) {
+        if (onNavigateBack != null) {
+            item {
+                IconButton(
+                    onClick = onNavigateBack,
+                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.lucide_arrow_left),
+                        contentDescription = "Back"
+                    )
+                }
+            }
+        }
         item {
             Text(
                 text = "Settings",

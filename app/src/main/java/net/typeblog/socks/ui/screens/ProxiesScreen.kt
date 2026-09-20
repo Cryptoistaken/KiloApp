@@ -102,7 +102,8 @@ fun ProxiesScreen(
     viewModel: VpnViewModel,
     pickMode: Boolean = false,
     onPickProfile: ((String) -> Unit)? = null,
-    onPickCountryClick: () -> Unit = {}
+    onPickCountryClick: () -> Unit = {},
+    onNavigateBack: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val profiles by viewModel.profiles.collectAsState()
@@ -213,12 +214,28 @@ fun ProxiesScreen(
     ) { padding ->
         if (profiles.isEmpty()) {
             // Empty state
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
+                    .padding(padding)
             ) {
+                onNavigateBack?.let { back ->
+                    IconButton(
+                        onClick = back,
+                        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.lucide_arrow_left),
+                            contentDescription = "Back"
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = "No proxies configured",
@@ -235,6 +252,7 @@ fun ProxiesScreen(
                         textAlign = TextAlign.Center
                     )
                 }
+                }
             }
         } else {
             Column(
@@ -243,6 +261,17 @@ fun ProxiesScreen(
                     .padding(padding)
                     .padding(horizontal = 16.dp)
             ) {
+                onNavigateBack?.let { back ->
+                    IconButton(
+                        onClick = back,
+                        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.lucide_arrow_left),
+                            contentDescription = "Back"
+                        )
+                    }
+                }
                 if (pickMode) {
                     Text(
                         text = "Select a profile",

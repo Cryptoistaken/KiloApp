@@ -18,6 +18,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +36,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,7 +64,8 @@ fun CountriesScreen(
     onConnected: () -> Unit,
     modifier: Modifier = Modifier,
     pickMode: Boolean = false,
-    onPickCountry: ((String) -> Unit)? = null
+    onPickCountry: ((String) -> Unit)? = null,
+    onNavigateBack: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -196,6 +200,17 @@ fun CountriesScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
+        onNavigateBack?.let { back ->
+            IconButton(
+                onClick = back,
+                modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.lucide_arrow_left),
+                    contentDescription = "Back"
+                )
+            }
+        }
         Text(
             text = if (pickMode) "Select Country" else "Countries",
             style = MaterialTheme.typography.headlineSmall,

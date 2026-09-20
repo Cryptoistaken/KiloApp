@@ -38,6 +38,9 @@ import net.typeblog.socks.ui.screens.ProxiesScreen
 import net.typeblog.socks.ui.screens.CountriesScreen
 import net.typeblog.socks.ui.screens.RecentsScreen
 import net.typeblog.socks.ui.screens.StatusScreen
+import net.typeblog.socks.ui.screens.SheetScreen
+import net.typeblog.socks.ui.screens.SmsScreen
+import net.typeblog.socks.ui.screens.MoreScreen
 import net.typeblog.socks.ui.screens.BubbleSettingsScreen
 import net.typeblog.socks.ui.screens.SettingsScreen
 import net.typeblog.socks.ui.screens.SplitTunnelingScreen
@@ -51,6 +54,9 @@ sealed class Screen(val route: String) {
     data object Connect : Screen("connect")
     data object Countries : Screen("countries")
     data object Recents : Screen("recents")
+    data object Sheet : Screen("sheet")
+    data object Sms : Screen("sms")
+    data object More : Screen("more")
     data object Settings : Screen("settings")
     data object SplitTunneling : Screen("split_tunneling")
     data object Theme : Screen("theme")
@@ -67,10 +73,10 @@ private data class BottomNavItem(
 )
 
 private val bottomNavRoutes = listOf(
-    Screen.Profiles.route,
     Screen.Connect.route,
-    Screen.Countries.route,
-    Screen.Settings.route
+    Screen.Sheet.route,
+    Screen.Sms.route,
+    Screen.More.route
 ).toSet()
 
 @Composable
@@ -112,9 +118,9 @@ fun AppNavigation(splitAppsSignal: Int = 0) {
 
     val bottomNavItems = listOf(
         BottomNavItem(Screen.Connect, painterResource(R.drawable.ic_proton_house), painterResource(R.drawable.ic_proton_house_filled), "Home"),
-        BottomNavItem(Screen.Countries, painterResource(R.drawable.ic_proton_earth), painterResource(R.drawable.ic_proton_earth_filled), "Countries"),
-        BottomNavItem(Screen.Profiles, painterResource(R.drawable.ic_proton_window_terminal), painterResource(R.drawable.ic_proton_window_terminal_filled), "Profiles"),
-        BottomNavItem(Screen.Settings, painterResource(R.drawable.ic_proton_cog_wheel), painterResource(R.drawable.ic_proton_cog_wheel_filled), "Settings")
+        BottomNavItem(Screen.Sheet, painterResource(R.drawable.ic_tab_sheet), painterResource(R.drawable.ic_tab_sheet), "Sheet"),
+        BottomNavItem(Screen.Sms, painterResource(R.drawable.lucide_send), painterResource(R.drawable.lucide_send), "SMS"),
+        BottomNavItem(Screen.More, painterResource(R.drawable.ic_tab_more), painterResource(R.drawable.ic_tab_more), "More")
     )
 
     Scaffold(
@@ -190,7 +196,10 @@ fun AppNavigation(splitAppsSignal: Int = 0) {
                     onPickCountryClick = {
                         countryPickMode = true
                         navigateToTab(Screen.Countries.route)
-                    }
+                    },
+                    onNavigateBack = if (!profilePickMode) {
+                        { navController.popBackStack() }
+                    } else null
                 )
             }
             composable(Screen.Connect.route) {
@@ -232,7 +241,10 @@ fun AppNavigation(splitAppsSignal: Int = 0) {
                             countryPickMode = false
                             navigateToTab(Screen.Profiles.route)
                         }
-                    }
+                    },
+                    onNavigateBack = if (!(countryPickMode || homeCountryPickMode)) {
+                        { navController.popBackStack() }
+                    } else null
                 )
             }
             composable(Screen.Recents.route) {
@@ -247,6 +259,25 @@ fun AppNavigation(splitAppsSignal: Int = 0) {
                         navigateToTab(Screen.Connect.route)
                     },
                     onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(Screen.Sheet.route) {
+                SheetScreen()
+            }
+            composable(Screen.Sms.route) {
+                SmsScreen()
+            }
+            composable(Screen.More.route) {
+                MoreScreen(
+                    onCountriesClick = {
+                        navController.navigate(Screen.Countries.route)
+                    },
+                    onProfilesClick = {
+                        navController.navigate(Screen.Profiles.route)
+                    },
+                    onSettingsClick = {
+                        navController.navigate(Screen.Settings.route)
+                    }
                 )
             }
             composable(Screen.Settings.route) {
@@ -265,7 +296,8 @@ fun AppNavigation(splitAppsSignal: Int = 0) {
                     },
                     onNavigateToAdvanceSettings = {
                         navController.navigate(Screen.AdvanceSettings.route)
-                    }
+                    },
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
             composable(Screen.Theme.route) {
