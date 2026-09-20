@@ -293,7 +293,7 @@ class FloatingControlService : Service() {
             onSmsTap = { circleMenu?.hide(); provisionSmsNumber() },
             onSheetTap = { circleMenu?.hide(); toast("SheetSubmit coming soon") },
             onNameTap = { copyRandomName() },
-            onDismissed = { longPressFired = false }
+            onDismissed = { longPressFired = false; setCircleGlyph() }
         )
         prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == PREF_BUBBLE_STYLE) {
@@ -1040,7 +1040,7 @@ class FloatingControlService : Service() {
                     }
                     if (!dragging && !longPressFired) {
                         v.performClick()
-                        handleTap()
+                        if (isCircleStyle()) toggleCircleMenu() else handleTap()
                     }
                     val wasDragging = dragging
                     dragging = false
@@ -1255,17 +1255,40 @@ class FloatingControlService : Service() {
         longPressFired = true
         bubbleView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         if (isCircleStyle()) {
-            val prefs = PreferenceManager.getDefaultSharedPreferences(this)
-            circleMenu?.show(
-                (params?.x ?: 0) + bubbleWindowSizePx / 2,
-                (params?.y ?: 0) + bubbleWindowSizePx / 2,
-                prefs.getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL,
-                prefs.getInt(PREF_CIRCLE_SIZE, CIRCLE_SIZE_DEFAULT),
-                state == BubbleState.CONNECTED
-            )
+            showCircleMenu()
             return
         }
         openCountryMenu()
+    }
+
+    private fun showCircleMenu() {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        circleMenu?.show(
+            (params?.x ?: 0) + bubbleWindowSizePx / 2,
+            (params?.y ?: 0) + bubbleWindowSizePx / 2,
+            prefs.getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL,
+            prefs.getInt(PREF_CIRCLE_SIZE, CIRCLE_SIZE_DEFAULT),
+            state == BubbleState.CONNECTED
+        )
+        setCircleGlyph()
+    }
+
+    private fun toggleCircleMenu() {
+        if (circleMenu?.isShowing() == true) circleMenu?.hide() else showCircleMenu()
+    }
+
+    // HTML trigger swap: Menu glyph normally, X while the menu is open.
+    private fun setCircleGlyph() {
+        if (!isCircleStyle()) return
+        try {
+            iconView?.visibility = View.VISIBLE
+            progressBar?.visibility = View.GONE
+            iconView?.setImageResource(
+                if (circleMenu?.isShowing() == true) R.drawable.ic_close_x else R.drawable.ic_menu_burger
+            )
+            iconView?.setColorFilter(Color.WHITE)
+        } catch (_: Exception) {
+        }
     }
 
     private fun openCountryMenu() {
@@ -1614,9 +1637,7 @@ class FloatingControlService : Service() {
             BubbleState.CONNECTED -> {
                 progressBar?.visibility = View.GONE
                 if (isCircleStyle()) {
-                    iconView?.visibility = View.VISIBLE
-                    iconView?.setImageResource(R.drawable.ic_menu_burger)
-                    iconView?.setColorFilter(Color.WHITE)
+                    setCircleGlyph()
                     timerView?.visibility = View.GONE
                     stopTimer()
                 } else if (getConnectedSince() > 0L) {
@@ -1638,7 +1659,11 @@ class FloatingControlService : Service() {
             BubbleState.DISCONNECTED -> {
                 iconView?.visibility = View.VISIBLE
                 progressBar?.visibility = View.GONE
-                iconView?.setImageResource(if (isCircleStyle()) R.drawable.ic_menu_burger else R.drawable.ic_bubble_play)
+                iconView?.setImageResource(
+                    if (isCircleStyle()) {
+                        if (circleMenu?.isShowing() == true) R.drawable.ic_close_x else R.drawable.ic_menu_burger
+                    } else R.drawable.ic_bubble_play
+                )
                 iconView?.setColorFilter(Color.WHITE)
                 timerView?.visibility = View.GONE
                 stopTimer()
