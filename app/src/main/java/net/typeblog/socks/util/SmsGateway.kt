@@ -44,6 +44,7 @@ object SmsGateway {
     data class OtpState(
         val code: String?,
         val msgs: List<Pair<String, String>>,
+        val app: String = "",
     )
 
     fun provision(range: String): GatewayNumber? {
@@ -86,14 +87,17 @@ object SmsGateway {
         if (!root.optBoolean("ok")) return null
         val msgs = mutableListOf<Pair<String, String>>()
         val arr = root.optJSONArray("msgs")
+        var app = ""
         if (arr != null) {
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
                 msgs.add(o.optString("code") to o.optString("text"))
+                val a = o.optString("app")
+                if (a.isNotEmpty()) app = a
             }
         }
         val code = if (root.isNull("code")) null else root.optString("code")
-        return OtpState(code, msgs)
+        return OtpState(code, msgs, app)
     }
 
     val isConfigured: Boolean

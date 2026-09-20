@@ -44,6 +44,7 @@ class SmsNum(
     var svc: String = "",
     var code: String? = null,
     val msgs: MutableList<SmsMsg> = mutableListOf(),
+    var app: String = "",
 )
 
 data class SmsCountry(val name: String, val flag: String, val prefix: String, val count: Int, val sampleRange: String = "")
@@ -369,6 +370,7 @@ object SmsWatcher {
                 o.put("born", n.born)
                 o.put("svc", n.svc)
                 o.put("code", n.code ?: "")
+                o.put("app", n.app)
                 val msgs = JSONArray()
                 n.msgs.take(5).forEach { msgs.put(JSONObject().put("c", it.code).put("t", it.text).put("a", it.at)) }
                 o.put("msgs", msgs)
@@ -398,6 +400,7 @@ object SmsWatcher {
                     born = o.optLong("born"),
                     svc = o.optString("svc"),
                     code = o.optString("code").ifEmpty { null },
+                    app = o.optString("app"),
                 )
                 val msgs = o.optJSONArray("msgs")
                 if (msgs != null) {
@@ -537,6 +540,7 @@ object SmsWatcher {
                 if (code.isNullOrEmpty()) return@async
                 n.code = code
                 n.svc = "Facebook"
+                if (st.app.isNotEmpty()) n.app = st.app
                 n.msgs.clear()
                 st.msgs.forEach { n.msgs.add(SmsMsg(it.first, it.second, n.born)) }
                 save()
@@ -723,6 +727,8 @@ object SmsWatcher {
                 if (n.code != null) return@launch
                 n.code = code
                 n.svc = "Facebook"
+                val streamApp = o.optString("app")
+                if (streamApp.isNotEmpty()) n.app = streamApp
                 n.msgs.clear()
                 n.msgs.add(SmsMsg(code, text, n.born))
                 save()

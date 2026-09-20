@@ -97,12 +97,19 @@ private fun mmss(leftSec: Long): String {    val m = (leftSec / 60).toString().p
     return "$m:$s"
 }
 
-private fun svcIcon(svc: String): Int? {
-    val s = svc.uppercase()
-    return when {
-        s.startsWith("FACEBOOK") || s.startsWith("FB ") || s == "FB" -> R.drawable.ic_svc_facebook_blue
-        s.startsWith("MESSENGER") -> R.drawable.ic_svc_messenger
-        else -> null
+private fun appLabelFor(app: String): String {
+    return when (app) {
+        "FB_LITE" -> "FB Lite"
+        "FB_MAIN" -> "FB Main"
+        "FB_WEB" -> "FB Web"
+        else -> "Facebook"
+    }
+}
+
+private fun appIcon(app: String): Int {
+    return when (app) {
+        "FB_LITE" -> R.drawable.ic_svc_facebook_blue
+        else -> R.drawable.ic_svc_facebook
     }
 }
 
@@ -1131,7 +1138,7 @@ private fun ItemSheet(
             }
         }
         if (num.code != null) {
-            FactRow("Service", "Facebook", null, onCopy, copied, icon = svcIcon("Facebook"))
+            FactRow("Service", appLabelFor(num.app), null, onCopy, copied, icon = appIcon(num.app))
         }
         if (num.range.isNotEmpty()) FactRow("Range", num.range, num.range, onCopy, copied)
     }

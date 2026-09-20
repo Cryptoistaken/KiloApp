@@ -156,10 +156,11 @@ func pushFreshOtps(kept []OtpHit) {
 	}
 	cacheMu.Unlock()
 	for _, o := range fresh {
-		_, _, code := Classify(o.Message)
+		app, _, code := Classify(o.Message)
 		body, _ := json.Marshal(map[string]any{
 			"number": digitsOnly(o.Number), "code": code,
 			"text": o.Message, "at": o.Time,
+			"app": app, "appLabel": AppLabel(app),
 		})
 		event := append([]byte("event: otp\ndata: "), body...)
 		event = append(event, '\n', '\n')
@@ -231,10 +232,11 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, o := range replay {
-		_, _, code := Classify(o.Message)
+		app, _, code := Classify(o.Message)
 		body, _ := json.Marshal(map[string]any{
 			"number": digitsOnly(o.Number), "code": code,
 			"text": o.Message, "at": o.Time,
+			"app": app, "appLabel": AppLabel(app),
 		})
 		_, _ = w.Write(append(append([]byte("event: otp\ndata: "), body...), '\n', '\n'))
 	}
@@ -383,8 +385,11 @@ func handleOtp(w http.ResponseWriter, r *http.Request) {
 		if digitsOnly(o.Number) != number || o.Time <= since {
 			continue
 		}
-		_, _, code := Classify(o.Message)
-		msgs = append(msgs, map[string]any{"code": code, "text": o.Message, "at": o.Time})
+		app, _, code := Classify(o.Message)
+		msgs = append(msgs, map[string]any{
+			"code": code, "text": o.Message, "at": o.Time,
+			"app": app, "appLabel": AppLabel(app),
+		})
 	}
 	sort.Slice(msgs, func(i, j int) bool { return msgs[i]["at"].(int64) < msgs[j]["at"].(int64) })
 	if msgs == nil {
