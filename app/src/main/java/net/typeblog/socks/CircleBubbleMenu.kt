@@ -69,6 +69,7 @@ class CircleBubbleMenu(
     private var springs: List<SpringAnimation> = emptyList()
     private var lastAlign = ""
     private var hiding = false
+    private var animGen = 0
     private val handler = Handler(Looper.getMainLooper())
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
@@ -76,6 +77,8 @@ class CircleBubbleMenu(
     fun show(bx: Int, by: Int, align: String, sizeDp: Int, proxyConnected: Boolean) {
         hideNow()
         hiding = false
+        animGen++
+        val gen = animGen
         lastAlign = align
         val density = context.resources.displayMetrics.density
         // Button diameter follows the slider; spread stays fixed like the HTML
@@ -195,20 +198,24 @@ class CircleBubbleMenu(
         }
         rootView = root
 
-        // Entry: each item springs anchor -> slot, staggered.
+        // Entry: each item springs anchor -> slot, staggered. Like the HTML
+        // there is no fade on the motion itself; the small alpha-in only
+        // avoids a one-frame pop on the overlay window.
         val newSprings = mutableListOf<SpringAnimation>()
         built.forEachIndexed { i, btn ->
             val (dx, dy) = deltas[i]
             btn.translationX = dx
             btn.translationY = dy
+            btn.scaleX = 1f
+            btn.scaleY = 1f
             btn.alpha = 0f
-            btn.animate().alpha(1f).setStartDelay(i * openStaggerMs).setDuration(150).start()
+            btn.animate().alpha(1f).setStartDelay(i * openStaggerMs).setDuration(120).start()
             val sx = springTo(btn, DynamicAnimation.TRANSLATION_X, 0f)
             val sy = springTo(btn, DynamicAnimation.TRANSLATION_Y, 0f)
             newSprings.add(sx)
             newSprings.add(sy)
-            startSpring(sx, i * openStaggerMs)
-            startSpring(sy, i * openStaggerMs)
+            startSpring(sx, i * openStaggerMs, gen, requireOpen = true)
+            startSpring(sy, i * openStaggerMs, gen, requireOpen = true)
         }
         springs = newSprings
     }
@@ -223,6 +230,8 @@ class CircleBubbleMenu(
         val root = rootView ?: return
         if (hiding) return
         hiding = true
+        animGen++
+        val gen = animGen
         cancelSprings()
         try {
             onCloseAnim()
@@ -235,39 +244,55 @@ class CircleBubbleMenu(
         }
         val n = btnViews.size
         val line = isLineAlign(lastAlign)
+        // HTML close: items spring slot -> 0 (inside the trigger), staggered;
+        // the layer spins -360 only for circle. No early fade: the bubbles
+        // stay visible while they travel and only shrink out as they land
+        // inside, exactly like the mockup where they slide under the trigger.
+        val totalMs = closeStaggerMs * (n + 2)
         val newSprings = mutableListOf<SpringAnimation>()
         btnViews.forEachIndexed { i, btn ->
             val (dx, dy) = slots.getOrElse(i) { Pair(0f, 0f) }
             // HTML: lines close (n-1-i)*70ms, circle closes i*70ms.
             val d = if (line) (n - 1 - i) * closeStaggerMs else i * closeStaggerMs
+            try {
+                btn.animate().cancel()
+            } catch (_: Exception) {
+            }
+            btn.alpha = 1f
             val sx = springTo(btn, DynamicAnimation.TRANSLATION_X, dx)
             val sy = springTo(btn, DynamicAnimation.TRANSLATION_Y, dy)
             newSprings.add(sx)
             newSprings.add(sy)
-            startSpring(sx, d)
-            startSpring(sy, d)
-            btn.animate().alpha(0f).setStartDelay(d).setDuration(180).start()
+            startSpring(sx, d, gen, requireOpen = false)
+            startSpring(sy, d, gen, requireOpen = false)
+            // Shrink + fade only as the bubble lands inside the trigger,
+            // so the eye sees travel-then-swallow instead of vanish-in-place.
+            btn.animate()
+                .scaleX(0.2f).scaleY(0.2f).alpha(0f)
+                .setStartDelay(d + 180L).setDuration(150).start()
         }
         springs = newSprings
+        try {
+            box.animate().cancel()
+        } catch (_: Exception) {
+        }
         if (line) {
-            box.animate()
-                .alpha(0f)
-                .setDuration(closeStaggerMs * (n + 2))
-                .withEndAction { finishRemove() }
-                .start()
+            // Lines: no spin, no layer fade — just let the items fly home.
+            handler.postDelayed({ finishRemove() }, totalMs + 200L)
         } else {
             box.animate()
-                .rotation(-360f).alpha(0f)
-                .setDuration(closeStaggerMs * (n + 2))
+                .rotation(-360f)
+                .setDuration(totalMs)
                 .withEndAction { finishRemove() }
                 .start()
+            // Failsafe: never trap the scrim if an animator is cancelled.
+            handler.postDelayed({ finishRemove() }, totalMs + 400L)
         }
-        // Failsafe: never trap the scrim if an animator is cancelled.
-        handler.postDelayed({ finishRemove() }, closeStaggerMs * (n + 2) + 400L)
     }
 
     /** Immediate removal for destroy / config change / re-show. */
     fun hideNow() {
+        animGen++
         handler.removeCallbacksAndMessages(null)
         hiding = false
         cancelSprings()
@@ -283,15 +308,19 @@ class CircleBubbleMenu(
         }
     }
 
-    private fun startSpring(spring: SpringAnimation, delayMs: Long) {
+    private fun startSpring(spring: SpringAnimation, delayMs: Long, gen: Int, requireOpen: Boolean) {
         // DynamicAnimation has no start delay here: post the start instead.
-        // hideNow() clears these alongside everything else.
+        // Generation-guarded so a stale open start can never fire mid-close
+        // (the old `!hiding` gate blocked EVERY close spring — that was why
+        // bubbles faded in place instead of flying inside). hideNow() bumps
+        // the generation and clears these alongside everything else.
         handler.postDelayed({
-            if (isShowing() && !hiding) {
-                try {
-                    spring.start()
-                } catch (_: Exception) {
-                }
+            if (gen != animGen) return@postDelayed
+            if (requireOpen && hiding) return@postDelayed
+            if (!isShowing()) return@postDelayed
+            try {
+                spring.start()
+            } catch (_: Exception) {
             }
         }, delayMs)
     }
