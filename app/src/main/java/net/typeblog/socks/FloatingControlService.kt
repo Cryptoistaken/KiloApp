@@ -172,6 +172,7 @@ class FloatingControlService : Service() {
     private var longPressHandler = Handler(Looper.getMainLooper())
     private var longPressFired = false
     private var menuOverlay: BubbleMenuOverlay? = null
+    private var smsOverlay: SmsMenuOverlay? = null
     private var circleMenu: CircleBubbleMenu? = null
 
     private val longPressRunnable = Runnable { openBubbleMenu() }
@@ -286,13 +287,20 @@ class FloatingControlService : Service() {
             onExitRequested = { stopFloatingBubble() },
             onDismissed = { longPressFired = false }
         )
+        smsOverlay = SmsMenuOverlay(
+            this,
+            onNumberCopy = { display -> copySmsEntry(display) },
+            onNewNumber = { provisionSmsNumber(forceNew = true) },
+            onOpenSmsTab = { openSmsScreen() },
+            onDismissed = { longPressFired = false }
+        )
         circleMenu = CircleBubbleMenu(
             this,
             onProxyTap = { circleMenu?.hide(); handleTap() },
             onProxyLongPress = { circleMenu?.hide(); openCountryMenu() },
             onSmsTap = { circleMenu?.hide(); provisionSmsNumber() },
             onSmsDoubleTap = { circleMenu?.hide(); provisionSmsNumber(forceNew = true) },
-            onSmsLongPress = { circleMenu?.hide(); openSmsScreen() },
+            onSmsLongPress = { circleMenu?.hide(); openSmsPopup() },
             onSheetTap = { circleMenu?.hide(); toast("SheetSubmit coming soon") },
             onNameTap = { copyRandomName() },
             onDismissed = { longPressFired = false; setCircleGlyph() },
@@ -317,6 +325,7 @@ class FloatingControlService : Service() {
                 // its -night resources match the effective theme.
                 updateBubbleUi(state)
                 menuOverlay?.refreshTheme()
+                smsOverlay?.hide()
             }
         }
         PreferenceManager.getDefaultSharedPreferences(this).registerOnSharedPreferenceChangeListener(prefListener)
@@ -336,6 +345,7 @@ class FloatingControlService : Service() {
         super.onConfigurationChanged(newConfig)
         refreshWindowManager()
         menuOverlay?.onConfigurationChanged()
+        smsOverlay?.onConfigurationChanged()
         circleMenu?.hideNow()
         reClampBubblePosition()
         val nightYes = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
@@ -439,6 +449,7 @@ class FloatingControlService : Service() {
         }
         longPressHandler.removeCallbacks(longPressRunnable)
         menuOverlay?.hide()
+        smsOverlay?.hide()
         circleMenu?.hideNow()
         persistBubblePosition()
         removeFlagPillFromWindow()
@@ -1542,6 +1553,43 @@ class FloatingControlService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "SMS provision from bubble failed", e)
             toast("SMS unavailable right now")
+        }
+    }
+
+    // SMS long-press: same proxy-style panel, anchored at the bubble —
+    // numbers list, New number, Open SMS tab.
+    private fun openSmsPopup() {
+        try {
+            longPressFired = true
+            bubbleView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            val x = params?.x ?: 0
+            val y = params?.y ?: 0
+            smsOverlay?.show(
+                x + bubbleWindowSizePx / 2,
+                y + bubbleWindowSizePx / 2,
+                bubbleSizePx,
+                SmsWatcher.mine.toList()
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "open SMS popup failed", e)
+        }
+    }
+
+    // Popup number row: copy the arrived code, else the number itself.
+    private fun copySmsEntry(display: String) {
+        try {
+            val n = SmsWatcher.mine.firstOrNull { it.display == display }
+            val code = n?.code
+            if (code != null) {
+                copyText(code)
+                toast("Code copied: $code")
+            } else {
+                copyText(display)
+                toast("Number copied: $display")
+            }
+            bubbleView?.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        } catch (e: Exception) {
+            Log.e(TAG, "SMS popup copy failed", e)
         }
     }
 
