@@ -303,6 +303,12 @@ class FloatingControlService : Service() {
                 if (newStyle != bubbleStyle) {
                     recreateBubbleForStyleChange(newStyle)
                 }
+            } else if (key == PREF_CIRCLE_SIZE) {
+                // Slider grows the middle + side bubbles together: rebuild the
+                // Circle trigger at the new diameter live.
+                if (isCircleStyle()) {
+                    recreateBubbleForStyleChange(bubbleStyle)
+                }
             } else if (key == PREF_THEME_MODE) {
                 // Manual Theme pick: re-apply the theme-wired bubble elements
                 // (spinner tint, Connecting label) and re-inflate the popup so
@@ -520,14 +526,27 @@ class FloatingControlService : Service() {
             root.setOnTouchListener(createTouchListener())
             return root
         } else {
-            val sizePx = (60 * density).toInt()
+            // Circle trigger = size slider (like HTML S = size); Classic stays
+            // fixed 60dp. Items are (size - 2), so the middle grows together
+            // with the 4 side bubbles when the slider moves.
+            val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+            val circleDp = if (isCircleStyle()) {
+                prefs.getInt(PREF_CIRCLE_SIZE, CIRCLE_SIZE_DEFAULT)
+                    .coerceIn(
+                        net.typeblog.socks.util.Constants.CIRCLE_SIZE_MIN,
+                        net.typeblog.socks.util.Constants.CIRCLE_SIZE_MAX
+                    )
+            } else {
+                60
+            }
+            val sizePx = (circleDp * density).toInt()
             bubbleSizePx = sizePx
             val growMarginPx = (12 * density).toInt()
             bubbleGrowMarginPx = growMarginPx
             val windowSizePx = sizePx + 2 * growMarginPx
             bubbleWindowSizePx = windowSizePx
-            val glyphSizePx = (26 * density).toInt()
-            val progressSizePx = (26 * density).toInt()
+            val glyphSizePx = (sizePx * 0.43f).toInt().coerceAtLeast((18 * density).toInt())
+            val progressSizePx = (sizePx * 0.43f).toInt().coerceAtLeast((18 * density).toInt())
 
             val root = FrameLayout(this)
             root.clipChildren = false
@@ -1278,22 +1297,36 @@ class FloatingControlService : Service() {
         if (circleMenu?.isShowing() == true) circleMenu?.hide() else showCircleMenu()
     }
 
-    // HTML trigger swap: Menu glyph normally, X while the menu is open,
-    // crossfaded like the mockup's blur swap.
+    // HTML trigger swap: Menu glyph normally, X while the menu is open.
+    // Exact mockup timing: 200ms opacity + blur swap (blur on API 31+).
     private fun setCircleGlyph() {
         if (!isCircleStyle()) return
         try {
             val iv = iconView ?: return
             val target = if (circleMenu?.isShowing() == true) R.drawable.ic_close_x else R.drawable.ic_menu_burger
             if (iv.tag == target) return
-            iv.animate().alpha(0f).setDuration(100).withEndAction {
+            val blurOn = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            try {
+                if (blurOn) {
+                    iv.setRenderEffect(
+                        android.graphics.RenderEffect.createBlurEffect(10f, 10f, android.graphics.Shader.TileMode.CLAMP)
+                    )
+                }
+            } catch (_: Exception) {
+            }
+            iv.animate().alpha(0f).setDuration(200).withEndAction {
                 try {
                     iv.visibility = View.VISIBLE
                     progressBar?.visibility = View.GONE
                     iv.setImageResource(target)
                     iv.setColorFilter(Color.WHITE)
                     iv.tag = target
-                    iv.animate().alpha(1f).setDuration(100).start()
+                    iv.animate().alpha(1f).setDuration(200).withEndAction {
+                        try {
+                            if (blurOn) iv.setRenderEffect(null)
+                        } catch (_: Exception) {
+                        }
+                    }.start()
                 } catch (_: Exception) {
                 }
             }.start()
@@ -1301,16 +1334,61 @@ class FloatingControlService : Service() {
         }
     }
 
-    // Mockup's close shake + grow pulse on the trigger bubble.
+    // Exact HTML MenuTrigger.closeAnimation: shake loop (translateX
+    // [0,2,-2,0,2,-2,0], 70ms) while the trigger grows 1.0 -> 1.15 -> 1.3
+    // (capped 1.5) with a whitening wash, then snaps back in 100ms.
     private fun playMenuClosePulse() {
         val v = bubbleVisualView ?: bubbleView ?: return
         try {
             val dp = resources.displayMetrics.density
-            android.animation.ObjectAnimator.ofFloat(v, "translationX", 0f, 2 * dp, -2 * dp, 0f)
-                .setDuration(180).start()
-            v.animate().scaleX(1.12f).scaleY(1.12f).setDuration(120).withEndAction {
-                v.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
-            }.start()
+            val shake = android.animation.ObjectAnimator.ofFloat(
+                v, "translationX", 0f, 2 * dp, -2 * dp, 0f, 2 * dp, -2 * dp, 0f
+            ).setDuration(70)
+            try {
+                shake.start()
+            } catch (_: Exception) {
+            }
+            val bg = (v.background as? GradientDrawable)?.mutate() as? GradientDrawable
+            val steps = listOf(1f, 1.15f, 1.3f)
+            fun step(i: Int) {
+                if (i >= steps.size) {
+                    try {
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(100)
+                            .setInterpolator(android.view.animation.OvershootInterpolator(2f))
+                            .withEndAction {
+                                try {
+                                    bg?.setColor(Color.parseColor("#27272A"))
+                                } catch (_: Exception) {
+                                }
+                            }.start()
+                    } catch (_: Exception) {
+                    }
+                    try {
+                        v.translationX = 0f
+                    } catch (_: Exception) {
+                    }
+                    return
+                }
+                val s = steps[i].coerceAtMost(1.5f)
+                try {
+                    // #27272A washed toward white, like the HTML color-mix.
+                    val wash = when (i) {
+                        0 -> Color.parseColor("#3A3A3E")
+                        1 -> Color.parseColor("#52525B")
+                        else -> Color.parseColor("#71717A")
+                    }
+                    bg?.setColor(wash)
+                } catch (_: Exception) {
+                }
+                try {
+                    v.animate().scaleX(s).scaleY(s).setDuration(35).withEndAction {
+                        v.postDelayed({ step(i + 1) }, 70)
+                    }.start()
+                } catch (_: Exception) {
+                    v.postDelayed({ step(i + 1) }, 70)
+                }
+            }
+            step(0)
         } catch (_: Exception) {
         }
     }

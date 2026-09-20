@@ -290,12 +290,15 @@ fun BubbleSettingsScreen(
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerLow
                 ) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp, horizontal = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
                         CircleAlignPreview(
                             align = circleAlign,
-                            buttonDp = (circleSize * 0.45f).roundToInt().coerceAtLeast(16),
-                            boxW = 260,
-                            boxH = 200
+                            buttonDp = circleSize,
+                            boxW = 320,
+                            boxH = 300
                         )
                     }
                 }
@@ -379,9 +382,12 @@ private fun TickSlider(
 /**
  * Live diagram of the floating circle menu: center bubble + the 4 option
  * bubbles (Proxy/SMS/Sheet/Name) in the exact arrangement [align] produces
- * on screen. Same math as [net.typeblog.socks.CircleBubbleMenu]. Item
- * positions and sizes animate, so switching alignment or scrubbing the
- * size plays the transition live.
+ * on screen. Same fixed math as circle-bubble.html + [net.typeblog.socks.CircleBubbleMenu]:
+ * GAP 58dp / OFF 62dp for lines, 68.75dp radius for the small circle.
+ * Trigger = buttonDp, items = buttonDp - 2, so the middle hamburger grows
+ * together with the side bubbles when the slider moves. Item positions and
+ * sizes animate, so switching alignment or scrubbing the size plays the
+ * transition live.
  */
 @Composable
 private fun CircleAlignPreview(
@@ -390,11 +396,17 @@ private fun CircleAlignPreview(
     boxW: Int,
     boxH: Int
 ) {
-    val abtn by animateDpAsState(buttonDp.dp, spring(), label = "btn")
-    val gap = abtn + 12.dp
-    val off = abtn + 14.dp
-    // Tight ring around the anchor: visibly smaller than any line spread.
-    val r = abtn + 28.dp
+    // Trigger = full slider size, items = size - 2, exactly like the HTML.
+    val triggerDp = buttonDp.dp
+    val itemDp = (buttonDp - 2).coerceAtLeast(16).dp
+    val abtn by animateDpAsState(itemDp, spring(), label = "btn")
+    val centerDp by animateDpAsState(triggerDp, spring(), label = "center")
+    // Fixed spread from the HTML mockup: lines OFF 62 + GAP 58 per step,
+    // small circle radius 68.75. Slider never moves the spread, only the
+    // bubble diameters.
+    val gap = 58.dp
+    val off = 62.dp
+    val r = 68.75.dp
     fun pt(i: Int): Pair<Dp, Dp> = when (align) {
         CIRCLE_UP -> 0.dp to -(off + gap * i)
         CIRCLE_DOWN -> 0.dp to (off + gap * i)
@@ -404,14 +416,14 @@ private fun CircleAlignPreview(
     }
     val raw = List(4) { pt(it) }
     val half = abtn / 2
-    val minX = minOf(-half, raw.minOf { it.first - half })
-    val maxX = maxOf(half, raw.maxOf { it.first + half })
-    val minY = minOf(-half, raw.minOf { it.second - half })
-    val maxY = maxOf(half, raw.maxOf { it.second + half })
+    val centerHalf = centerDp / 2
+    val minX = minOf(-centerHalf, raw.minOf { it.first - half })
+    val maxX = maxOf(centerHalf, raw.maxOf { it.first + half })
+    val minY = minOf(-centerHalf, raw.minOf { it.second - half })
+    val maxY = maxOf(centerHalf, raw.maxOf { it.second + half })
     // Center the content (anchor + items) inside the box.
     val cx = boxW.dp / 2 - (minX + maxX) / 2
     val cy = boxH.dp / 2 - (minY + maxY) / 2
-    val centerDp = (abtn * 1.2f).coerceAtLeast(18.dp)
     val icons = listOf(
         R.drawable.ic_proton_lock_open_filled_2 to Color(0xFFCC2D4F),
         R.drawable.ic_tab_sms to Color(0xFF18181B),

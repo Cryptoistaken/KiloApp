@@ -23,15 +23,17 @@ import net.typeblog.socks.util.Constants.CIRCLE_UP
 
 /**
  * Floating circle menu: 4 option bubbles (Proxy/SMS/Sheet/Name) arranged
- * around the floating bubble's anchor point. Layout math mirrors the
- * settings live preview ([ui.screens.CircleAlignPreview]): same order,
- * same one-sided line offsets, same tight small-circle radius.
+ * around the floating bubble's anchor point. Layout math mirrors
+ * circle-bubble.html + ObsidianUI CircleMenu: fixed GAP 58dp / OFF 62dp for
+ * lines, fixed 68.75dp radius for the small circle, button diameter from the
+ * size slider (trigger = size, items = size - 2).
  *
  * Motion is an exact port of the HTML mockup (ObsidianUI CircleMenu):
- * items ride springs (stiffness 300, damping ratio 0.866) between the
- * anchor and their slot, staggered 20ms opening / 70ms closing; the items
- * layer spins a full turn on close; buttons squeeze on press (touch
- * equivalent of the mockup's hover grow).
+ * items ride springs (stiffness 300, damping 30 -> ratio 0.866) between the
+ * anchor and their slot; open stagger 20ms circle / 60ms lines; close stagger
+ * 70ms forward for circle, reverse cascade for lines; items-layer spins a full
+ * turn ONLY for circle (lines return straight, like the HTML); buttons grow
+ * 1.1x on press (touch equivalent of the mockup's hover grow).
  *
  * Full-screen scrim: tap outside dismisses. Proxy supports long-press
  * (opens the country menu); the rest are taps.
@@ -46,12 +48,17 @@ class CircleBubbleMenu(
     private val onDismissed: () -> Unit = {},
     private val onCloseAnim: () -> Unit = {}
 ) {
-    // HTML mockup motion constants.
-    private val openStaggerMs = 20L
+    // HTML mockup motion constants (ObsidianUI CircleMenu + circle-bubble.html).
+    private val openStaggerCircleMs = 20L
+    private val openStaggerLineMs = 60L
     private val closeStaggerMs = 70L
     private val springStiffness = 300f
     // framer damping 30 at stiffness 300 -> ratio 30 / (2 * sqrt(300)).
     private val springDamping = 0.866f
+
+    private fun isLineAlign(align: String): Boolean =
+        align == CIRCLE_UP || align == CIRCLE_DOWN ||
+            align == CIRCLE_RIGHT || align == CIRCLE_LEFT
 
     private var windowManager: WindowManager =
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -60,6 +67,7 @@ class CircleBubbleMenu(
     private var slots: List<Pair<Float, Float>> = emptyList()
     private var btnViews: List<FrameLayout> = emptyList()
     private var springs: List<SpringAnimation> = emptyList()
+    private var lastAlign = ""
     private var hiding = false
     private val handler = Handler(Looper.getMainLooper())
 
@@ -68,18 +76,23 @@ class CircleBubbleMenu(
     fun show(bx: Int, by: Int, align: String, sizeDp: Int, proxyConnected: Boolean) {
         hideNow()
         hiding = false
+        lastAlign = align
         val density = context.resources.displayMetrics.density
+        // Button diameter follows the slider; spread stays fixed like the HTML
+        // (GAP 58dp / OFF 62dp / small-circle radius 68.75dp) so the slider
+        // only grows the bubbles themselves, main + side together.
         val size = (sizeDp * density).toInt().coerceAtLeast(1)
-        val gap = size + (12 * density).toInt()
-        val off = size + (14 * density).toInt()
-        val r = size + (28 * density).toInt()
+        val gapPx = (58 * density).toInt()
+        val offPx = (62 * density).toInt()
+        val rPx = (68.75f * density).toInt()
         val pts: List<Pair<Int, Int>> = when (align) {
-            CIRCLE_UP -> List(4) { 0 to -(off + it * gap) }
-            CIRCLE_DOWN -> List(4) { 0 to (off + it * gap) }
-            CIRCLE_RIGHT -> List(4) { (off + it * gap) to 0 }
-            CIRCLE_LEFT -> List(4) { (-(off + it * gap)) to 0 }
-            else -> listOf(0 to -r, r to 0, 0 to r, -r to 0)
+            CIRCLE_UP -> List(4) { 0 to -(offPx + it * gapPx) }
+            CIRCLE_DOWN -> List(4) { 0 to (offPx + it * gapPx) }
+            CIRCLE_RIGHT -> List(4) { (offPx + it * gapPx) to 0 }
+            CIRCLE_LEFT -> List(4) { (-(offPx + it * gapPx)) to 0 }
+            else -> listOf(0 to -rPx, rPx to 0, 0 to rPx, -rPx to 0)
         }
+        val openStaggerMs = if (isLineAlign(align)) openStaggerLineMs else openStaggerCircleMs
 
         val root = FrameLayout(context).apply {
             setOnClickListener { hide() }
@@ -102,7 +115,9 @@ class CircleBubbleMenu(
         )
         val taps = listOf(onProxyTap, onSmsTap, onSheetTap, onNameTap)
         val metrics = context.resources.displayMetrics
-        val margin = size / 2 + (8 * density).toInt()
+        // HTML items are (size - 2); trigger is full size.
+        val itemSize = (size - 2 * density).toInt().coerceAtLeast(1)
+        val margin = itemSize / 2 + (8 * density).toInt()
 
         val built = mutableListOf<FrameLayout>()
         val deltas = mutableListOf<Pair<Float, Float>>()
@@ -118,15 +133,16 @@ class CircleBubbleMenu(
                     setColorFilter(tint)
                     scaleType = ImageView.ScaleType.FIT_CENTER
                 }
-                val glyph = (size * frac).toInt().coerceAtLeast(1)
+                val glyph = (itemSize * frac).toInt().coerceAtLeast(1)
                 addView(iv, FrameLayout.LayoutParams(glyph, glyph, Gravity.CENTER))
                 isClickable = true
                 isFocusable = true
-                // Touch equivalent of the mockup's hover grow: press squeeze.
+                // Touch equivalent of the mockup's whileHover scale 1.1,
+                // duration 0.1s, delay 0.
                 setOnTouchListener { v, ev ->
                     when (ev.actionMasked) {
                         MotionEvent.ACTION_DOWN ->
-                            v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(100).start()
+                            v.animate().scaleX(1.1f).scaleY(1.1f).setDuration(100).start()
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
                             v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
                     }
@@ -145,14 +161,15 @@ class CircleBubbleMenu(
             val cy = (by + dy).coerceIn(margin, (metrics.heightPixels - margin).coerceAtLeast(margin))
             box.addView(
                 btn,
-                FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.START).apply {
-                    leftMargin = cx - size / 2
-                    topMargin = cy - size / 2
+                FrameLayout.LayoutParams(itemSize, itemSize, Gravity.TOP or Gravity.START).apply {
+                    leftMargin = cx - itemSize / 2
+                    topMargin = cy - itemSize / 2
                 }
             )
             built.add(btn)
-            // Spring path: slot position relative to the anchor.
-            deltas.add(Pair((cx - bx).toFloat(), (cy - by).toFloat()))
+            // Spring path: anchor relative to the slot (bx - cx), so the
+            // button starts on the anchor and springs out to its slot at 0.
+            deltas.add(Pair((bx - cx).toFloat(), (by - cy).toFloat()))
         }
         btnViews = built
         slots = deltas
@@ -197,9 +214,10 @@ class CircleBubbleMenu(
     }
 
     /**
-     * Animated close: items spring slot -> anchor staggered 70ms while the
-     * layer spins a full turn and fades — the mockup's close, plus the
-     * trigger shake/pulse via [onCloseAnim].
+     * Animated close, per alignment like the HTML:
+     * circle spins the items-layer -360deg while items spring home forward;
+     * lines cascade home in reverse (last-in-first-out) with no spin.
+     * Trigger shake/pulse runs via [onCloseAnim].
      */
     fun hide() {
         val root = rootView ?: return
@@ -216,23 +234,34 @@ class CircleBubbleMenu(
             return
         }
         val n = btnViews.size
+        val line = isLineAlign(lastAlign)
         val newSprings = mutableListOf<SpringAnimation>()
         btnViews.forEachIndexed { i, btn ->
             val (dx, dy) = slots.getOrElse(i) { Pair(0f, 0f) }
+            // HTML: lines close (n-1-i)*70ms, circle closes i*70ms.
+            val d = if (line) (n - 1 - i) * closeStaggerMs else i * closeStaggerMs
             val sx = springTo(btn, DynamicAnimation.TRANSLATION_X, dx)
             val sy = springTo(btn, DynamicAnimation.TRANSLATION_Y, dy)
             newSprings.add(sx)
             newSprings.add(sy)
-            startSpring(sx, i * closeStaggerMs)
-            startSpring(sy, i * closeStaggerMs)
-            btn.animate().alpha(0f).setStartDelay(i * closeStaggerMs).setDuration(180).start()
+            startSpring(sx, d)
+            startSpring(sy, d)
+            btn.animate().alpha(0f).setStartDelay(d).setDuration(180).start()
         }
         springs = newSprings
-        box.animate()
-            .rotation(-360f).alpha(0f)
-            .setDuration(closeStaggerMs * (n + 2))
-            .withEndAction { finishRemove() }
-            .start()
+        if (line) {
+            box.animate()
+                .alpha(0f)
+                .setDuration(closeStaggerMs * (n + 2))
+                .withEndAction { finishRemove() }
+                .start()
+        } else {
+            box.animate()
+                .rotation(-360f).alpha(0f)
+                .setDuration(closeStaggerMs * (n + 2))
+                .withEndAction { finishRemove() }
+                .start()
+        }
         // Failsafe: never trap the scrim if an animator is cancelled.
         handler.postDelayed({ finishRemove() }, closeStaggerMs * (n + 2) + 400L)
     }
