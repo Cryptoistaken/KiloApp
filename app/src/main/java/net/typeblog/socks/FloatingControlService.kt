@@ -559,10 +559,21 @@ class FloatingControlService : Service() {
             circle.clipToPadding = false
             circle.layoutParams = FrameLayout.LayoutParams(sizePx, sizePx, Gravity.CENTER)
 
-            val (startColor, endColor) = stateGradient(BubbleState.DISCONNECTED)
-            val background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(startColor, endColor))
-            background.shape = GradientDrawable.OVAL
-            circle.background = background
+            if (isCircleStyle()) {
+                // HTML .cm-trigger: dark control button, always #27272A with
+                // a faint light border — never the VPN state gradient (state
+                // lives on the Proxy item's lock, not the trigger).
+                circle.background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#27272A"))
+                    setStroke((1 * density).toInt(), Color.argb(26, 255, 255, 255))
+                }
+            } else {
+                val (startColor, endColor) = stateGradient(BubbleState.DISCONNECTED)
+                val background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(startColor, endColor))
+                background.shape = GradientDrawable.OVAL
+                circle.background = background
+            }
 
             iconView = ImageView(this)
             iconView!!.layoutParams = FrameLayout.LayoutParams(glyphSizePx, glyphSizePx, Gravity.CENTER)
@@ -1290,7 +1301,29 @@ class FloatingControlService : Service() {
             prefs.getInt(PREF_CIRCLE_SIZE, CIRCLE_SIZE_DEFAULT),
             state == BubbleState.CONNECTED
         )
+        // HTML layering: .cm-trigger z-50 sits ABOVE .cm-items-layer z-0, so
+        // menus emerge from underneath the main button. The menu overlay is
+        // added after the bubble window (so it paints on top) — re-insert the
+        // bubble window so the trigger stays on top and items dive under it.
+        bringBubbleToFront()
         setCircleGlyph()
+    }
+
+    /**
+     * Re-inserts the bubble window above the full-screen circle-menu scrim.
+     * Same [params] (position preserved); no-op when the bubble isn't up.
+     */
+    private fun bringBubbleToFront() {
+        try {
+            val wm = windowManager ?: return
+            val view = bubbleView ?: return
+            val lp = params ?: return
+            if (!view.isAttachedToWindow) return
+            wm.removeView(view)
+            wm.addView(view, lp)
+        } catch (e: Exception) {
+            Log.e(TAG, "bringBubbleToFront failed", e)
+        }
     }
 
     private fun toggleCircleMenu() {
@@ -1298,17 +1331,20 @@ class FloatingControlService : Service() {
     }
 
     // HTML trigger swap: Menu glyph normally, X while the menu is open.
-    // Exact mockup timing: 200ms opacity + blur swap (blur on API 31+).
+    // Exact mockup: 200ms opacity + blur(10px)->blur(0) swap. The blur lands
+    // on the whole trigger button (like the mockup's filtered motion.span),
+    // not just the glyph — API 31+; older devices keep the crossfade.
     private fun setCircleGlyph() {
         if (!isCircleStyle()) return
         try {
             val iv = iconView ?: return
+            val trigger = bubbleVisualView
             val target = if (circleMenu?.isShowing() == true) R.drawable.ic_close_x else R.drawable.ic_menu_burger
             if (iv.tag == target) return
             val blurOn = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
             try {
                 if (blurOn) {
-                    iv.setRenderEffect(
+                    trigger?.setRenderEffect(
                         android.graphics.RenderEffect.createBlurEffect(10f, 10f, android.graphics.Shader.TileMode.CLAMP)
                     )
                 }
@@ -1323,7 +1359,7 @@ class FloatingControlService : Service() {
                     iv.tag = target
                     iv.animate().alpha(1f).setDuration(200).withEndAction {
                         try {
-                            if (blurOn) iv.setRenderEffect(null)
+                            if (blurOn) trigger?.setRenderEffect(null)
                         } catch (_: Exception) {
                         }
                     }.start()
@@ -1685,7 +1721,11 @@ class FloatingControlService : Service() {
     private fun updateBubbleUi(oldState: BubbleState) {
         val view = bubbleView ?: return
         val circle = bubbleVisualView ?: view
-        animateGradientTransition(oldState, state)
+        // Circle trigger stays dark #27272A like the HTML .cm-trigger in every
+        // VPN state — never run the gradient crossfade on it.
+        if (!isCircleStyle()) {
+            animateGradientTransition(oldState, state)
+        }
         stopBreathing()
 
         if (isLockStyle()) {
@@ -1814,6 +1854,7 @@ class FloatingControlService : Service() {
     }
 
     private fun animateGradientTransition(oldState: BubbleState, newState: BubbleState) {
+        if (isCircleStyle()) return
         if (bubbleVisualView == null && bubbleView == null) return
         val (oldStart, oldEnd) = stateGradient(oldState)
         val (newStart, newEnd) = stateGradient(newState)
@@ -1846,6 +1887,7 @@ class FloatingControlService : Service() {
      * constructed each time instead — cheap enough for a ~260ms crossfade.
      */
     private fun applyGradientColors(colors: IntArray) {
+        if (isCircleStyle()) return
         val view = bubbleVisualView ?: bubbleView ?: return
         val drawable = GradientDrawable(GradientDrawable.Orientation.TL_BR, colors)
         drawable.shape = GradientDrawable.OVAL
