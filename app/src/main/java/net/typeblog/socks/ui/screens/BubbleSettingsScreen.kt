@@ -14,6 +14,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -32,12 +34,14 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -80,7 +84,7 @@ import net.typeblog.socks.util.Constants.PREF_CIRCLE_SIZE
 import net.typeblog.socks.util.Constants.PREF_FLOATING_CONTROL
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BubbleSettingsScreen(
     onNavigateBack: () -> Unit,
@@ -214,7 +218,7 @@ fun BubbleSettingsScreen(
             SelectableStyleRow(
                 selected = circleActive,
                 onClick = { setStyle(BUBBLE_STYLE_CIRCLE) },
-                icon = painterResource(R.drawable.ic_proton_circle_half_filled),
+                icon = painterResource(R.drawable.ic_menu_burger),
                 title = "Circle"
             )
 
@@ -235,37 +239,23 @@ fun BubbleSettingsScreen(
                     CIRCLE_RIGHT to "Right",
                     CIRCLE_LEFT to "Left"
                 )
-                alignOptions.forEach { (value, label) ->
-                    val selected = circleAlign == value
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            prefs.edit().putString(PREF_CIRCLE_ALIGN, value).apply()
-                            circleAlign = value
-                        },
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow,
-                        tonalElevation = if (selected) 2.dp else 0.dp
-                    ) {
-                        Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = selected,
-                                onClick = {
-                                    prefs.edit().putString(PREF_CIRCLE_ALIGN, value).apply()
-                                    circleAlign = value
-                                }
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                label,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    alignOptions.forEach { (value, label) ->
+                        FilterChip(
+                            selected = circleAlign == value,
+                            onClick = {
+                                prefs.edit().putString(PREF_CIRCLE_ALIGN, value).apply()
+                                circleAlign = value
+                            },
+                            label = { Text(label) }
+                        )
                     }
-                    Spacer(Modifier.height(8.dp))
                 }
+                Spacer(Modifier.height(8.dp))
 
                 Text(
                     "Button size",
@@ -281,6 +271,20 @@ fun BubbleSettingsScreen(
                     },
                     modifier = Modifier.fillMaxWidth()
                 )
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                    TextButton(
+                        onClick = {
+                            circleSize = CIRCLE_SIZE_DEFAULT
+                            circleAlign = CIRCLE_SMALL
+                            prefs.edit()
+                                .putInt(PREF_CIRCLE_SIZE, CIRCLE_SIZE_DEFAULT)
+                                .putString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL)
+                                .apply()
+                        }
+                    ) {
+                        Text("Reset", color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -357,7 +361,7 @@ private fun TickSlider(
                             .width(2.dp)
                             .height(if (on) 20.dp else 10.dp)
                             .clip(CircleShape)
-                            .background(if (on) Color.White else Color.White.copy(alpha = 0.18f))
+                            .background(if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f))
                     )
                 }
             }
