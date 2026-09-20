@@ -65,7 +65,9 @@ import net.typeblog.socks.util.SmsCountry
 import net.typeblog.socks.util.SmsGateway
 import net.typeblog.socks.util.SmsNum
 import net.typeblog.socks.util.SmsWatcher
+import net.typeblog.socks.util.smsFlagFor
 import net.typeblog.socks.util.smsIsRangePat
+import net.typeblog.socks.util.smsNameFlagForIso
 import net.typeblog.socks.util.smsTimeAgo
 import java.util.Calendar
 import kotlin.math.roundToInt
@@ -789,12 +791,13 @@ private fun ItemSheet(
     copied: String?,
     onGet: () -> Unit,
 ) {
-    val flag = num?.flag ?: ""
+    val flag = num?.flag ?: live?.iso?.let { smsFlagFor(it) }.orEmpty()
     val number = num?.display ?: (live?.masked ?: "")
     val isExpired = num != null && num.born + SMS_EXPIRE_SEC * 1000 <= now
+    val liveCty = live?.iso?.let { smsNameFlagForIso(it).first }.orEmpty()
     val sub = when {
         num != null -> subLine(num, now) + if (isExpired) " - expired" else ""
-        live != null -> "${live.svc} - ${smsTimeAgo(live.at, now)}"
+        live != null -> listOf(live.svc, liveCty, smsTimeAgo(live.at, now)).filter { it.isNotEmpty() }.joinToString(" - ")
         else -> ""
     }
     val code = num?.code ?: live?.code

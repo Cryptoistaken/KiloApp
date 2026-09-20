@@ -27,6 +27,7 @@ object SmsGateway {
         val lang: String = "",
         val appLabel: String = "",
         val methodLabel: String = "",
+        val iso: String = "",
     ) {
         val appName: String get() = appLabel.ifEmpty { app }
         val methodName: String get() = methodLabel.ifEmpty { method }
@@ -140,6 +141,7 @@ object SmsGateway {
                     lang = o.optString("lang"),
                     appLabel = o.optString("appLabel"),
                     methodLabel = o.optString("methodLabel"),
+                    iso = o.optString("iso"),
                 )
             )
         }

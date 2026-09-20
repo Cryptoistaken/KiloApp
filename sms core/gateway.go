@@ -280,6 +280,7 @@ func handleFeed(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]any{
 			"masked": MaskMiddle(h.Range), "svc": svc, "method": method, "app": app,
 			"appLabel": AppLabel(app), "methodLabel": MethodLabel(method),
+			"iso":  IsoFromPrefix(digitsOnly(h.Range)),
 			"code": code, "msg": h.Message, "range": h.Range, "at": h.Time,
 		})
 		if len(items) >= limit {
