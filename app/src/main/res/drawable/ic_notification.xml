@@ -1,15 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Notification small icon: G-mark silhouette in white on transparent.
-      Small icons must be an alpha mask (white, no background) or SystemUI
-      tints a full-color launcher PNG into a blank square. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="256"
     android:viewportHeight="256">
-    <path android:fillColor="#FFFFFFFF" android:pathData="M173.2 82.8c25 25 25 65.5 0 90.5c-12.5 12.5-12.5 32.8 0 45.2c12.5 12.5 32.8 12.5 45.3 0c50-50 50-131 0-181z" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M218.4 37.5c-50-50-130.9-50-180.9 0s-50 131 0 181l45.3-45.2c-25-25-25-65.5 0-90.5s65.5-25 90.5 0c12.5 12.5 32.8 12.5 45.3 0c12.3-12.5 12.3-32.8-0.2-45.3" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="m218.4 218.5l-45.3-45.2c-25 25-65.5 25-90.5 0l-45.3 45.2c50.2 50 131.1 50 181.1 0" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M173.2 173.3c12.5-12.5 32.7-12.5 45.2 0s12.5 32.8 0 45.3s-32.7 12.5-45.2 0s-12.5-32.8 0-45.3" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M37.5 173.3c12.5-12.5 32.7-12.5 45.2 0s12.5 32.8 0 45.3s-32.7 12.5-45.2 0s-12.5-32.8 0-45.3" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M173.2 82.8c25 25 25 65.5 0 90.5-12.5 12.5-12.5 32.8 0 45.2 12.5 12.5 32.8 12.5 45.3 0 50-50 50-131 0-181z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M218.4 37.5c-50-50-130.9-50-180.9 0s-50 131 0 181l45.3-45.2c-25-25-25-65.5 0-90.5s65.5-25 90.5 0c12.5 12.5 32.8 12.5 45.3 0 12.3-12.5 12.3-32.8-0.2-45.3" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="m218.4 218.5-45.3-45.2c-25 25-65.5 25-90.5 0l-45.3 45.2c50.2 50 131.1 50 181.1 0" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M173.2 173.3c12.5-12.5 32.7-12.5 45.2 0s12.5 32.8 0 45.3-32.7 12.5-45.2 0-12.5-32.8 0-45.3" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M37.5 173.3c12.5-12.5 32.7-12.5 45.2 0s12.5 32.8 0 45.3-32.7 12.5-45.2 0-12.5-32.8 0-45.3" />
 </vector>
