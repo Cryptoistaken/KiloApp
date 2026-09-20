@@ -186,11 +186,14 @@ class CircleBubbleMenu(
             btn.translationY = dy
             btn.alpha = 0f
             btn.animate().alpha(1f).setStartDelay(i * openStaggerMs).setDuration(150).start()
-            newSprings.add(springTo(btn, DynamicAnimation.TRANSLATION_X, 0f, i * openStaggerMs))
-            newSprings.add(springTo(btn, DynamicAnimation.TRANSLATION_Y, 0f, i * openStaggerMs))
+            val sx = springTo(btn, DynamicAnimation.TRANSLATION_X, 0f)
+            val sy = springTo(btn, DynamicAnimation.TRANSLATION_Y, 0f)
+            newSprings.add(sx)
+            newSprings.add(sy)
+            startSpring(sx, i * openStaggerMs)
+            startSpring(sy, i * openStaggerMs)
         }
         springs = newSprings
-        newSprings.forEach { it.start() }
     }
 
     /**
@@ -216,12 +219,15 @@ class CircleBubbleMenu(
         val newSprings = mutableListOf<SpringAnimation>()
         btnViews.forEachIndexed { i, btn ->
             val (dx, dy) = slots.getOrElse(i) { Pair(0f, 0f) }
-            newSprings.add(springTo(btn, DynamicAnimation.TRANSLATION_X, dx, i * closeStaggerMs))
-            newSprings.add(springTo(btn, DynamicAnimation.TRANSLATION_Y, dy, i * closeStaggerMs))
+            val sx = springTo(btn, DynamicAnimation.TRANSLATION_X, dx)
+            val sy = springTo(btn, DynamicAnimation.TRANSLATION_Y, dy)
+            newSprings.add(sx)
+            newSprings.add(sy)
+            startSpring(sx, i * closeStaggerMs)
+            startSpring(sy, i * closeStaggerMs)
             btn.animate().alpha(0f).setStartDelay(i * closeStaggerMs).setDuration(180).start()
         }
         springs = newSprings
-        newSprings.forEach { it.start() }
         box.animate()
             .rotation(-360f).alpha(0f)
             .setDuration(closeStaggerMs * (n + 2))
@@ -239,14 +245,26 @@ class CircleBubbleMenu(
         finishRemove()
     }
 
-    private fun springTo(view: FrameLayout, property: DynamicAnimation.ViewProperty, target: Float, delayMs: Long): SpringAnimation {
+    private fun springTo(view: FrameLayout, property: DynamicAnimation.ViewProperty, target: Float): SpringAnimation {
         return SpringAnimation(view, property, target).apply {
             spring = SpringForce(target).apply {
                 stiffness = springStiffness
                 dampingRatio = springDamping
             }
-            setStartDelay(delayMs)
         }
+    }
+
+    private fun startSpring(spring: SpringAnimation, delayMs: Long) {
+        // DynamicAnimation has no start delay here: post the start instead.
+        // hideNow() clears these alongside everything else.
+        handler.postDelayed({
+            if (isShowing() && !hiding) {
+                try {
+                    spring.start()
+                } catch (_: Exception) {
+                }
+            }
+        }, delayMs)
     }
 
     private fun cancelSprings() {
