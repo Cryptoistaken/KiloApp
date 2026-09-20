@@ -35,8 +35,6 @@ object SmsGateway {
 
     data class MetaCountry(val prefix: String, val range: String)
 
-    typealias Meta = Pair<List<MetaCountry>, List<String>>
-
     data class GatewayNumber(        val full: String,
         val display: String,
         val country: String,
@@ -151,7 +149,7 @@ object SmsGateway {
         return out
     }
 
-    fun meta(): Meta? {
+    fun meta(): Pair<List<MetaCountry>, List<String>>? {
         val root = get("/v1/meta") ?: return null
         if (!root.optBoolean("ok")) return null
         val countries = mutableListOf<MetaCountry>()
