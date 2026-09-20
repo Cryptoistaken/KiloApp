@@ -38,7 +38,7 @@ class SmsNum(
     val msgs: MutableList<SmsMsg> = mutableListOf(),
 )
 
-data class SmsCountry(val name: String, val flag: String, val prefix: String, val count: Int)
+data class SmsCountry(val name: String, val flag: String, val prefix: String, val count: Int, val sampleRange: String = "")
 
 private val PrefixIsoFull = mapOf(
     "1" to "CA",
@@ -451,10 +451,10 @@ object SmsWatcher {
             val meta = withContext(Dispatchers.IO) { SmsGateway.meta() }
             if (meta != null) {
                 countries.clear()
-                meta.first.forEach { prefix ->
-                    val (name, flag) = smsCountryForPrefix(prefix)
-                    val count = feed.count { it.range.startsWith(prefix) }
-                    countries.add(SmsCountry(name, flag, prefix, count))
+                meta.first.forEach { mc ->
+                    val (name, flag) = smsCountryForPrefix(mc.prefix)
+                    val count = feed.count { it.range.startsWith(mc.prefix) }
+                    countries.add(SmsCountry(name, flag, mc.prefix, count, mc.range))
                 }
                 countries.sortByDescending { it.count }
             }

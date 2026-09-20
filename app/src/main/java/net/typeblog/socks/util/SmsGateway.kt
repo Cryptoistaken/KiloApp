@@ -33,8 +33,11 @@ object SmsGateway {
         val methodName: String get() = methodLabel.ifEmpty { method }
     }
 
-    data class GatewayNumber(
-        val full: String,
+    data class MetaCountry(val prefix: String, val range: String)
+
+    typealias Meta = Pair<List<MetaCountry>, List<String>>
+
+    data class GatewayNumber(        val full: String,
         val display: String,
         val country: String,
         val range: String,
@@ -148,14 +151,15 @@ object SmsGateway {
         return out
     }
 
-    fun meta(): Pair<List<String>, List<String>>? {
+    fun meta(): Meta? {
         val root = get("/v1/meta") ?: return null
         if (!root.optBoolean("ok")) return null
-        val countries = mutableListOf<String>()
+        val countries = mutableListOf<MetaCountry>()
         val cArr = root.optJSONArray("countries")
         if (cArr != null) {
             for (i in 0 until cArr.length()) {
-                countries.add(cArr.optJSONObject(i)?.optString("prefix") ?: "")
+                val o = cArr.optJSONObject(i) ?: continue
+                countries.add(MetaCountry(o.optString("prefix"), o.optString("range")))
             }
         }
         val services = mutableListOf<String>()

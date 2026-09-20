@@ -249,8 +249,8 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 )
                 is Sheet.Confirm -> ConfirmSheet(
                     country = sh.country, busy = busy,
-                    onGet = {
-                        SmsWatcher.provision(sh.country.prefix + "XXX") { n ->
+                    onGet = { pat ->
+                        SmsWatcher.provision(pat) { n ->
                             if (n != null) sheet = Sheet.Item(n)
                         }
                     },
@@ -812,13 +812,25 @@ private fun CountrySheet(countries: List<SmsCountry>, onPick: (SmsCountry) -> Un
 }
 
 @Composable
-private fun ConfirmSheet(country: SmsCountry, busy: Boolean, onGet: () -> Unit) {
+private fun ConfirmSheet(country: SmsCountry, busy: Boolean, onGet: (String) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(16.dp)) {
         Text(text = "Confirm", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(text = "Facebook - ${country.name} (${country.prefix})", style = MaterialTheme.typography.bodyLarge)
+        if (country.sampleRange.isNotEmpty()) {
+            Text(
+                text = "Range ${country.sampleRange}",
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(Modifier.height(12.dp))
-        Button(onClick = onGet, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = { onGet(country.sampleRange.ifEmpty { country.prefix + "XXX" }) },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Text(if (busy) "..." else "Get number")
         }
     }

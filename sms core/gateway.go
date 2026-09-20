@@ -394,6 +394,7 @@ func handleMeta(w http.ResponseWriter, r *http.Request) {
 		prefix   string
 		count    int
 		services map[string]bool
+		ranges   map[string]int
 	}
 	cm := map[string]*agg{}
 	svcCount := map[string]int{}
@@ -407,10 +408,11 @@ func handleMeta(w http.ResponseWriter, r *http.Request) {
 		}
 		a := cm[p3]
 		if a == nil {
-			a = &agg{prefix: p3, services: map[string]bool{}}
+			a = &agg{prefix: p3, services: map[string]bool{}, ranges: map[string]int{}}
 			cm[p3] = a
 		}
 		a.count++
+		a.ranges[h.Range]++
 		if h.Sid != "" {
 			svc := strings.ToUpper(strings.TrimSpace(h.Sid))
 			a.services[svc] = true
@@ -424,8 +426,14 @@ func handleMeta(w http.ResponseWriter, r *http.Request) {
 			svcs = append(svcs, s)
 		}
 		sort.Strings(svcs)
+		topRange, topN := "", 0
+		for r, n := range a.ranges {
+			if n > topN {
+				topRange, topN = r, n
+			}
+		}
 		countries = append(countries, map[string]any{
-			"prefix": a.prefix, "count": a.count, "services": svcs,
+			"prefix": a.prefix, "count": a.count, "services": svcs, "range": topRange,
 		})
 	}
 	sort.Slice(countries, func(i, j int) bool { return countries[i]["count"].(int) > countries[j]["count"].(int) })
