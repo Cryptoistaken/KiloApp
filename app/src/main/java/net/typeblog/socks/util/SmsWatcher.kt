@@ -313,9 +313,10 @@ fun smsIsRangePat(s: String): Boolean {
 
 /**
  * App-scoped SMS state. Outlives the SMS tab so OTP polling and arrival
- * notifications keep working while the user is on other tabs.
- * Started once from the application class; polling only runs while the
- * app process is alive (no foreground service yet).
+ * notifications keep working while the user is on other tabs. A dataSync
+ * foreground service ([SmsOtpService], started on every provision) keeps
+ * the process + network alive while a number is waiting, so pickup is
+ * instant even with the app backgrounded.
  */
 object SmsWatcher {
     val mine = mutableStateListOf<SmsNum>()
@@ -486,6 +487,7 @@ object SmsWatcher {
             )
             mine.add(0, n)
             save()
+            app?.let { SmsOtpService.start(it) }
             onDone(n)
         }
     }
