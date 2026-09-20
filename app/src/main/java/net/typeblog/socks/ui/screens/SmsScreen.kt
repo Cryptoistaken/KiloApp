@@ -161,7 +161,10 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     fun onGet(pat: String) {
         if (smsIsRangePat(pat)) {
             SmsWatcher.provision(pat.filter { it.isDigit() || it == 'X' || it == 'x' }) { n ->
-                if (n != null) sheet = Sheet.Item(n)
+                if (n != null) {
+                    sheet = Sheet.Item(n)
+                    tapCopy(n.display)
+                }
             }
         } else {
             sheet = Sheet.Countries
@@ -173,6 +176,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
             if (nn != null) {
                 mine.removeAll { it.id == n.id }
                 sheet = Sheet.Item(nn)
+                tapCopy(nn.display)
             }
         }
     }
@@ -215,6 +219,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                         if (nn != null) {
                             search = ""
                             sheet = Sheet.Item(nn)
+                            tapCopy(nn.display)
                         }
                     }
                 },
@@ -253,7 +258,10 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                     country = sh.country, busy = busy,
                     onGet = { pat ->
                         SmsWatcher.provision(pat) { n ->
-                            if (n != null) sheet = Sheet.Item(n)
+                            if (n != null) {
+                                sheet = Sheet.Item(n)
+                                tapCopy(n.display)
+                            }
                         }
                     },
                 )
@@ -899,7 +907,7 @@ private fun ItemSheet(
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.clickable { onCopy(num.full) }
+                    modifier = Modifier.clickable { onCopy(num.display) }
                 )
                 Text(text = sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
