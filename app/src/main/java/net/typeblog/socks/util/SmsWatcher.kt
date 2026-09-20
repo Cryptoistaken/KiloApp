@@ -292,7 +292,7 @@ fun smsMaskNum(full: String): String {
     if (digits.length < 5) return "+$full"
     val i = digits.length / 2
     val m = digits.substring(0, i) + "X" + digits.substring(i + 1)
-    return "+" + m.chunked(3).joinToString(" ")
+    return "+$m"
 }
 
 fun smsTimeAgo(ts: Long, now: Long): String {
@@ -376,7 +376,7 @@ object SmsWatcher {
                 val o = arr.optJSONObject(i) ?: continue
                 val n = SmsNum(
                     id = o.optLong("id", nextId++),
-                    display = o.optString("display"),
+                    display = o.optString("display").replace(" ", ""),
                     full = o.optString("full"),
                     country = o.optString("country"),
                     flag = o.optString("flag"),
@@ -476,7 +476,7 @@ object SmsWatcher {
             val actualName = if (g.country.isNotEmpty() && g.country != "Unknown") g.country else name
             val n = SmsNum(
                 id = nextId++,
-                display = g.display.ifEmpty { "+" + g.full },
+                display = g.display.replace(" ", "").ifEmpty { "+" + g.full },
                 full = g.full,
                 country = actualName,
                 flag = flag,
