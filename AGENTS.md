@@ -145,6 +145,12 @@ codebase stays clean without future cleanups:
 7. **Refactors: snapshot tag first, one concern per commit**, update the
    Filesystem Map in the same commit, CI green before the next batch.
 
+## Roadmap (planned, not started)
+
+- SheetSubmit feature.
+- KiloSMS features.
+- Final goal: a new `circle-bubble.html`-style control bubble that controls everything. Tons of work required — plan placeholder only for now.
+
 ## Filesystem Map & References (KEEP UPDATED)
 
 > **Rule:** Whenever the repo structure changes (files/dirs added, moved, renamed, or deleted), update this map in the same commit. Read this section first for fast orientation instead of re-scanning the tree.
