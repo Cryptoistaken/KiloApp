@@ -69,6 +69,7 @@ object SmsNotify {
             .build()
         manager(context)?.notify(notifId, notification)
         buzz(context)
+        SmsLog.log(context, "OTP", "shown $code for $display")
     }
 
     /** Short tick for arrivals and copies (OTP shown, number copied). */

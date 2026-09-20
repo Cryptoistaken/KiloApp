@@ -16,6 +16,7 @@ class SmsAlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context == null || intent?.action != ACTION_POLL) return
+        SmsLog.log(context, "ALARM", "heartbeat poll")
         val result = goAsync()
         fun done() {
             try {

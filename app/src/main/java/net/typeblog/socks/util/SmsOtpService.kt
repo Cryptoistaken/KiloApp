@@ -65,6 +65,7 @@ class SmsOtpService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            SmsLog.log(this, "SVC", "stopped by user action")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -74,9 +75,11 @@ class SmsOtpService : Service() {
             goForeground(pendingCount())
         } catch (e: Exception) {
             Log.w(TAG, "startForeground failed", e)
+            SmsLog.log(this, "SVC", "startForeground FAILED ${e.message}")
             stopSelf()
             return START_NOT_STICKY
         }
+        SmsLog.log(this, "SVC", "watching, pending=${pendingCount()}")
         // A foreground service keeps the process alive and network-allowed,
         // but NOT the CPU awake: without a partial wake lock the poll timer
         // and socket timeouts freeze on screen-off and everything fires at
@@ -87,6 +90,7 @@ class SmsOtpService : Service() {
             wakeLock?.acquire(10 * 60 * 1000L)
         } catch (e: Exception) {
             Log.w(TAG, "wake lock acquire failed", e)
+            SmsLog.log(this, "SVC", "wakelock FAILED ${e.message}")
         }
         if (loop == null) {
             loop = scope.launch { watchLoop() }
@@ -123,6 +127,7 @@ class SmsOtpService : Service() {
             val pending = withContext(Dispatchers.Main) { pendingCount() }
             if (pending == 0 || !SmsGateway.isConfigured) {
                 if (++idleRounds >= 3) {
+                    SmsLog.log(this@SmsOtpService, "SVC", "idle stop, no waiting numbers")
                     stopSelf()
                     break
                 }

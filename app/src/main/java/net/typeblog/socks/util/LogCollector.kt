@@ -30,6 +30,8 @@ object LogCollector {
         // capture every process of this package — not just the UI process.
         val pids = appProcessPids(context)
         val output = buildString {
+            appendLine("--- sms events (in-app file log) ---")
+            appendLine(SmsLog.read(context))
             for ((i, pid) in pids.withIndex()) {
                 if (i > 0) appendLine("--- process $pid ---")
                 append(runLogcat(pid))

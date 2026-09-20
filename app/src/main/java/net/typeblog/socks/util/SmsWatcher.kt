@@ -486,6 +486,7 @@ object SmsWatcher {
             busy = false
             if (g == null || g.full.isEmpty()) {
                 fail("No numbers available, try again")
+                SmsLog.log(app, "GET", "provision FAILED for $pat")
                 app?.let { SmsNotify.buzzFail(it) }
                 onDone(null)
                 return@launch
@@ -503,6 +504,7 @@ object SmsWatcher {
             )
             mine.add(0, n)
             save()
+            SmsLog.log(app, "GET", "provisioned ${n.display} range=$pat")
             app?.let {
                 SmsOtpService.start(it)
                 armHeartbeat(it)
@@ -525,7 +527,11 @@ object SmsWatcher {
         mine.toList().map { n ->
             async {
                 if (n.code != null) return@async
-                val st = withContext(Dispatchers.IO) { SmsGateway.otp(n.full) } ?: return@async
+                val st = withContext(Dispatchers.IO) { SmsGateway.otp(n.full) }
+                if (st == null) {
+                    SmsLog.log(app, "POLL", "fetch failed ${n.full}")
+                    return@async
+                }
                 val code = st.code?.ifEmpty { null }
                     ?: st.msgs.lastOrNull { it.first.isNotEmpty() }?.first
                 if (code.isNullOrEmpty()) return@async
@@ -640,6 +646,7 @@ object SmsWatcher {
                 // Same: a dead connection must not keep suppressing polls
                 // through backoff/park on a stale heartbeat timestamp.
                 streamAliveAt = 0L
+                SmsLog.log(app, "STREAM", "err ${e.message} fails=$fastFails")
                 val lived = System.currentTimeMillis() - connectedAt
                 if (lived < 15000) {
                     fastFails++
@@ -648,6 +655,7 @@ object SmsWatcher {
                     backoff = 5000L
                 }
                 if (fastFails >= 3) {
+                    SmsLog.log(app, "STREAM", "parked 60s after 3 fast fails")
                     delay(60000)
                     fastFails = 0
                     backoff = 10000L
