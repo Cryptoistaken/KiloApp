@@ -67,11 +67,25 @@ func refreshFeed() {
 		}()
 	}
 	cutoff := time.Now().UnixMilli() - 5*60*1000
-	var kept []FeedHit
+	// Dedupe by range+code, keeping the FIRST-seen time: upstreams re-list
+	// the same OTP on later polls, which used to make old rows look new.
+	seen := map[string]FeedHit{}
+	order := []string{}
 	for _, h := range all {
-		if h.Time >= cutoff {
-			kept = append(kept, h)
+		if h.Time < cutoff {
+			continue
 		}
+		key := h.Range + "|" + h.Message
+		if prev, ok := seen[key]; !ok || h.Time < prev.Time {
+			if !ok {
+				order = append(order, key)
+			}
+			seen[key] = h
+		}
+	}
+	var kept []FeedHit
+	for _, k := range order {
+		kept = append(kept, seen[k])
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].Time > kept[j].Time })
 	if len(kept) > 200 {

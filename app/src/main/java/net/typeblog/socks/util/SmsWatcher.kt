@@ -1,6 +1,7 @@
 package net.typeblog.socks.util
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -13,6 +14,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.typeblog.socks.BuildConfig
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.net.HttpURLConnection
@@ -332,6 +334,77 @@ object SmsWatcher {
     private var started = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var app: Context? = null
+    private var store: SharedPreferences? = null
+
+    /**
+     * Numbers + their SMS survive app updates and restarts (plain
+     * SharedPreferences JSON, capped). Expiry is still 7 min from born,
+     * so stale entries reload straight into Expired.
+     */
+    private fun save() {
+        try {
+            val arr = JSONArray()
+            (mine + expired).take(40).forEach { n ->
+                val o = JSONObject()
+                o.put("id", n.id)
+                o.put("display", n.display)
+                o.put("full", n.full)
+                o.put("country", n.country)
+                o.put("flag", n.flag)
+                o.put("range", n.range)
+                o.put("born", n.born)
+                o.put("svc", n.svc)
+                o.put("code", n.code ?: "")
+                val msgs = JSONArray()
+                n.msgs.take(5).forEach { msgs.put(JSONObject().put("c", it.code).put("t", it.text).put("a", it.at)) }
+                o.put("msgs", msgs)
+                arr.put(o)
+            }
+            store?.edit()?.putString("nums_v1", arr.toString())?.putLong("next_id", nextId)?.apply()
+        } catch (e: Exception) {
+            // Persistence is best-effort; live state is unaffected.
+        }
+    }
+
+    private fun load() {
+        try {
+            val raw = store?.getString("nums_v1", null) ?: return
+            nextId = store?.getLong("next_id", 1L) ?: 1L
+            val arr = JSONArray(raw)
+            val loaded = mutableListOf<SmsNum>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val n = SmsNum(
+                    id = o.optLong("id", nextId++),
+                    display = o.optString("display"),
+                    full = o.optString("full"),
+                    country = o.optString("country"),
+                    flag = o.optString("flag"),
+                    range = o.optString("range"),
+                    born = o.optLong("born"),
+                    svc = o.optString("svc"),
+                    code = o.optString("code").ifEmpty { null },
+                )
+                val msgs = o.optJSONArray("msgs")
+                if (msgs != null) {
+                    for (j in 0 until msgs.length()) {
+                        val m = msgs.optJSONObject(j) ?: continue
+                        n.msgs.add(SmsMsg(m.optString("c"), m.optString("t"), m.optLong("a")))
+                    }
+                }
+                if (n.full.isNotEmpty()) loaded.add(n)
+            }
+            val t = System.currentTimeMillis()
+            mine.clear()
+            expired.clear()
+            loaded.forEach {
+                if (t - it.born >= SMS_EXPIRE_SEC * 1000) expired.add(it) else mine.add(it)
+            }
+            mine.sortByDescending { it.born }
+        } catch (e: Exception) {
+            // Corrupt store: start fresh rather than crash.
+        }
+    }
 
     fun fail(msg: String) {
         error = msg
@@ -343,6 +416,8 @@ object SmsWatcher {
         if (started) return
         started = true
         app = context.applicationContext
+        store = app!!.getSharedPreferences("sms_store", Context.MODE_PRIVATE)
+        load()
         scope.launch {
             loadFeed()
             var tick = 0
@@ -354,6 +429,8 @@ object SmsWatcher {
                 if (died.isNotEmpty()) {
                     mine.removeAll(died)
                     expired.addAll(0, died)
+                    if (expired.size > 30) expired.subList(30, expired.size).clear()
+                    save()
                 }
                 if (tick % 5 == 0 && mine.any { it.code == null }) pollOtps()
                 if (tick % 60 == 0) loadFeed()
@@ -407,6 +484,7 @@ object SmsWatcher {
                 born = System.currentTimeMillis(),
             )
             mine.add(0, n)
+            save()
             onDone(n)
         }
     }
@@ -423,6 +501,7 @@ object SmsWatcher {
                 n.svc = "Facebook"
                 n.msgs.clear()
                 st.msgs.forEach { n.msgs.add(SmsMsg(it.first, it.second, n.born)) }
+                save()
                 app?.let { SmsNotify.showCode(it, n.display, latest.first, latest.second) }
             }
         }
@@ -527,6 +606,7 @@ object SmsWatcher {
             n.svc = "Facebook"
             n.msgs.clear()
             n.msgs.add(SmsMsg(code, text, n.born))
+            save()
             app?.let { SmsNotify.showCode(it, n.display, code, text) }
         } catch (e: Exception) {
             // Malformed event: ignore, polling fallback covers it.
