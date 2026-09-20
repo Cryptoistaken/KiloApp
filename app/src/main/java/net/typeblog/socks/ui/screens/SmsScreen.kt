@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -58,9 +59,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
 import androidx.core.content.ContextCompat
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.delay
+import net.typeblog.socks.R
 import net.typeblog.socks.util.SMS_EXPIRE_SEC
 import net.typeblog.socks.util.SmsCountry
 import net.typeblog.socks.util.SmsGateway
@@ -77,10 +80,18 @@ private const val RANGE_KEY = "kilo_range"
 private val CodeGreen = Color(0xFF16A34A)
 private val Amber = Color(0xFFD97706)
 
-private fun mmss(leftSec: Long): String {
-    val m = (leftSec / 60).toString().padStart(2, '0')
+private fun mmss(leftSec: Long): String {    val m = (leftSec / 60).toString().padStart(2, '0')
     val s = (leftSec % 60).toString().padStart(2, '0')
     return "$m:$s"
+}
+
+private fun svcIcon(svc: String): Int? {
+    val s = svc.uppercase()
+    return when {
+        s.startsWith("FACEBOOK") || s.startsWith("FB ") || s == "FB" -> R.drawable.ic_svc_facebook_blue
+        s.startsWith("MESSENGER") -> R.drawable.ic_svc_messenger
+        else -> null
+    }
 }
 
 private fun subLine(n: SmsNum, now: Long): String {
@@ -470,6 +481,13 @@ private fun FeedRow(
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        svcIcon(f.svc)?.let {
+            Image(
+                painter = painterResource(it),
+                contentDescription = null,
+                modifier = Modifier.size(22.dp).padding(end = 8.dp)
+            )
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 text = f.masked,
@@ -880,7 +898,8 @@ private fun ItemSheet(
             }
         }
         if (num == null || num.code != null) {
-            FactRow("Service", "Facebook", null, onCopy, copied)
+            val svcName = live?.svc?.ifEmpty { "Facebook" } ?: "Facebook"
+            FactRow("Service", svcName, null, onCopy, copied, icon = svcIcon(svcName))
         }
         if (live != null) {
             val method = live.methodLabel.ifEmpty { live.method }
@@ -903,6 +922,7 @@ private fun FactRow(
     copy: String?,
     onCopy: (String) -> Unit,
     copied: String?,
+    icon: Int? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth()
@@ -912,6 +932,13 @@ private fun FactRow(
     ) {
         Text(text = key, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.weight(1f))
+        if (icon != null) {
+            Image(
+                painter = painterResource(icon),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp).padding(end = 6.dp)
+            )
+        }
         Text(
             text = if (copy != null && copied == copy + "Copied") "Copied" else value,
             style = MaterialTheme.typography.bodyMedium,
