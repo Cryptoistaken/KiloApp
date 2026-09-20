@@ -118,8 +118,8 @@ fun AppNavigation(splitAppsSignal: Int = 0) {
 
     val bottomNavItems = listOf(
         BottomNavItem(Screen.Connect, painterResource(R.drawable.ic_proton_house), painterResource(R.drawable.ic_proton_house_filled), "Home"),
-        BottomNavItem(Screen.Sheet, painterResource(R.drawable.ic_tab_sheet), painterResource(R.drawable.ic_tab_sheet), "Sheet"),
-        BottomNavItem(Screen.Sms, painterResource(R.drawable.lucide_send), painterResource(R.drawable.lucide_send), "SMS"),
+        BottomNavItem(Screen.Sheet, painterResource(R.drawable.ic_tab_sheet), painterResource(R.drawable.ic_tab_sheet_filled), "Sheet"),
+        BottomNavItem(Screen.Sms, painterResource(R.drawable.ic_tab_sms), painterResource(R.drawable.ic_tab_sms_filled), "SMS"),
         BottomNavItem(Screen.More, painterResource(R.drawable.ic_tab_more), painterResource(R.drawable.ic_tab_more), "More")
     )
 
