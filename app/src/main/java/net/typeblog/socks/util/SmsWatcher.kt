@@ -13,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.jvm.Volatile
 import net.typeblog.socks.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
@@ -327,9 +328,14 @@ object SmsWatcher {
     var busy by mutableStateOf(false)
     var error by mutableStateOf("")
     var errorAt by mutableLongStateOf(0L)
-    // Last time the push stream delivered anything (event or heartbeat).
-    // While fresh, the 5s OTP poll stands down to save requests.
+    // Last time the push stream proved itself useful. Heartbeats alone
+    // must NOT suppress the poll fallback for long: a connection can carry
+    // heartbeats yet never deliver (stale subscription, half-open socket),
+    // so the window stays just above one poll gap and a forced poll runs
+    // every ~30s regardless.
+    @Volatile
     private var streamAliveAt = 0L
+    private var pollForce = 0
 
     private var nextId = 1L
     private var started = false
@@ -433,7 +439,10 @@ object SmsWatcher {
                     if (expired.size > 30) expired.subList(30, expired.size).clear()
                     save()
                 }
-                if (tick % 5 == 0 && mine.any { it.code == null }) pollOtps()
+                if (tick % 5 == 0 && mine.any { it.code == null }) {
+                    pollForce++
+                    if (now - streamAliveAt >= 15000 || pollForce % 6 == 0) pollOtps()
+                }
                 if (tick % 60 == 0) loadFeed()
             }
         }
@@ -493,19 +502,21 @@ object SmsWatcher {
     }
 
     private fun pollOtps() {
-        if (System.currentTimeMillis() - streamAliveAt < 45000) return // push stream is healthy
         scope.launch {
             mine.toList().forEach { n ->
-                if (n.code != null) return@forEach
-                val st = withContext(Dispatchers.IO) { SmsGateway.otp(n.full) } ?: return@forEach
-                val latest = st.msgs.lastOrNull() ?: return@forEach
-                if (latest.first.isEmpty()) return@forEach
-                n.code = latest.first
-                n.svc = "Facebook"
-                n.msgs.clear()
-                st.msgs.forEach { n.msgs.add(SmsMsg(it.first, it.second, n.born)) }
-                save()
-                app?.let { SmsNotify.showCode(it, n.display, latest.first, latest.second) }
+                launch {
+                    if (n.code != null) return@launch
+                    val st = withContext(Dispatchers.IO) { SmsGateway.otp(n.full) } ?: return@launch
+                    val code = st.code?.ifEmpty { null }
+                        ?: st.msgs.lastOrNull { it.first.isNotEmpty() }?.first
+                    if (code.isNullOrEmpty()) return@launch
+                    n.code = code
+                    n.svc = "Facebook"
+                    n.msgs.clear()
+                    st.msgs.forEach { n.msgs.add(SmsMsg(it.first, it.second, n.born)) }
+                    save()
+                    app?.let { SmsNotify.showCode(it, n.display, code, st.msgs.lastOrNull()?.second ?: "") }
+                }
             }
         }
     }
@@ -539,10 +550,15 @@ object SmsWatcher {
             val connectedAt = lastAttempt
             try {
                 withContext(Dispatchers.IO) { readStream(waiting) }
-                // Clean server-side close: normal reconnect, keep base backoff.
+                // Clean server-side close proves nothing about liveness:
+                // drop the stream credit so the poll fallback covers the gap.
+                streamAliveAt = 0L
                 backoff = 5000L
                 fastFails = 0
             } catch (e: Exception) {
+                // Same: a dead connection must not keep suppressing polls
+                // through backoff/park on a stale heartbeat timestamp.
+                streamAliveAt = 0L
                 val lived = System.currentTimeMillis() - connectedAt
                 if (lived < 15000) {
                     fastFails++
@@ -563,6 +579,7 @@ object SmsWatcher {
     }
 
     private fun readStream(numbers: List<String>) {
+        val subscribed = numbers.toSet()
         val url = "${BuildConfig.SMS_GATEWAY_URL}/v1/stream?numbers=" + numbers.joinToString(",")
         var conn: HttpURLConnection? = null
         try {
@@ -571,7 +588,10 @@ object SmsWatcher {
                 setRequestProperty("Authorization", "Bearer ${BuildConfig.SMS_API_KEY}")
                 setRequestProperty("Accept", "text/event-stream")
                 connectTimeout = 15000
-                readTimeout = 60000
+                // Just above the 25s server heartbeat: a half-open socket
+                // (NAT/Doze drop with no FIN) throws here instead of
+                // blocking for a minute with polls suppressed.
+                readTimeout = 35000
             }
             if (conn.responseCode != 200) throw IllegalStateException("stream ${conn.responseCode}")
             val reader: BufferedReader = conn.inputStream.bufferedReader()
@@ -580,6 +600,11 @@ object SmsWatcher {
             while (true) {
                 val line = reader.readLine() ?: throw IllegalStateException("stream closed")
                 streamAliveAt = System.currentTimeMillis()
+                // Waiting set changed (new number, code arrived, expiry):
+                // reconnect so the subscription always matches.
+                if (mine.filter { it.code == null }.map { it.full }.toSet() != subscribed) {
+                    throw IllegalStateException("waiting set changed")
+                }
                 when {
                     line.startsWith("event:") -> event = line.substringAfter(":").trim()
                     line.startsWith("data:") -> data += line.substringAfter(":").trim()
@@ -597,22 +622,25 @@ object SmsWatcher {
     }
 
     private fun onStreamOtp(data: String) {
-        try {
-            val o = JSONObject(data)
-            val number = digitsOnly(o.optString("number"))
-            val code = o.optString("code")
-            val text = o.optString("text")
-            if (number.isEmpty() || code.isEmpty()) return
-            val n = mine.firstOrNull { digitsOnly(it.full) == number } ?: return
-            if (n.code != null) return
-            n.code = code
-            n.svc = "Facebook"
-            n.msgs.clear()
-            n.msgs.add(SmsMsg(code, text, n.born))
-            save()
-            app?.let { SmsNotify.showCode(it, n.display, code, text) }
-        } catch (e: Exception) {
-            // Malformed event: ignore, polling fallback covers it.
+        // Mutations run on Main: mine/code are Main-confined elsewhere.
+        scope.launch {
+            try {
+                val o = JSONObject(data)
+                val number = digitsOnly(o.optString("number"))
+                val code = o.optString("code")
+                val text = o.optString("text")
+                if (number.isEmpty() || code.isEmpty()) return@launch
+                val n = mine.firstOrNull { digitsOnly(it.full) == number } ?: return@launch
+                if (n.code != null) return@launch
+                n.code = code
+                n.svc = "Facebook"
+                n.msgs.clear()
+                n.msgs.add(SmsMsg(code, text, n.born))
+                save()
+                app?.let { SmsNotify.showCode(it, n.display, code, text) }
+            } catch (e: Exception) {
+                // Malformed event: ignore, polling fallback covers it.
+            }
         }
     }
 }

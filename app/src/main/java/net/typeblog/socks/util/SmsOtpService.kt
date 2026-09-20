@@ -9,6 +9,8 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +20,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import net.typeblog.socks.MainActivity
 import net.typeblog.socks.R
 
@@ -35,6 +38,7 @@ import net.typeblog.socks.R
 class SmsOtpService : Service() {
 
     companion object {
+        private const val TAG = "SmsOtpService"
         private const val ACTION_WATCH = "net.typeblog.socks.SMS_OTP_WATCH"
         private const val ACTION_STOP = "net.typeblog.socks.SMS_OTP_STOP"
         private const val NOTIF_ID = 1001
@@ -52,6 +56,7 @@ class SmsOtpService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var loop: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -66,9 +71,21 @@ class SmsOtpService : Service() {
         SmsWatcher.start(this)
         try {
             goForeground(pendingCount())
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "startForeground failed", e)
             stopSelf()
             return START_NOT_STICKY
+        }
+        // A foreground service keeps the process alive and network-allowed,
+        // but NOT the CPU awake: without a partial wake lock the poll timer
+        // and socket timeouts freeze on screen-off and everything fires at
+        // once on wake. Held only while numbers wait (7-min max).
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KiloApp:sms-wait")
+            wakeLock?.acquire(10 * 60 * 1000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "wake lock acquire failed", e)
         }
         if (loop == null) {
             loop = scope.launch { watchLoop() }
@@ -81,6 +98,11 @@ class SmsOtpService : Service() {
     override fun onDestroy() {
         loop?.cancel()
         loop = null
+        try {
+            wakeLock?.release()
+        } catch (_: Exception) {
+        }
+        wakeLock = null
         scope.cancel()
         super.onDestroy()
     }
@@ -91,16 +113,24 @@ class SmsOtpService : Service() {
     }
 
     private suspend fun watchLoop() {
+        var idleRounds = 0
         while (true) {
             delay(5000)
-            val pending = pendingCount()
+            // mine is Main-confined: read it there, and require 3 straight
+            // empty reads before stopping (a single stale zero must never
+            // kill the watch with numbers still waiting).
+            val pending = withContext(Dispatchers.Main) { pendingCount() }
             if (pending == 0 || !SmsGateway.isConfigured) {
-                stopSelf()
-                break
-            }
-            try {
-                notifyWaiting(pending)
-            } catch (_: Exception) {
+                if (++idleRounds >= 3) {
+                    stopSelf()
+                    break
+                }
+            } else {
+                idleRounds = 0
+                try {
+                    notifyWaiting(pending)
+                } catch (_: Exception) {
+                }
             }
         }
     }
