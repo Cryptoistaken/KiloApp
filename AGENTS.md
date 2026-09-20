@@ -162,6 +162,8 @@ codebase stays clean without future cleanups:
 | `task.md` | VPN Accelerator task (experimental connect-time goal, SOCKS5-client scope) |
 | `checker/` | Own exit-IP checker (Cloudflare Worker source; deploys via wrangler, outside the APK build) |
 | `cli/` | On-device Go test harness (stdlib only) for the portable engine half: `probe` (SocksTester parity), `check` (Utility.checkWith parity), `bench` (repeat connect-time stats + CSV), `sweep` (bulk proxy list), `speed` (throughput via proxy/direct), `dns` (IPv4-preferred resolve timing). Build: `go build -o kiloproxy .` in `cli/` (binary gitignored). Cannot drive TUN/tun2socks/pdnsd (Android-only). |
+| `sms core/` | Go SMS gateway (stdlib only, Railway-deployed): `gateway.go` (public API `/v1/feed|numbers|otp|meta` + `/v1/admin/*`), `providers.go` (sole upstream contact: VoltX/MNIT/Zenex pool), `cli/` (admin CLI), `Dockerfile` (multi-stage build). Test: `go vet ./... && go build ./...` inside. Secrets via env, never committed. |
+| `.railway/` | Railway IaC (`railway.ts` + SDK `package.json`): owns the `kilosms-gateway` service (source = this repo @master, Root Directory = `sms core`). Android `/app` is NOT built by Railway. |
 | `protonvpn-settings.html` | Settings mock reference (tracked; `design/` docs were deleted) |
 | `build.gradle` | Root Gradle build (plugins: android.application, Kotlin compose) |
 | `settings.gradle` / `gradle.properties` / `gradle/wrapper/gradle-wrapper.properties` | Gradle config (Gradle 9.4.1, AGP 9.2.1, Kotlin 2.2.10, Java 17) |
