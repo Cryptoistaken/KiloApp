@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,12 +31,15 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -279,6 +283,26 @@ private sealed class Sheet {
     data class Confirm(val country: SmsCountry) : Sheet()
     data class Item(val num: SmsNum) : Sheet()
     data class Live(val item: SmsGateway.FeedItem) : Sheet()
+}
+
+@Composable
+private fun SmsTopBar(title: String, onBack: () -> Unit) {
+    TopAppBar(
+        title = { Text(title) },
+        windowInsets = WindowInsets(0),
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(
+                    painter = painterResource(R.drawable.lucide_arrow_left),
+                    contentDescription = "Back"
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface
+        )
+    )
 }
 
 @Composable
@@ -540,8 +564,7 @@ private fun NumsPage(
     copied: String?,
 ) {
     Column(Modifier.fillMaxSize()) {
-        TextButton(onClick = onBack, modifier = Modifier.padding(top = 8.dp)) { Text("< SMS") }
-        Text(text = "My numbers", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        SmsTopBar(title = "My numbers", onBack = onBack)
         Spacer(Modifier.height(8.dp))
         Row(
             Modifier.fillMaxWidth()
@@ -621,8 +644,7 @@ private fun FeedPage(
     copied: String?,
 ) {
     Column(Modifier.fillMaxSize()) {
-        TextButton(onClick = onBack, modifier = Modifier.padding(top = 8.dp)) { Text("< SMS") }
-        Text(text = "Live", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        SmsTopBar(title = "Live", onBack = onBack)
         Spacer(Modifier.height(8.dp))
         if (feed.isEmpty()) {
             Text("No OTPs yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -664,8 +686,7 @@ private fun StatsPage(
     val recent = all.flatMap { n -> n.msgs.map { n to it } }.sortedByDescending { it.second.at }.take(5)
     LazyColumn(Modifier.fillMaxSize()) {
         item {
-            TextButton(onClick = onBack, modifier = Modifier.padding(top = 8.dp)) { Text("< SMS") }
-            Text(text = "Activity", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            SmsTopBar(title = "Activity", onBack = onBack)
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatTile("Numbers", all.size.toString(), Modifier.weight(1f))

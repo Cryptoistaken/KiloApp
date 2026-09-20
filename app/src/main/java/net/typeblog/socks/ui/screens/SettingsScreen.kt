@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,7 +23,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -111,33 +115,36 @@ fun SettingsScreen(
         UpdateDialog(info = info, onDismiss = { updateInfo = null })
     }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp)
-    ) {
-        if (onNavigateBack != null) {
-            item {
-                IconButton(
-                    onClick = onNavigateBack,
-                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.lucide_arrow_left),
-                        contentDescription = "Back"
-                    )
-                }
-            }
-        }
-        item {
-            Text(
-                text = "Settings",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+    Scaffold(
+        modifier = modifier,
+        contentWindowInsets = WindowInsets(0),
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings") },
+                windowInsets = WindowInsets(0),
+                navigationIcon = {
+                    onNavigateBack?.let { back ->
+                        IconButton(onClick = back) {
+                            Icon(
+                                painter = painterResource(R.drawable.lucide_arrow_left),
+                                contentDescription = "Back"
+                            )
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         }
+    ) { paddingValues ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(horizontal = 16.dp)
+        ) {
 
         // ═══ Features (Split tunneling, Theme, Floating Bubble) ═══
         item {
@@ -242,6 +249,7 @@ fun SettingsScreen(
         }
 
         item { Spacer(modifier = Modifier.height(16.dp)) }
+        }
     }
 }
 

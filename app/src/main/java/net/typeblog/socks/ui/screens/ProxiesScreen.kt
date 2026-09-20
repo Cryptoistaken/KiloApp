@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -28,6 +29,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -168,6 +171,27 @@ fun ProxiesScreen(
 
     Scaffold(
         modifier = modifier,
+        contentWindowInsets = WindowInsets(0),
+        topBar = {
+            TopAppBar(
+                title = { Text(if (pickMode) "Select a profile" else "Profiles") },
+                windowInsets = WindowInsets(0),
+                navigationIcon = {
+                    onNavigateBack?.let { back ->
+                        IconButton(onClick = back) {
+                            Icon(
+                                painter = painterResource(R.drawable.lucide_arrow_left),
+                                contentDescription = "Back"
+                            )
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                )
+            )
+        },
         snackbarHost = { SnackbarHost(hostState = snack) },
         floatingActionButton = {
             // Pick mode (opened from Home) keeps the full page: FAB,
@@ -219,17 +243,6 @@ fun ProxiesScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                onNavigateBack?.let { back ->
-                    IconButton(
-                        onClick = back,
-                        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.lucide_arrow_left),
-                            contentDescription = "Back"
-                        )
-                    }
-                }
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -261,34 +274,6 @@ fun ProxiesScreen(
                     .padding(padding)
                     .padding(horizontal = 16.dp)
             ) {
-                onNavigateBack?.let { back ->
-                    IconButton(
-                        onClick = back,
-                        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.lucide_arrow_left),
-                            contentDescription = "Back"
-                        )
-                    }
-                }
-                if (pickMode) {
-                    Text(
-                        text = "Select a profile",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                } else {
-                    Text(
-                        text = "Profiles",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                }
                 SearchInput(
                     value = profileSearch,
                     onValueChange = { profileSearch = it },
