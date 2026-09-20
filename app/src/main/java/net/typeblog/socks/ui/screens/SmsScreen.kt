@@ -248,11 +248,25 @@ fun SmsScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    val methodRows = remember(countries.size, feed.size) {
+        val rows = mutableListOf<MethodRow>()
+        countries.forEach { c ->
+            val hits = feed.filter { it.range.startsWith(c.prefix) }
+            if (hits.isEmpty()) {
+                rows.add(MethodRow(c, "", 0))
+            } else {
+                hits.groupBy { it.methodName }.forEach { (m, list) ->
+                    rows.add(MethodRow(c, m, list.size))
+                }
+            }
+        }
+        rows.sortedByDescending { it.hits }
+    }
     sheet?.let { sh ->
         ModalBottomSheet(onDismissRequest = { sheet = null }, sheetState = sheetState) {
             when (sh) {
                 is Sheet.Countries -> CountrySheet(
-                    countries = countries,
+                    rows = methodRows,
                     onPick = { c -> sheet = Sheet.Confirm(c) },
                 )
                 is Sheet.Confirm -> ConfirmSheet(
@@ -275,6 +289,8 @@ fun SmsScreen(modifier: Modifier = Modifier) {
         }
     }
 }
+
+private data class MethodRow(val country: SmsCountry, val method: String, val hits: Int)
 
 private sealed class Sheet {
     data object Countries : Sheet()
@@ -831,23 +847,46 @@ private fun Bars(labels: List<String>, values: List<Int>) {
 }
 
 @Composable
-private fun CountrySheet(countries: List<SmsCountry>, onPick: (SmsCountry) -> Unit) {
+private fun CountrySheet(rows: List<MethodRow>, onPick: (SmsCountry) -> Unit) {
     Text(
         text = "Country", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(horizontal = 16.dp)
     )
+    if (rows.isEmpty()) {
+        Text(
+            text = "No countries yet",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(16.dp)
+        )
+    }
     LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-        items(countries) { c ->
+        items(rows) { r ->
             Row(
-                modifier = Modifier.fillMaxWidth().clickable(onClick = { onPick(c) }).padding(12.dp),
+                modifier = Modifier.fillMaxWidth().clickable(onClick = { onPick(r.country) }).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = c.flag, fontSize = 24.sp, modifier = Modifier.width(36.dp))
-                Text(text = c.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                Text(text = r.country.flag, fontSize = 24.sp, modifier = Modifier.width(36.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = r.method.ifEmpty { r.country.name },
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = if (r.method.isEmpty()) "+${r.country.prefix}"
+                        else "${r.country.name} (+${r.country.prefix})",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Text(
-                    text = "+${c.prefix}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = r.hits.toString(),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
             }
             HorizontalDivider()
