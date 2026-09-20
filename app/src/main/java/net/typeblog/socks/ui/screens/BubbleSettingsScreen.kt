@@ -352,7 +352,7 @@ private fun TickSlider(
             Row(
                 modifier = Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)
             ) {
                 repeat(ticks) { k ->
                     val on = k.toFloat() / (ticks - 1) <= frac
@@ -411,7 +411,7 @@ private fun CircleAlignPreview(
     // Center the content (anchor + items) inside the box.
     val cx = boxW.dp / 2 - (minX + maxX) / 2
     val cy = boxH.dp / 2 - (minY + maxY) / 2
-    val centerDp = (abtn * 1.2f).coerceAtLeast(18.dp)
+    val centerDp = 26.dp
     val icons = listOf(
         R.drawable.ic_proton_lock_open_filled_2 to Color(0xFFCC2D4F),
         R.drawable.ic_tab_sms to Color(0xFF18181B),
@@ -432,7 +432,7 @@ private fun CircleAlignPreview(
                 painter = painterResource(R.drawable.ic_menu_burger),
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(centerDp * 0.45f)
+                modifier = Modifier.size(12.dp)
             )
         }
         // The 4 option bubbles, animated to their targets.
