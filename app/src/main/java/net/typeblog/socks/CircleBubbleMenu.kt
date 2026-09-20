@@ -9,8 +9,8 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
-import android.view.View
 import android.view.WindowManager
+import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import net.typeblog.socks.util.Constants.CIRCLE_DOWN
@@ -22,9 +22,11 @@ import net.typeblog.socks.util.Constants.CIRCLE_UP
  * Floating circle menu: 4 option bubbles (Proxy/SMS/Sheet/Name) arranged
  * around the floating bubble's anchor point. Layout math mirrors the
  * settings live preview ([ui.screens.CircleAlignPreview]): same order,
- * same one-sided line offsets, same small-circle radius.
+ * same one-sided line offsets, same tight small-circle radius.
  *
- * Full-screen scrim: tap anywhere outside the buttons dismisses.
+ * Entry/exit follow the alignment like the HTML mockup: lines cascade
+ * out/in (last-in-first-out on close), the small circle pops in and
+ * spins a full turn on close. Full-screen scrim: tap outside dismisses.
  * Proxy supports long-press (opens the country menu); the rest are taps.
  */
 class CircleBubbleMenu(
@@ -39,18 +41,27 @@ class CircleBubbleMenu(
     private var windowManager: WindowManager =
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var rootView: FrameLayout? = null
+    private var container: FrameLayout? = null
+    private var btnViews: List<FrameLayout> = emptyList()
+    private var lastAlign = ""
+    private var hiding = false
     private val handler = Handler(Looper.getMainLooper())
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
 
+    private fun isLine(): Boolean = lastAlign == CIRCLE_UP ||
+        lastAlign == CIRCLE_DOWN ||
+        lastAlign == CIRCLE_RIGHT ||
+        lastAlign == CIRCLE_LEFT
+
     fun show(bx: Int, by: Int, align: String, sizeDp: Int, proxyConnected: Boolean) {
-        hide()
+        hideNow()
+        lastAlign = align
+        hiding = false
         val density = context.resources.displayMetrics.density
         val size = (sizeDp * density).toInt().coerceAtLeast(1)
         val gap = size + (12 * density).toInt()
         val off = size + (14 * density).toInt()
-        // Small circle stays tight around the anchor — visibly smaller
-        // than any line spread.
         val r = size + (28 * density).toInt()
         val pts: List<Pair<Int, Int>> = when (align) {
             CIRCLE_UP -> List(4) { 0 to -(off + it * gap) }
@@ -62,6 +73,11 @@ class CircleBubbleMenu(
 
         val root = FrameLayout(context).apply {
             setOnClickListener { hide() }
+        }
+        // Pivot at the anchor so the small circle orbits it on close.
+        val box = FrameLayout(context).apply {
+            pivotX = bx.toFloat()
+            pivotY = by.toFloat()
         }
 
         val icons = listOf(
@@ -78,6 +94,7 @@ class CircleBubbleMenu(
         val metrics = context.resources.displayMetrics
         val margin = size / 2 + (8 * density).toInt()
 
+        val built = mutableListOf<FrameLayout>()
         pts.forEachIndexed { i, (dx, dy) ->
             val (icon, tint, frac) = icons[i]
             val btn = FrameLayout(context).apply {
@@ -105,14 +122,22 @@ class CircleBubbleMenu(
             }
             val cx = (bx + dx).coerceIn(margin, (metrics.widthPixels - margin).coerceAtLeast(margin))
             val cy = (by + dy).coerceIn(margin, (metrics.heightPixels - margin).coerceAtLeast(margin))
-            root.addView(
+            box.addView(
                 btn,
                 FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.START).apply {
                     leftMargin = cx - size / 2
                     topMargin = cy - size / 2
                 }
             )
+            built.add(btn)
         }
+        btnViews = built
+
+        root.addView(box, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        container = box
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -122,23 +147,75 @@ class CircleBubbleMenu(
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
-        root.alpha = 0f
         try {
             windowManager.addView(root, params)
         } catch (_: Exception) {
             return
         }
         rootView = root
-        root.animate().alpha(1f).setDuration(150).start()
+
+        // Entry: lines cascade, small circle pops with a tight stagger.
+        val step = if (isLine()) 70L else 30L
+        built.forEachIndexed { i, btn ->
+            btn.scaleX = 0f
+            btn.scaleY = 0f
+            btn.alpha = 0f
+            btn.animate()
+                .scaleX(1f).scaleY(1f).alpha(1f)
+                .setStartDelay(i * step)
+                .setDuration(220)
+                .setInterpolator(OvershootInterpolator(2.5f))
+                .start()
+        }
     }
 
+    /** Animated close: spin for the small circle, reverse cascade for lines. */
     fun hide() {
         val root = rootView ?: return
-        rootView = null
+        if (hiding) return
+        hiding = true
+        val box = container
+        if (box == null || !root.isAttachedToWindow) {
+            finishRemove()
+            return
+        }
+        if (isLine()) {
+            val n = btnViews.size
+            btnViews.forEachIndexed { i, btn ->
+                btn.animate()
+                    .scaleX(0f).scaleY(0f).alpha(0f)
+                    .setStartDelay((n - 1 - i) * 60L)
+                    .setDuration(180)
+                    .start()
+            }
+            handler.postDelayed({ finishRemove() }, (n * 60L + 200L))
+        } else {
+            box.animate()
+                .rotation(-360f).alpha(0f)
+                .setDuration(300)
+                .withEndAction { finishRemove() }
+                .start()
+        }
+    }
+
+    /** Immediate removal for destroy / config change / re-show. */
+    fun hideNow() {
         handler.removeCallbacksAndMessages(null)
-        try {
-            if (root.isAttachedToWindow) windowManager.removeView(root)
-        } catch (_: Exception) {
+        hiding = false
+        finishRemove()
+    }
+
+    private fun finishRemove() {
+        val root = rootView
+        rootView = null
+        container = null
+        btnViews = emptyList()
+        hiding = false
+        if (root != null) {
+            try {
+                if (root.isAttachedToWindow) windowManager.removeView(root)
+            } catch (_: Exception) {
+            }
         }
         try {
             onDismissed()

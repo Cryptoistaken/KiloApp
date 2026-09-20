@@ -327,7 +327,7 @@ class FloatingControlService : Service() {
         super.onConfigurationChanged(newConfig)
         refreshWindowManager()
         menuOverlay?.onConfigurationChanged()
-        circleMenu?.hide()
+        circleMenu?.hideNow()
         reClampBubblePosition()
         val nightYes = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -430,7 +430,7 @@ class FloatingControlService : Service() {
         }
         longPressHandler.removeCallbacks(longPressRunnable)
         menuOverlay?.hide()
-        circleMenu?.hide()
+        circleMenu?.hideNow()
         persistBubblePosition()
         removeFlagPillFromWindow()
         removeStatusLabelFromWindow()
@@ -546,7 +546,7 @@ class FloatingControlService : Service() {
 
             iconView = ImageView(this)
             iconView!!.layoutParams = FrameLayout.LayoutParams(glyphSizePx, glyphSizePx, Gravity.CENTER)
-            iconView!!.setImageResource(R.drawable.ic_bubble_play)
+            iconView!!.setImageResource(if (isCircleStyle()) R.drawable.ic_menu_burger else R.drawable.ic_bubble_play)
             iconView!!.setColorFilter(Color.WHITE)
             iconView!!.scaleType = ImageView.ScaleType.FIT_CENTER
             circle.addView(iconView)
