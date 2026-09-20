@@ -7,8 +7,8 @@
     android:viewportWidth="256"
     android:viewportHeight="256">
     <group
-        android:scaleX="0.75"
-        android:scaleY="0.75"
+        android:scaleX="0.55"
+        android:scaleY="0.55"
         android:pivotX="128"
         android:pivotY="128">
         <path android:fillColor="#FFEA4335" android:pathData="M173.2 82.8c25 25 25 65.5 0 90.5c-12.5 12.5-12.5 32.8 0 45.2c12.5 12.5 32.8 12.5 45.3 0c50-50 50-131 0-181z" />
