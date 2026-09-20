@@ -167,7 +167,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 }
             }
         } else {
-            sheet = Sheet.Countries
+            sheet = Sheet.Methods
         }
     }
 
@@ -248,27 +248,39 @@ fun SmsScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    val methodRows = remember(countries.size, feed.size) {
-        val rows = mutableListOf<MethodRow>()
-        countries.forEach { c ->
-            val hits = feed.filter { it.range.startsWith(c.prefix) }
-            if (hits.isEmpty()) {
-                rows.add(MethodRow(c, "", 0))
-            } else {
-                hits.groupBy { it.methodName }.forEach { (m, list) ->
-                    rows.add(MethodRow(c, m, list.size))
-                }
+    val methodCounts = remember(feed.size) {
+        val byMethod = feed.groupBy { it.method }
+        val order = listOf("create", "forgot")
+        ((order.filter { byMethod.containsKey(it) }) + (byMethod.keys - order.toSet()).sorted())
+            .map { m ->
+                val list = byMethod[m]!!
+                val label = list.firstOrNull()?.methodName?.ifEmpty { null }
+                    ?: if (m == "create") "Create New" else if (m == "forgot") "Forgot Password" else m
+                MethodCount(m, label, list.size)
             }
-        }
-        rows.sortedByDescending { it.hits }
     }
     sheet?.let { sh ->
         ModalBottomSheet(onDismissRequest = { sheet = null }, sheetState = sheetState) {
             when (sh) {
-                is Sheet.Countries -> CountrySheet(
-                    rows = methodRows,
-                    onPick = { c -> sheet = Sheet.Confirm(c) },
+                is Sheet.Methods -> MethodSheet(
+                    counts = methodCounts,
+                    onPick = { m -> sheet = Sheet.Countries(m) },
                 )
+                is Sheet.Countries -> {
+                    val rows = remember(sh.method, countries.size, feed.size) {
+                        countries.mapNotNull { c ->
+                            val hits = feed.count { it.method == sh.method && it.range.startsWith(c.prefix) }
+                            if (hits < 5) null else CountryRow(c, hits)
+                        }.sortedByDescending { it.hits }.take(10)
+                    }
+                    val label = methodCounts.firstOrNull { it.method == sh.method }?.label ?: sh.method
+                    CountrySheet(
+                        methodLabel = label,
+                        rows = rows,
+                        onBack = { sheet = Sheet.Methods },
+                        onPick = { c -> sheet = Sheet.Confirm(c) },
+                    )
+                }
                 is Sheet.Confirm -> ConfirmSheet(
                     country = sh.country, busy = busy,
                     onGet = { pat ->
@@ -290,10 +302,12 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     }
 }
 
-private data class MethodRow(val country: SmsCountry, val method: String, val hits: Int)
+private data class MethodCount(val method: String, val label: String, val hits: Int)
+private data class CountryRow(val country: SmsCountry, val hits: Int)
 
 private sealed class Sheet {
-    data object Countries : Sheet()
+    data object Methods : Sheet()
+    data class Countries(val method: String) : Sheet()
     data class Confirm(val country: SmsCountry) : Sheet()
     data class Item(val num: SmsNum) : Sheet()
 }
@@ -847,9 +861,59 @@ private fun Bars(labels: List<String>, values: List<Int>) {
 }
 
 @Composable
-private fun CountrySheet(rows: List<MethodRow>, onPick: (SmsCountry) -> Unit) {
+private fun MethodSheet(counts: List<MethodCount>, onPick: (String) -> Unit) {
+    Text(
+        text = "Method", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(horizontal = 16.dp)
+    )
+    if (counts.isEmpty()) {
+        Text(
+            text = "No methods yet",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(16.dp)
+        )
+    }
+    LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+        items(counts) { m ->
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable(onClick = { onPick(m.method) }).padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = m.label,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = m.hits.toString(),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun CountrySheet(methodLabel: String, rows: List<CountryRow>, onBack: () -> Unit, onPick: (SmsCountry) -> Unit) {
+    Text(
+        text = "< Methods",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).clickable(onClick = onBack)
+    )
     Text(
         text = "Country", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(horizontal = 16.dp)
+    )
+    Text(
+        text = methodLabel,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 16.dp)
     )
     if (rows.isEmpty()) {
@@ -868,15 +932,14 @@ private fun CountrySheet(rows: List<MethodRow>, onPick: (SmsCountry) -> Unit) {
                 Text(text = r.country.flag, fontSize = 24.sp, modifier = Modifier.width(36.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = r.method.ifEmpty { r.country.name },
+                        text = r.country.name,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = if (r.method.isEmpty()) "+${r.country.prefix}"
-                        else "${r.country.name} (+${r.country.prefix})",
+                        text = "+${r.country.prefix}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
