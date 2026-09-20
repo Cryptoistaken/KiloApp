@@ -293,7 +293,8 @@ class FloatingControlService : Service() {
             onSmsTap = { circleMenu?.hide(); provisionSmsNumber() },
             onSheetTap = { circleMenu?.hide(); toast("SheetSubmit coming soon") },
             onNameTap = { copyRandomName() },
-            onDismissed = { longPressFired = false; setCircleGlyph() }
+            onDismissed = { longPressFired = false; setCircleGlyph() },
+            onCloseAnim = { playMenuClosePulse() }
         )
         prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == PREF_BUBBLE_STYLE) {
@@ -1277,16 +1278,39 @@ class FloatingControlService : Service() {
         if (circleMenu?.isShowing() == true) circleMenu?.hide() else showCircleMenu()
     }
 
-    // HTML trigger swap: Menu glyph normally, X while the menu is open.
+    // HTML trigger swap: Menu glyph normally, X while the menu is open,
+    // crossfaded like the mockup's blur swap.
     private fun setCircleGlyph() {
         if (!isCircleStyle()) return
         try {
-            iconView?.visibility = View.VISIBLE
-            progressBar?.visibility = View.GONE
-            iconView?.setImageResource(
-                if (circleMenu?.isShowing() == true) R.drawable.ic_close_x else R.drawable.ic_menu_burger
-            )
-            iconView?.setColorFilter(Color.WHITE)
+            val iv = iconView ?: return
+            val target = if (circleMenu?.isShowing() == true) R.drawable.ic_close_x else R.drawable.ic_menu_burger
+            if (iv.tag == target) return
+            iv.animate().alpha(0f).setDuration(100).withEndAction {
+                try {
+                    iv.visibility = View.VISIBLE
+                    progressBar?.visibility = View.GONE
+                    iv.setImageResource(target)
+                    iv.setColorFilter(Color.WHITE)
+                    iv.tag = target
+                    iv.animate().alpha(1f).setDuration(100).start()
+                } catch (_: Exception) {
+                }
+            }.start()
+        } catch (_: Exception) {
+        }
+    }
+
+    // Mockup's close shake + grow pulse on the trigger bubble.
+    private fun playMenuClosePulse() {
+        val v = bubbleVisualView ?: bubbleView ?: return
+        try {
+            val dp = resources.displayMetrics.density
+            android.animation.ObjectAnimator.ofFloat(v, "translationX", 0f, 2 * dp, -2 * dp, 0f)
+                .setDuration(180).start()
+            v.animate().scaleX(1.12f).scaleY(1.12f).setDuration(120).withEndAction {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
+            }.start()
         } catch (_: Exception) {
         }
     }
@@ -1659,11 +1683,11 @@ class FloatingControlService : Service() {
             BubbleState.DISCONNECTED -> {
                 iconView?.visibility = View.VISIBLE
                 progressBar?.visibility = View.GONE
-                iconView?.setImageResource(
-                    if (isCircleStyle()) {
-                        if (circleMenu?.isShowing() == true) R.drawable.ic_close_x else R.drawable.ic_menu_burger
-                    } else R.drawable.ic_bubble_play
-                )
+                if (isCircleStyle()) {
+                    setCircleGlyph()
+                } else {
+                    iconView?.setImageResource(R.drawable.ic_bubble_play)
+                }
                 iconView?.setColorFilter(Color.WHITE)
                 timerView?.visibility = View.GONE
                 stopTimer()

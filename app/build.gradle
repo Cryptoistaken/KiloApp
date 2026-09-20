@@ -184,6 +184,9 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.preference:preference-ktx:1.2.1'
     implementation 'androidx.activity:activity-ktx:1.9.0'
+    // Exact spring physics for the circle-menu item motion (stiffness/damping
+    // ported from the HTML mockup's motion config).
+    implementation 'androidx.dynamicanimation:dynamicanimation:1.1.0'
 
     // Compose
     implementation platform('androidx.compose:compose-bom:2024.10.01')
