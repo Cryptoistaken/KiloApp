@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.preference.PreferenceManager
+import kotlinx.coroutines.delay
 import net.typeblog.socks.util.SMS_EXPIRE_SEC
 import net.typeblog.socks.util.SmsCountry
 import net.typeblog.socks.util.SmsGateway
@@ -108,6 +109,15 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var copied by remember { mutableStateOf<String?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // "Copied" feedback reverts after a moment instead of sticking
+    // on the last copied row.
+    LaunchedEffect(copied) {
+        if (copied != null) {
+            delay(1200)
+            copied = null
+        }
+    }
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
@@ -269,9 +279,8 @@ private fun SectionHead(title: String, onOpen: () -> Unit) {
             text = title,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
         )
-        Text(text = ">", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text = " >", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -347,7 +356,7 @@ private fun MainPage(
                     Text(if (busy) "..." else "Get number")
                 }
             }
-            SectionHead("My numbers (${mine.size})", onOpenNums)
+            SectionHead("My numbers", onOpenNums)
         }
         if (mine.isEmpty()) {
             item {
