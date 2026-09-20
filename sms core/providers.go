@@ -440,8 +440,13 @@ func MethodLabel(m string) string {
 }
 
 // MaskMiddle hides one middle digit: the group-feed convention.
+// Upstream feed rows are often range patterns (22896XXX) rather than full
+// numbers, so patterns are shown grouped as-is instead of being mangled.
 func MaskMiddle(full string) string {
 	s := strings.TrimSpace(full)
+	if strings.ContainsAny(s, "Xx") {
+		return "+" + strings.Join(group3(s), " ")
+	}
 	digits := strings.Map(func(r rune) rune {
 		if r >= '0' && r <= '9' {
 			return r
@@ -453,12 +458,17 @@ func MaskMiddle(full string) string {
 	}
 	i := len(digits) / 2
 	m := digits[:i] + "X" + digits[i+1:]
-	var b strings.Builder
-	for j, r := range m {
-		if j > 0 && j%3 == 0 {
-			b.WriteByte(' ')
+	return "+" + strings.Join(group3(m), " ")
+}
+
+func group3(s string) []string {
+	var out []string
+	for i := 0; i < len(s); i += 3 {
+		end := i + 3
+		if end > len(s) {
+			end = len(s)
 		}
-		b.WriteRune(r)
+		out = append(out, s[i:end])
 	}
-	return "+" + b.String()
+	return out
 }
