@@ -224,6 +224,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 now = now, mine = mine, expired = expired,
                 onBack = { page = 0 },
                 onOpen = { sheet = Sheet.Item(it) },
+                onRegen = ::onRegen,
                 onCopy = ::tapCopy,
                 copied = copied,
             )
@@ -365,7 +366,9 @@ private fun MainPage(
                 modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
             )
             SectionHead("Today analysis", onOpenStats)
-            StatTiles(total, otpCount, pct, onOpenStats)
+            SwipeBox(onRight = onOpenStats, onLeft = null, padBottom = 0.dp) {
+                StatTiles(total, otpCount, pct, onOpenStats)
+            }
             Column(
                 Modifier.fillMaxWidth().padding(top = 12.dp)
                     .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp)).padding(12.dp)
@@ -412,9 +415,51 @@ private fun MainPage(
             }
         } else {
             items(recent.take(3)) { (n, m) ->
-                ReceivedRow(n, m, now, onOpenMine, onCopy, copied)
+                ReceivedRow(n, m, now, onOpenMine, onRegen, onCopy, copied)
             }
         }
+    }
+}
+
+@Composable
+private fun SwipeBox(
+    onRight: () -> Unit,
+    onLeft: (() -> Unit)? = null,
+    rightLabel: String = "Open",
+    leftLabel: String = "New",
+    padBottom: androidx.compose.ui.unit.Dp = 8.dp,
+    content: @Composable () -> Unit,
+) {
+    var dx by remember { mutableStateOf(0f) }
+    Box(Modifier.fillMaxWidth().padding(bottom = padBottom)) {
+        Row(
+            modifier = Modifier.matchParentSize()
+                .background(Color.Black, RoundedCornerShape(12.dp))
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(text = rightLabel, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.weight(1f))
+            if (onLeft != null) {
+                Text(text = leftLabel, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(dx.roundToInt(), 0) }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (dx > 120) onRight()
+                            else if (dx < -120) onLeft?.invoke()
+                            dx = 0f
+                        }
+                    ) { change, amount ->
+                        change.consume()
+                        dx = (dx + amount).coerceIn(-140f, 140f)
+                    }
+                }
+        ) { content() }
     }
 }
 
@@ -427,25 +472,14 @@ private fun MineRow(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    var dx by remember { mutableStateOf(0f) }
-    Box(
-        Modifier.fillMaxWidth().padding(bottom = 8.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp))
-            .pointerInput(n.id) {
-                detectHorizontalDragGestures(
-                    onDragEnd = {
-                        if (dx > 120) onRegen(n)
-                        dx = 0f
-                    }
-                ) { change, amount ->
-                    change.consume()
-                    dx = (dx + amount).coerceIn(-140f, 140f)
-                }
-            }
-            .offset { IntOffset(dx.roundToInt(), 0) }
-            .clickable(onClick = { onOpen(n) })
-            .padding(10.dp)
-    ) {
+    SwipeBox(onRight = { onOpen(n) }, onLeft = { onRegen(n) }) {
+        Row(
+            modifier = Modifier.fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp))
+                .clickable(onClick = { onOpen(n) })
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = n.flag, fontSize = 20.sp, modifier = Modifier.width(28.dp))
             Column(Modifier.weight(1f)) {
@@ -489,11 +523,13 @@ private fun ReceivedRow(
     m: SmsMsg,
     now: Long,
     onOpen: (SmsNum) -> Unit,
+    onRegen: (SmsNum) -> Unit,
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
+    SwipeBox(onRight = { onOpen(n) }, onLeft = { onRegen(n) }) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        modifier = Modifier.fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp))
             .clickable(onClick = { onOpen(n) })
             .padding(10.dp),
@@ -527,6 +563,7 @@ private fun ReceivedRow(
             color = CodeGreen,
             modifier = Modifier.clickable(enabled = m.code.isNotEmpty()) { onCopy(m.code) }
         )
+    }
     }
 }
 
@@ -625,6 +662,7 @@ private fun FeedPage(
     expired: List<SmsNum>,
     onBack: () -> Unit,
     onOpen: (SmsNum) -> Unit,
+    onRegen: (SmsNum) -> Unit,
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
@@ -640,7 +678,7 @@ private fun FeedPage(
         }
         LazyColumn(Modifier.fillMaxSize()) {
             items(received.take(50)) { (n, m) ->
-                ReceivedRow(n, m, now, onOpen, onCopy, copied)
+                ReceivedRow(n, m, now, onOpen, onRegen, onCopy, copied)
             }
         }
     }
