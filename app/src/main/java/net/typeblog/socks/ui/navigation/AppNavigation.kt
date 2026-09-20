@@ -108,12 +108,6 @@ fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0) {
 
     // External request (bubble circle-menu SMS long-press): jump straight to
     // the SMS tab (numbers + live feed).
-    LaunchedEffect(smsSignal) {
-        if (smsSignal > 0) {
-            navigateToTab(Screen.Sms.route)
-        }
-    }
-
     fun navigateToTab(route: String) {
         navController.navigate(route) {
             popUpTo(navController.graph.findStartDestination().id) {
@@ -121,6 +115,12 @@ fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0) {
             }
             launchSingleTop = true
             restoreState = true
+        }
+    }
+
+    LaunchedEffect(smsSignal) {
+        if (smsSignal > 0) {
+            navigateToTab(Screen.Sms.route)
         }
     }
 
