@@ -233,7 +233,7 @@ fun BubbleSettingsScreen(
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
                 )
                 val alignOptions = listOf(
-                    CIRCLE_SMALL to "Small circle",
+                    CIRCLE_SMALL to "Circle",
                     CIRCLE_UP to "Up",
                     CIRCLE_DOWN to "Down",
                     CIRCLE_RIGHT to "Right",
@@ -263,15 +263,15 @@ fun BubbleSettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
                 )
-                TickSlider(
-                    value = circleSize,
-                    onChange = {
-                        circleSize = it
-                        prefs.edit().putInt(PREF_CIRCLE_SIZE, it).apply()
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TickSlider(
+                        value = circleSize,
+                        onChange = {
+                            circleSize = it
+                            prefs.edit().putInt(PREF_CIRCLE_SIZE, it).apply()
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
                     TextButton(
                         onClick = {
                             circleSize = CIRCLE_SIZE_DEFAULT
