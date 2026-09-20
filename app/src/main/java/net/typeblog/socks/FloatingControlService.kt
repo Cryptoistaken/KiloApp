@@ -174,6 +174,10 @@ class FloatingControlService : Service() {
     private var menuOverlay: BubbleMenuOverlay? = null
     private var smsOverlay: SmsMenuOverlay? = null
     private var circleMenu: CircleBubbleMenu? = null
+    // Single source of truth for the trigger glyph (Menu vs X). Never infer
+    // from window attach state: remove/add cycles and animator timing made
+    // that inference strand the wrong glyph and skip the blur.
+    private var circleMenuOpen = false
 
     private val longPressRunnable = Runnable { openBubbleMenu() }
 
@@ -302,7 +306,7 @@ class FloatingControlService : Service() {
             onSmsLongPress = { circleMenu?.hide(); openSmsPopup() },
             onSheetTap = { circleMenu?.hide(); toast("SheetSubmit coming soon") },
             onNameTap = { copyRandomName() },
-            onDismissed = { longPressFired = false; setCircleGlyph() },
+            onDismissed = { circleMenuOpen = false; longPressFired = false; setCircleGlyph() },
             onCloseAnim = { playMenuClosePulse() }
         )
         prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -1352,9 +1356,12 @@ class FloatingControlService : Service() {
             proxySubColor
         )
         // HTML layering: .cm-trigger z-50 sits ABOVE .cm-items-layer z-0, so
-        // menus emerge from underneath the main button. The menu overlay is
-        // added after the bubble window (so it paints on top) — re-insert the
-        // bubble window so the trigger stays on top and items dive under it.
+        // menus emerge from underneath the main button. The item windows are
+        // added after the bubble window (so they paint on top) — re-insert
+        // the bubble window so the trigger stays on top and items dive under
+        // it. Item windows are small and touch-transparent, so taps outside
+        // them always reach the app below.
+        circleMenuOpen = true
         bringBubbleToFront()
         setCircleGlyph()
     }
@@ -1385,6 +1392,7 @@ class FloatingControlService : Service() {
         // trigger never lags the menu — the close path must not wait for
         // the item fly-home animation to finish.
         if (circleMenu?.isShowing() == true) {
+            circleMenuOpen = false
             setCircleGlyph(open = false)
             circleMenu?.hide()
         } else {
@@ -1395,46 +1403,58 @@ class FloatingControlService : Service() {
     // HTML trigger swap: Menu glyph normally, X while the menu is open.
     // Exact mockup: 200ms opacity + blur(10px)->blur(0) swap on the whole
     // trigger button, on EVERY open and close tap — API 31+; older devices
-    // keep the crossfade. Drawable + tag update synchronously (never inside
-    // an animator end-action) so a remove/add or a fast double-tap can never
-    // strand the wrong glyph; the 200ms fade is purely cosmetic.
+    // keep the crossfade. Target comes from circleMenuOpen (never inferred
+    // from attach state); drawable + tag update synchronously so a remove/add
+    // or a fast double-tap can never strand the wrong glyph. The blur clears
+    // on a timer — never in an animator end-action, which detach/cancel paths
+    // can swallow and strand the blur forever.
     private var circleGlyphGen = 0
     private fun setCircleGlyph(open: Boolean? = null) {
         if (!isCircleStyle()) return
         try {
             val iv = iconView ?: return
             val trigger = bubbleVisualView
-            val showX = open ?: (circleMenu?.isShowing() == true)
+            val showX = open ?: circleMenuOpen
             val target = if (showX) R.drawable.ic_close_x else R.drawable.ic_menu_burger
-            if (iv.tag == target && iv.visibility == View.VISIBLE) return
+            if (iv.tag == target && iv.visibility == View.VISIBLE && iv.alpha == 1f) return
             circleGlyphGen++
             val gen = circleGlyphGen
             try {
                 iv.animate().cancel()
             } catch (_: Exception) {
             }
+            try {
+                iv.clearAnimation()
+            } catch (_: Exception) {
+            }
             iv.visibility = View.VISIBLE
+            iv.alpha = 1f
             progressBar?.visibility = View.GONE
             iv.setImageResource(target)
             iv.setColorFilter(Color.WHITE)
             iv.tag = target
-            iv.alpha = 0f
             val blurOn = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            if (!blurOn) return
             try {
-                if (blurOn) {
-                    trigger?.setRenderEffect(
-                        android.graphics.RenderEffect.createBlurEffect(10f, 10f, android.graphics.Shader.TileMode.CLAMP)
-                    )
-                }
+                trigger?.setRenderEffect(
+                    android.graphics.RenderEffect.createBlurEffect(10f, 10f, android.graphics.Shader.TileMode.CLAMP)
+                )
             } catch (_: Exception) {
+                return
             }
-            iv.animate().alpha(1f).setDuration(200).withEndAction {
-                if (gen != circleGlyphGen) return@withEndAction
+            iv.alpha = 0f
+            try {
+                iv.animate().alpha(1f).setDuration(200).start()
+            } catch (_: Exception) {
+                iv.alpha = 1f
+            }
+            pollHandler.postDelayed({
+                if (gen != circleGlyphGen) return@postDelayed
                 try {
-                    if (blurOn) trigger?.setRenderEffect(null)
+                    trigger?.setRenderEffect(null)
                 } catch (_: Exception) {
                 }
-            }.start()
+            }, 220)
         } catch (_: Exception) {
         }
     }

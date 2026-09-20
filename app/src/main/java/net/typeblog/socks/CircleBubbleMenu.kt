@@ -31,13 +31,19 @@ import net.typeblog.socks.util.Constants.CIRCLE_UP
  * Motion is an exact port of the HTML mockup (ObsidianUI CircleMenu):
  * items ride springs (stiffness 300, damping 30 -> ratio 0.866) between the
  * anchor and their slot; open stagger 20ms circle / 60ms lines; close stagger
- * 70ms forward for circle, reverse cascade for lines; items-layer spins a full
- * turn ONLY for circle (lines return straight, like the HTML); buttons grow
- * 1.1x on press (touch equivalent of the mockup's hover grow). No hover
- * labels — the mockup's cm-item-label was removed.
+ * 70ms forward for circle, reverse cascade for lines; buttons grow 1.1x on
+ * press (touch equivalent of the mockup's hover grow). No hover labels — the
+ * mockup's cm-item-label was removed.
  *
- * Full-screen scrim: tap outside dismisses. Proxy supports long-press
- * (opens the country menu); the rest are taps.
+ * Touch transparency (per official WindowManager.LayoutParams docs):
+ * FLAG_NOT_TOUCH_MODAL sends pointer events OUTSIDE a window to the windows
+ * behind it — but our old full-screen scrim had no "outside", so it swallowed
+ * every tap on the device. Each item therefore gets its own small window
+ * covering only its anchor->slot travel segment (NOT_FOCUSABLE +
+ * NOT_TOUCH_MODAL). Taps anywhere else fall through to the app below and
+ * never collapse the menu — it only closes via the trigger bubble or one of
+ * its 4 actions. Trade-off: the shared-layer -360 spin on close is dropped
+ * (impossible across separate windows); travel + stagger + shrink remain.
  */
 class CircleBubbleMenu(
     private val context: Context,
@@ -65,8 +71,7 @@ class CircleBubbleMenu(
 
     private var windowManager: WindowManager =
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    private var rootView: FrameLayout? = null
-    private var container: FrameLayout? = null
+    private var itemWindows: List<FrameLayout> = emptyList()
     private var slots: List<Pair<Float, Float>> = emptyList()
     private var btnViews: List<FrameLayout> = emptyList()
     private var springs: List<SpringAnimation> = emptyList()
@@ -75,7 +80,7 @@ class CircleBubbleMenu(
     private var animGen = 0
     private val handler = Handler(Looper.getMainLooper())
 
-    fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
+    fun isShowing(): Boolean = itemWindows.any { it.isAttachedToWindow }
 
     fun show(
         bx: Int,
@@ -108,18 +113,6 @@ class CircleBubbleMenu(
         }
         val openStaggerMs = if (isLineAlign(align)) openStaggerLineMs else openStaggerCircleMs
 
-        // Outside taps are swallowed (never fall through to apps below) but
-        // never collapse the menu — it only closes via the trigger bubble
-        // or one of its 4 actions.
-        val root = FrameLayout(context).apply {
-            isClickable = true
-        }
-        // Pivot at the anchor so the layer orbits it on close.
-        val box = FrameLayout(context).apply {
-            pivotX = bx.toFloat()
-            pivotY = by.toFloat()
-        }
-
         val icons = listOf(
             Triple(
                 if (proxyConnected) R.drawable.ic_proton_lock_filled else R.drawable.ic_proton_lock_open_filled_2,
@@ -135,11 +128,11 @@ class CircleBubbleMenu(
         // HTML items are (size - 2); trigger is full size.
         val itemSize = (size - 2 * density).toInt().coerceAtLeast(1)
         val margin = itemSize / 2 + (8 * density).toInt()
+        val pad = (4 * density).toInt()
 
+        val newWindows = mutableListOf<FrameLayout>()
         val built = mutableListOf<FrameLayout>()
         val deltas = mutableListOf<Pair<Float, Float>>()
-        var proxyCx = bx
-        var proxyCy = by
         pts.forEachIndexed { i, (dx, dy) ->
             val (icon, tint, frac) = icons[i]
             val btn = FrameLayout(context).apply {
@@ -157,7 +150,7 @@ class CircleBubbleMenu(
                 isClickable = true
                 isFocusable = true
                 // Touch equivalent of the mockup's whileHover scale 1.1,
-                // duration 0.1s, delay 0, plus the hover label tag.
+                // duration 0.1s, delay 0.
                 if (i == 1) {
                     // SMS mirrors the HTML MenuItem tap contract: 550ms
                     // long-press opens the popup, 300ms double-tap window
@@ -237,85 +230,93 @@ class CircleBubbleMenu(
             }
             val cx = (bx + dx).coerceIn(margin, (metrics.widthPixels - margin).coerceAtLeast(margin))
             val cy = (by + dy).coerceIn(margin, (metrics.heightPixels - margin).coerceAtLeast(margin))
-            box.addView(
+
+            // One small window per item covering its anchor->slot segment:
+            // everything outside these windows falls through to the app below.
+            val subExtra = if (i == 0 && proxySub.isNotEmpty()) (20 * density).toInt() else 0
+            val minX = minOf(bx, cx) - itemSize / 2 - pad
+            val minY = minOf(by, cy) - itemSize / 2 - pad
+            val maxX = maxOf(bx, cx) + itemSize / 2 + pad
+            val maxY = maxOf(by, cy) + itemSize / 2 + pad + subExtra
+            val winW = (maxX - minX).coerceAtLeast(1)
+            val winH = (maxY - minY).coerceAtLeast(1)
+            // Item rests at its slot (local coords); it starts on the anchor
+            // and springs out — the stored delta is the spring path.
+            val endLX = cx - itemSize / 2 - minX
+            val endLY = cy - itemSize / 2 - minY
+            val container = FrameLayout(context).apply {
+                isClickable = false
+                isFocusable = false
+            }
+            container.addView(
                 btn,
                 FrameLayout.LayoutParams(itemSize, itemSize, Gravity.TOP or Gravity.START).apply {
-                    leftMargin = cx - itemSize / 2
-                    topMargin = cy - itemSize / 2
+                    leftMargin = endLX
+                    topMargin = endLY
                 }
             )
-            built.add(btn)
-            // Spring path: anchor relative to the slot (bx - cx), so the
-            // button starts on the anchor and springs out to its slot at 0.
-            deltas.add(Pair((bx - cx).toFloat(), (by - cy).toFloat()))
-            if (i == 0) {
-                proxyCx = cx
-                proxyCy = cy
+            // HTML lock-line: status text pinned under the Proxy bubble
+            // (11sp bold), e.g. Connecting red / Protected green.
+            if (subExtra > 0) {
+                try {
+                    val sub = android.widget.TextView(context).apply {
+                        text = proxySub
+                        setTextColor(proxySubColor)
+                        textSize = 11f
+                        typeface = android.graphics.Typeface.create(
+                            android.graphics.Typeface.DEFAULT,
+                            android.graphics.Typeface.BOLD
+                        )
+                        gravity = Gravity.CENTER
+                        setSingleLine(true)
+                    }
+                    container.addView(
+                        sub,
+                        FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.WRAP_CONTENT,
+                            FrameLayout.LayoutParams.WRAP_CONTENT,
+                            Gravity.TOP or Gravity.START
+                        ).apply {
+                            leftMargin = endLX + itemSize / 2
+                            topMargin = endLY + itemSize + (2 * density).toInt()
+                        }
+                    )
+                    sub.post { sub.translationX = -sub.width / 2f }
+                } catch (_: Exception) {
+                }
             }
+            btn.translationX = (bx - itemSize / 2 - minX - endLX).toFloat()
+            btn.translationY = (by - itemSize / 2 - minY - endLY).toFloat()
+
+            val wparams = WindowManager.LayoutParams(
+                winW,
+                winH,
+                overlayType(),
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            )
+            wparams.gravity = Gravity.TOP or Gravity.START
+            wparams.x = minX
+            wparams.y = minY
+            try {
+                windowManager.addView(container, wparams)
+            } catch (_: Exception) {
+                return@forEachIndexed
+            }
+            newWindows.add(container)
+            built.add(btn)
+            deltas.add(Pair(btn.translationX, btn.translationY))
         }
+        itemWindows = newWindows
         btnViews = built
         slots = deltas
-
-        // HTML lock-line: status text pinned under the Proxy bubble
-        // (top 100% + 2px, 11sp bold), e.g. Connecting red / Protected green.
-        if (proxySub.isNotEmpty()) {
-            try {
-                val sub = android.widget.TextView(context).apply {
-                    text = proxySub
-                    setTextColor(proxySubColor)
-                    textSize = 11f
-                    typeface = android.graphics.Typeface.create(
-                        android.graphics.Typeface.DEFAULT,
-                        android.graphics.Typeface.BOLD
-                    )
-                    gravity = Gravity.CENTER
-                    setSingleLine(true)
-                }
-                box.addView(
-                    sub,
-                    FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.WRAP_CONTENT,
-                        FrameLayout.LayoutParams.WRAP_CONTENT,
-                        Gravity.TOP or Gravity.START
-                    ).apply {
-                        leftMargin = proxyCx
-                        topMargin = proxyCy + itemSize / 2 + (2 * density).toInt()
-                    }
-                )
-                sub.post { sub.translationX = -sub.width / 2f }
-            } catch (_: Exception) {
-            }
-        }
-
-        root.addView(box, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-        container = box
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            overlayType(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        )
-        params.gravity = Gravity.TOP or Gravity.START
-        try {
-            windowManager.addView(root, params)
-        } catch (_: Exception) {
-            return
-        }
-        rootView = root
 
         // Entry: each item springs anchor -> slot, staggered. Like the HTML
         // there is no fade on the motion itself; the small alpha-in only
         // avoids a one-frame pop on the overlay window.
         val newSprings = mutableListOf<SpringAnimation>()
         built.forEachIndexed { i, btn ->
-            val (dx, dy) = deltas[i]
-            btn.translationX = dx
-            btn.translationY = dy
             btn.scaleX = 1f
             btn.scaleY = 1f
             btn.alpha = 0f
@@ -331,14 +332,12 @@ class CircleBubbleMenu(
     }
 
     /**
-     * Animated close, per alignment like the HTML:
-     * circle spins the items-layer -360deg while items spring home forward;
-     * lines cascade home in reverse (last-in-first-out) with no spin.
+     * Animated close, per alignment like the HTML: circle items spring home
+     * forward; lines cascade home in reverse (last-in-first-out).
      * Trigger shake/pulse runs via [onCloseAnim].
      */
     fun hide() {
-        val root = rootView ?: return
-        if (hiding) return
+        if (!isShowing() || hiding) return
         hiding = true
         animGen++
         val gen = animGen
@@ -347,17 +346,16 @@ class CircleBubbleMenu(
             onCloseAnim()
         } catch (_: Exception) {
         }
-        val box = container
-        if (box == null || !root.isAttachedToWindow) {
+        val n = btnViews.size
+        if (n == 0) {
             finishRemove()
             return
         }
-        val n = btnViews.size
         val line = isLineAlign(lastAlign)
-        // HTML close: items spring slot -> 0 (inside the trigger), staggered;
-        // the layer spins -360 only for circle. No early fade: the bubbles
-        // stay visible while they travel and only shrink out as they land
-        // inside, exactly like the mockup where they slide under the trigger.
+        // HTML: items spring slot -> anchor (inside the trigger), staggered;
+        // the bubbles stay visible while they travel and only shrink out as
+        // they land inside, exactly like the mockup where they slide under
+        // the trigger.
         val totalMs = closeStaggerMs * (n + 2)
         val newSprings = mutableListOf<SpringAnimation>()
         btnViews.forEachIndexed { i, btn ->
@@ -382,34 +380,8 @@ class CircleBubbleMenu(
                 .setStartDelay(d + 180L).setDuration(150).start()
         }
         springs = newSprings
-        try {
-            box.animate().cancel()
-        } catch (_: Exception) {
-        }
-        if (line) {
-            // Lines: no spin, no layer fade — just let the items fly home.
-            handler.postDelayed({ finishRemove() }, totalMs + 200L)
-        } else {
-            // HTML closeAnimationCallback: the layer spins -360 with a 1px
-            // blur while the items spring inside (blur on API 31+).
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    box.setRenderEffect(
-                        android.graphics.RenderEffect.createBlurEffect(
-                            1f, 1f, android.graphics.Shader.TileMode.CLAMP
-                        )
-                    )
-                }
-            } catch (_: Exception) {
-            }
-            box.animate()
-                .rotation(-360f)
-                .setDuration(totalMs)
-                .withEndAction { finishRemove() }
-                .start()
-            // Failsafe: never trap the scrim if an animator is cancelled.
-            handler.postDelayed({ finishRemove() }, totalMs + 400L)
-        }
+        // Failsafe: never trap windows if an animator is cancelled.
+        handler.postDelayed({ finishRemove() }, totalMs + 400L)
     }
 
     /** Immediate removal for destroy / config change / re-show. */
@@ -432,10 +404,9 @@ class CircleBubbleMenu(
 
     private fun startSpring(spring: SpringAnimation, delayMs: Long, gen: Int, requireOpen: Boolean) {
         // DynamicAnimation has no start delay here: post the start instead.
-        // Generation-guarded so a stale open start can never fire mid-close
-        // (the old `!hiding` gate blocked EVERY close spring — that was why
-        // bubbles faded in place instead of flying inside). hideNow() bumps
-        // the generation and clears these alongside everything else.
+        // Generation-guarded so a stale open start can never fire mid-close.
+        // hideNow() bumps the generation and clears these alongside
+        // everything else.
         handler.postDelayed({
             if (gen != animGen) return@postDelayed
             if (requireOpen && hiding) return@postDelayed
@@ -458,20 +429,15 @@ class CircleBubbleMenu(
     }
 
     private fun finishRemove() {
-        val root = rootView
-        rootView = null
-        try {
-            container?.setRenderEffect(null)
-        } catch (_: Exception) {
-        }
-        container = null
+        val windows = itemWindows
+        itemWindows = emptyList()
         btnViews = emptyList()
         slots = emptyList()
         hiding = false
-        if (root != null) {
+        windows.forEach { w ->
             try {
-                root.animate().cancel()
-                if (root.isAttachedToWindow) windowManager.removeView(root)
+                w.animate().cancel()
+                if (w.isAttachedToWindow) windowManager.removeView(w)
             } catch (_: Exception) {
             }
         }
