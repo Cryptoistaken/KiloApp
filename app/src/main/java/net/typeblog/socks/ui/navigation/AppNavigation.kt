@@ -80,7 +80,7 @@ private val bottomNavRoutes = listOf(
 ).toSet()
 
 @Composable
-fun AppNavigation(splitAppsSignal: Int = 0) {
+fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -103,6 +103,14 @@ fun AppNavigation(splitAppsSignal: Int = 0) {
             navController.navigate(Screen.SplitTunneling.route + "?startOnApps=true") {
                 launchSingleTop = true
             }
+        }
+    }
+
+    // External request (bubble circle-menu SMS long-press): jump straight to
+    // the SMS tab (numbers + live feed).
+    LaunchedEffect(smsSignal) {
+        if (smsSignal > 0) {
+            navigateToTab(Screen.Sms.route)
         }
     }
 

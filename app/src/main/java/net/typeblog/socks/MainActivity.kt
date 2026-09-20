@@ -32,11 +32,16 @@ class MainActivity : ComponentActivity() {
     companion object {
         /** Open the app straight on the split-tunneling apps list. */
         const val EXTRA_OPEN_SPLIT_APPS = "open_split_apps"
+        /** Open the app straight on the SMS tab (bubble SMS long-press). */
+        const val EXTRA_OPEN_SMS = "open_sms"
     }
 
     // Incremented whenever an intent asks for the apps list (bubble
     // refuse-to-connect); AppNavigation observes it and navigates once.
     var splitAppsRequest by mutableStateOf(0)
+        private set
+    // Same pattern for the SMS tab (bubble circle-menu SMS long-press).
+    var smsRequest by mutableStateOf(0)
         private set
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -53,6 +58,9 @@ class MainActivity : ComponentActivity() {
         startFloatingControlIfPersisted()
         if (intent?.getBooleanExtra(EXTRA_OPEN_SPLIT_APPS, false) == true) {
             splitAppsRequest++
+        }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_SMS, false) == true) {
+            smsRequest++
         }
 
         setContent {
@@ -74,7 +82,7 @@ class MainActivity : ComponentActivity() {
 
             KiloProxyTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AppNavigation(splitAppsSignal = splitAppsRequest)
+                    AppNavigation(splitAppsSignal = splitAppsRequest, smsSignal = smsRequest)
                 }
                 updatePrompt?.let { info ->
                     UpdateDialog(
@@ -98,6 +106,9 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         if (intent.getBooleanExtra(EXTRA_OPEN_SPLIT_APPS, false)) {
             splitAppsRequest++
+        }
+        if (intent.getBooleanExtra(EXTRA_OPEN_SMS, false)) {
+            smsRequest++
         }
     }
 

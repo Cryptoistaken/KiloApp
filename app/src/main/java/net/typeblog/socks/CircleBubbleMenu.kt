@@ -10,6 +10,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -43,6 +44,8 @@ class CircleBubbleMenu(
     private val onProxyTap: () -> Unit,
     private val onProxyLongPress: () -> Unit,
     private val onSmsTap: () -> Unit,
+    private val onSmsDoubleTap: () -> Unit = {},
+    private val onSmsLongPress: () -> Unit = {},
     private val onSheetTap: () -> Unit,
     private val onNameTap: () -> Unit,
     private val onDismissed: () -> Unit = {},
@@ -74,7 +77,15 @@ class CircleBubbleMenu(
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
 
-    fun show(bx: Int, by: Int, align: String, sizeDp: Int, proxyConnected: Boolean) {
+    fun show(
+        bx: Int,
+        by: Int,
+        align: String,
+        sizeDp: Int,
+        proxyConnected: Boolean,
+        proxySub: String = "",
+        proxySubColor: Int = Color.WHITE
+    ) {
         hideNow()
         hiding = false
         animGen++
@@ -117,13 +128,58 @@ class CircleBubbleMenu(
             Triple(R.drawable.ic_name_person, Color.parseColor("#18181B"), 0.4f)
         )
         val taps = listOf(onProxyTap, onSmsTap, onSheetTap, onNameTap)
+        val labels = listOf("Proxy", "SMS", "Sheet", "Name")
         val metrics = context.resources.displayMetrics
         // HTML items are (size - 2); trigger is full size.
         val itemSize = (size - 2 * density).toInt().coerceAtLeast(1)
         val margin = itemSize / 2 + (8 * density).toInt()
 
+        // Touch equivalent of the mockup's hover label (cm-item-label):
+        // one reusable tag shown under the pressed bubble, hidden on release.
+        val pressLabel = android.widget.TextView(context).apply {
+            textSize = 12f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setShadowLayer(4f, 0f, 2f, Color.argb(160, 0, 0, 0))
+            visibility = View.GONE
+        }
+        fun showPressLabel(text: String, cx: Int, top: Int) {
+            try {
+                pressLabel.text = text
+                (pressLabel.layoutParams as? FrameLayout.LayoutParams)?.let {
+                    it.leftMargin = cx
+                    it.topMargin = top
+                }
+                if (pressLabel.parent == null) {
+                    box.addView(
+                        pressLabel,
+                        FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.WRAP_CONTENT,
+                            FrameLayout.LayoutParams.WRAP_CONTENT,
+                            Gravity.TOP or Gravity.START
+                        ).apply {
+                            leftMargin = cx
+                            topMargin = top
+                        }
+                    )
+                }
+                pressLabel.visibility = View.VISIBLE
+                pressLabel.post { pressLabel.translationX = -pressLabel.width / 2f }
+            } catch (_: Exception) {
+            }
+        }
+        fun hidePressLabel() {
+            try {
+                pressLabel.visibility = View.GONE
+            } catch (_: Exception) {
+            }
+        }
+
         val built = mutableListOf<FrameLayout>()
         val deltas = mutableListOf<Pair<Float, Float>>()
+        var proxyCx = bx
+        var proxyCy = by
         pts.forEachIndexed { i, (dx, dy) ->
             val (icon, tint, frac) = icons[i]
             val btn = FrameLayout(context).apply {
@@ -141,17 +197,108 @@ class CircleBubbleMenu(
                 isClickable = true
                 isFocusable = true
                 // Touch equivalent of the mockup's whileHover scale 1.1,
-                // duration 0.1s, delay 0.
-                setOnTouchListener { v, ev ->
-                    when (ev.actionMasked) {
-                        MotionEvent.ACTION_DOWN ->
-                            v.animate().scaleX(1.1f).scaleY(1.1f).setDuration(100).start()
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                            v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                // duration 0.1s, delay 0, plus the hover label tag.
+                if (i == 1) {
+                    // SMS mirrors the HTML MenuItem tap contract: 550ms
+                    // long-press opens the popup, 300ms double-tap window
+                    // regenerates, single tap is delayed 300ms so a double
+                    // never also fires a single.
+                    var lastTap = 0L
+                    var singlePending: Runnable? = null
+                    var lpFired = false
+                    val lpRunnable = Runnable {
+                        if (!isShowing()) return@Runnable
+                        lpFired = true
+                        try {
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        } catch (_: Exception) {
+                        }
+                        hidePressLabel()
+                        onSmsLongPress()
                     }
-                    false
+                    setOnTouchListener { v, ev ->
+                        when (ev.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> {
+                                lpFired = false
+                                v.animate().scaleX(1.1f).scaleY(1.1f).setDuration(100).start()
+                                try {
+                                    val loc = IntArray(2)
+                                    v.getLocationOnScreen(loc)
+                                    showPressLabel(
+                                        labels[1],
+                                        loc[0] + v.width / 2,
+                                        loc[1] + v.height + (4 * density).toInt()
+                                    )
+                                } catch (_: Exception) {
+                                }
+                                handler.postDelayed(lpRunnable, 550)
+                                false
+                            }
+                            MotionEvent.ACTION_UP -> {
+                                handler.removeCallbacks(lpRunnable)
+                                v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                                hidePressLabel()
+                                if (lpFired) {
+                                    lpFired = false
+                                    true
+                                } else {
+                                    val now = android.os.SystemClock.uptimeMillis()
+                                    if (now - lastTap < 300) {
+                                        singlePending?.let { handler.removeCallbacks(it) }
+                                        singlePending = null
+                                        lastTap = 0
+                                        onSmsDoubleTap()
+                                    } else {
+                                        lastTap = now
+                                        singlePending?.let { handler.removeCallbacks(it) }
+                                        singlePending = Runnable { onSmsTap() }
+                                        handler.postDelayed(singlePending!!, 300)
+                                    }
+                                    true
+                                }
+                            }
+                            MotionEvent.ACTION_CANCEL -> {
+                                handler.removeCallbacks(lpRunnable)
+                                v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                                hidePressLabel()
+                                lpFired = false
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                } else {
+                    setOnTouchListener { v, ev ->
+                        when (ev.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> {
+                                v.animate().scaleX(1.1f).scaleY(1.1f).setDuration(100).start()
+                                try {
+                                    val loc = IntArray(2)
+                                    v.getLocationOnScreen(loc)
+                                    val cx = loc[0] + v.width / 2
+                                    // Proxy already carries its status line
+                                    // below it — float its tag above instead.
+                                    val top = if (i == 0) {
+                                        loc[1] - (20 * density).toInt()
+                                    } else {
+                                        loc[1] + v.height + (4 * density).toInt()
+                                    }
+                                    showPressLabel(labels[i], cx, top)
+                                } catch (_: Exception) {
+                                }
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                                v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                        }
+                        if (ev.actionMasked == MotionEvent.ACTION_UP ||
+                            ev.actionMasked == MotionEvent.ACTION_CANCEL
+                        ) {
+                            hidePressLabel()
+                        }
+                        false
+                    }
+                    setOnClickListener { taps[i]() }
                 }
-                setOnClickListener { taps[i]() }
                 if (i == 0) {
                     setOnLongClickListener {
                         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -173,9 +320,44 @@ class CircleBubbleMenu(
             // Spring path: anchor relative to the slot (bx - cx), so the
             // button starts on the anchor and springs out to its slot at 0.
             deltas.add(Pair((bx - cx).toFloat(), (by - cy).toFloat()))
+            if (i == 0) {
+                proxyCx = cx
+                proxyCy = cy
+            }
         }
         btnViews = built
         slots = deltas
+
+        // HTML lock-line: status text pinned under the Proxy bubble
+        // (top 100% + 2px, 11sp bold), e.g. Connecting red / Protected green.
+        if (proxySub.isNotEmpty()) {
+            try {
+                val sub = android.widget.TextView(context).apply {
+                    text = proxySub
+                    setTextColor(proxySubColor)
+                    textSize = 11f
+                    typeface = android.graphics.Typeface.create(
+                        android.graphics.Typeface.DEFAULT,
+                        android.graphics.Typeface.BOLD
+                    )
+                    gravity = Gravity.CENTER
+                    setSingleLine(true)
+                }
+                box.addView(
+                    sub,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        Gravity.TOP or Gravity.START
+                    ).apply {
+                        leftMargin = proxyCx
+                        topMargin = proxyCy + itemSize / 2 + (2 * density).toInt()
+                    }
+                )
+                sub.post { sub.translationX = -sub.width / 2f }
+            } catch (_: Exception) {
+            }
+        }
 
         root.addView(box, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -280,6 +462,18 @@ class CircleBubbleMenu(
             // Lines: no spin, no layer fade — just let the items fly home.
             handler.postDelayed({ finishRemove() }, totalMs + 200L)
         } else {
+            // HTML closeAnimationCallback: the layer spins -360 with a 1px
+            // blur while the items spring inside (blur on API 31+).
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    box.setRenderEffect(
+                        android.graphics.RenderEffect.createBlurEffect(
+                            1f, 1f, android.graphics.Shader.TileMode.CLAMP
+                        )
+                    )
+                }
+            } catch (_: Exception) {
+            }
             box.animate()
                 .rotation(-360f)
                 .setDuration(totalMs)
@@ -338,6 +532,10 @@ class CircleBubbleMenu(
     private fun finishRemove() {
         val root = rootView
         rootView = null
+        try {
+            container?.setRenderEffect(null)
+        } catch (_: Exception) {
+        }
         container = null
         btnViews = emptyList()
         slots = emptyList()

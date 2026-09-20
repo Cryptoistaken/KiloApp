@@ -291,6 +291,8 @@ class FloatingControlService : Service() {
             onProxyTap = { circleMenu?.hide(); handleTap() },
             onProxyLongPress = { circleMenu?.hide(); openCountryMenu() },
             onSmsTap = { circleMenu?.hide(); provisionSmsNumber() },
+            onSmsDoubleTap = { circleMenu?.hide(); provisionSmsNumber(forceNew = true) },
+            onSmsLongPress = { circleMenu?.hide(); openSmsScreen() },
             onSheetTap = { circleMenu?.hide(); toast("SheetSubmit coming soon") },
             onNameTap = { copyRandomName() },
             onDismissed = { longPressFired = false; setCircleGlyph() },
@@ -1294,12 +1296,35 @@ class FloatingControlService : Service() {
 
     private fun showCircleMenu() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        // HTML lock-line under the Proxy bubble: red while connecting,
+        // green once protected (flag + country when known).
+        val (proxySub, proxySubColor) = when (state) {
+            BubbleState.CONNECTING -> Pair("Connecting", lockErr())
+            BubbleState.CONNECTED -> {
+                val cc = try {
+                    vpnService?.countryCode ?: ""
+                } catch (_: Exception) {
+                    ""
+                }
+                if (cc.isNotEmpty()) {
+                    Pair(
+                        "${Utility.countryCodeToFlag(cc)} $cc",
+                        lockGreen()
+                    )
+                } else {
+                    Pair("Protected", lockGreen())
+                }
+            }
+            else -> Pair("", Color.WHITE)
+        }
         circleMenu?.show(
             (params?.x ?: 0) + bubbleWindowSizePx / 2,
             (params?.y ?: 0) + bubbleWindowSizePx / 2,
             prefs.getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL,
             prefs.getInt(PREF_CIRCLE_SIZE, CIRCLE_SIZE_DEFAULT),
-            state == BubbleState.CONNECTED
+            state == BubbleState.CONNECTED,
+            proxySub,
+            proxySubColor
         )
         // HTML layering: .cm-trigger z-50 sits ABOVE .cm-items-layer z-0, so
         // menus emerge from underneath the main button. The menu overlay is
@@ -1371,16 +1396,19 @@ class FloatingControlService : Service() {
     }
 
     // Exact HTML MenuTrigger.closeAnimation: shake loop (translateX
-    // [0,2,-2,0,2,-2,0], 70ms) while the trigger grows 1.0 -> 1.15 -> 1.3
-    // (capped 1.5) with a whitening wash, then snaps back in 100ms.
+    // [0,2,-2,0,2,-2,0]) repeating through the whole close while the trigger
+    // grows 1.0 -> 1.15 -> 1.3 (capped 1.5) with a whitening wash, then snaps
+    // back in 100ms.
     private fun playMenuClosePulse() {
         val v = bubbleVisualView ?: bubbleView ?: return
         try {
             val dp = resources.displayMetrics.density
+            // One 70ms pass, looped ~6x to cover the 420ms item close.
             val shake = android.animation.ObjectAnimator.ofFloat(
                 v, "translationX", 0f, 2 * dp, -2 * dp, 0f, 2 * dp, -2 * dp, 0f
             ).setDuration(70)
             try {
+                shake.repeatCount = 5
                 shake.start()
             } catch (_: Exception) {
             }
@@ -1388,6 +1416,10 @@ class FloatingControlService : Service() {
             val steps = listOf(1f, 1.15f, 1.3f)
             fun step(i: Int) {
                 if (i >= steps.size) {
+                    try {
+                        shake.cancel()
+                    } catch (_: Exception) {
+                    }
                     try {
                         v.animate().scaleX(1f).scaleY(1f).setDuration(100)
                             .setInterpolator(android.view.animation.OvershootInterpolator(2f))
@@ -1488,9 +1520,16 @@ class FloatingControlService : Service() {
         circleMenu?.hide()
     }
 
-    private fun provisionSmsNumber() {
+    // SMS tap contract from the HTML mockup: single tap provisions a new
+    // number (or does nothing while one waits), double-tap always
+    // regenerates, long-press opens the SMS screen (the popup equivalent).
+    private fun provisionSmsNumber(forceNew: Boolean = false) {
         try {
             SmsWatcher.start(this)
+            if (!forceNew && SmsWatcher.hasWaiting()) {
+                toast("Waiting for SMS... double-tap for a new number")
+                return
+            }
             val pat = SmsWatcher.countries.firstOrNull()?.prefix?.ifEmpty { null } ?: "228"
             SmsWatcher.provision(pat) { n ->
                 if (n == null) {
@@ -1503,6 +1542,20 @@ class FloatingControlService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "SMS provision from bubble failed", e)
             toast("SMS unavailable right now")
+        }
+    }
+
+    // SMS long-press: open the app straight on the SMS tab (numbers + live
+    // feed), the on-device equivalent of the HTML SMS popup.
+    private fun openSmsScreen() {
+        try {
+            val i = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                putExtra(MainActivity.EXTRA_OPEN_SMS, true)
+            }
+            startActivity(i)
+        } catch (e: Exception) {
+            Log.e(TAG, "open SMS screen failed", e)
         }
     }
 
