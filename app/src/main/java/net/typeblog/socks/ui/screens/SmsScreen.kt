@@ -175,6 +175,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
         SmsWatcher.provision(n.range) { nn ->
             if (nn != null) {
                 mine.removeAll { it.id == n.id }
+                expired.removeAll { it.id == n.id }
                 sheet = Sheet.Item(nn)
                 tapCopy(nn.display)
             }
@@ -398,7 +399,8 @@ private fun MainPage(
             }
             SectionHead("My numbers", onOpenNums)
         }
-        if (mine.isEmpty()) {
+        val lastNums = (mine + expired).sortedByDescending { it.born }.take(10)
+        if (lastNums.isEmpty()) {
             item {
                 Text(
                     text = "No numbers yet",
@@ -408,7 +410,7 @@ private fun MainPage(
                 )
             }
         } else {
-            items(mine.take(3), key = { it.id }) { n ->
+            items(lastNums, key = { it.id }) { n ->
                 MineRow(n, now, onOpenMine, onRegen, onCopy, copied)
             }
         }
@@ -484,6 +486,7 @@ private fun MineRow(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
+    val isExpired = n.born + SMS_EXPIRE_SEC * 1000 <= now
     SwipeBox(onRight = { onOpen(n) }, onLeft = { onRegen(n) }) {
         Row(
             modifier = Modifier.fillMaxWidth()
@@ -503,7 +506,7 @@ private fun MineRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = subLine(n, now),
+                    text = subLine(n, now) + if (isExpired) " - expired" else "",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -520,6 +523,13 @@ private fun MineRow(
                     modifier = Modifier.clickable {
                         onCopy(n.code!!)
                     }
+                )
+            } else if (isExpired) {
+                Text(
+                    text = "expired",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
                 )
             } else {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -627,33 +637,18 @@ private fun NumsPage(
         Spacer(Modifier.height(8.dp))
         if (numTab == 1) {
             val list = expired.filter { q.isEmpty() || it.display.contains(q, true) }
+                .sortedByDescending { it.born }.take(10)
             if (list.isEmpty()) {
                 Text("No expired numbers", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 items(list, key = { it.id }) { n ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp))
-                            .clickable(onClick = { onOpenExpired(n) })
-                            .padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(text = n.flag, fontSize = 20.sp, modifier = Modifier.width(28.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(text = n.display, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                            Text(
-                                text = subLine(n, now),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text(text = "expired", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    }
+                    MineRow(n, now, onOpenExpired, onRegen, onCopy, copied)
                 }
             }
         } else {
             val list = mine.filter { q.isEmpty() || it.display.contains(q, true) }
+                .sortedByDescending { it.born }.take(10)
             if (list.isEmpty()) {
                 Text("No numbers yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
