@@ -1,0 +1,120 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/sms_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clickable="true"
+    android:focusable="true">
+
+    <LinearLayout
+        android:id="@+id/sms_panel"
+        android:layout_width="230dp"
+        android:layout_height="280dp"
+        android:orientation="vertical"
+        android:background="@drawable/menu_panel_bg"
+        android:clipToOutline="true"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="0dp"
+        android:layout_marginTop="0dp">
+
+        <!-- Range bar: like the proxy searchbar. Empty = X closes;
+             valid range = X swaps to the Gen pill. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp">
+
+            <EditText
+                android:id="@+id/sms_range"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_weight="1"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:background="@drawable/search_input_bg"
+                android:hint="Range e.g. 228"
+                android:textSize="11sp"
+                android:textColor="#18181B"
+                android:textColorHint="#71717A"
+                android:singleLine="true"
+                android:inputType="phone"
+                android:imeOptions="actionGo"
+                android:importantForAutofill="no"
+                android:alpha="0.9" />
+
+            <FrameLayout
+                android:id="@+id/sms_gen_wrap"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/sms_gen"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:background="@drawable/sms_gen_pill"
+                    android:text="Gen"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:textColor="#18181B" />
+
+                <ProgressBar
+                    android:id="@+id/sms_gen_spin"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_gravity="center"
+                    android:indeterminate="true"
+                    android:indeterminateTint="#71717A"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <ImageButton
+                android:id="@+id/sms_close"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Close"
+                android:padding="8dp"
+                android:src="@drawable/ic_close_x" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E4E4E7" />
+
+        <ScrollView
+            android:id="@+id/sms_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:overScrollMode="never"
+            android:scrollbars="vertical"
+            android:layout_marginTop="2dp">
+
+            <LinearLayout
+                android:id="@+id/sms_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingBottom="4dp" />
+        </ScrollView>
+
+        <ImageView
+            android:id="@+id/sms_empty"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="56dp"
+            android:contentDescription="No numbers yet"
+            android:src="@drawable/ic_sms_empty"
+            android:visibility="gone" />
+    </LinearLayout>
+</FrameLayout>

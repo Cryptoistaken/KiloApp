@@ -1,10 +1,10 @@
 package net.typeblog.socks
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.graphics.Typeface
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -13,35 +13,37 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
-import android.view.ViewGroup
-import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import net.typeblog.socks.util.SmsNum
+import net.typeblog.socks.util.SmsWatcher
 import net.typeblog.socks.util.ThemeMode
-import java.util.Locale
 
 /**
- * Long-press popup for the circle-menu SMS bubble, built on the exact same
- * panel as the proxy popup ([BubbleMenuOverlay]): the same
- * `R.layout.bubble_menu` shell (search bar + scrollable rows), the same
- * `R.layout.bubble_country_row` rows, the same 4-side bubble-edge positioning
- * and grow-in, the same scrim-tap-to-close. Only the content differs: the
- * search filters numbers, rows are numbers (tap copies the arrived code, else
- * the number), then New number / Open SMS tab actions.
+ * Long-press popup for the circle-menu SMS bubble: a fixed 230x280dp panel on
+ * the proxy popup's shell (same background, same 4-side bubble-edge
+ * positioning and grow-in, same scrim-tap-to-close). Content ports the
+ * approved HTML mockup: a range bar on top (empty = X closes, valid range =
+ * X swaps to the Gen pill, Enter submits and dismisses the keyboard, Gen
+ * locks with a spinner ~1.2s and repeat taps are ignored), then appending
+ * number rows — flag + number, live mm:ss + spinner while waiting, green code
+ * once arrived, tap copies the number. Empty shows the speech-bubble doodle.
  */
 class SmsMenuOverlay(
     private val context: Context,
     private val onNumberCopy: (String) -> Unit,
-    private val onNewNumber: () -> Unit,
-    private val onOpenSmsTab: () -> Unit,
+    private val onGenerate: (String) -> Unit,
     private val onDismissed: () -> Unit = {}
 ) {
     private var windowManager: WindowManager = createWindowManager()
@@ -59,85 +61,92 @@ class SmsMenuOverlay(
         if (isShowing()) hide()
     }
 
-    private fun isLightMode(): Boolean = !ThemeMode.isDarkTheme(context)
     private var activeInflateContext: Context = context
-
     private val handler = Handler(Looper.getMainLooper())
+    private val tickHandler = Handler(Looper.getMainLooper())
     private var rootView: FrameLayout? = null
-    private var menuList: LinearLayout? = null
-    private var numbers: List<SmsNum> = emptyList()
-
-    private val globalLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
-        val root = rootView ?: return@OnGlobalLayoutListener
-        if (!root.isAttachedToWindow) return@OnGlobalLayoutListener
-        val search = root.findViewById<EditText>(R.id.menu_search) ?: return@OnGlobalLayoutListener
-        if (!search.hasFocus()) return@OnGlobalLayoutListener
-        repositionPanelAboveIme(root)
-    }
+    private var listView: LinearLayout? = null
+    private var emptyView: ImageView? = null
+    private var searchInput: EditText? = null
+    private var genWrap: FrameLayout? = null
+    private var genLabel: TextView? = null
+    private var genSpin: ProgressBar? = null
+    private var closeBtn: ImageButton? = null
+    private var generating = false
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
 
-    fun show(bubbleCenterX: Int, bubbleCenterY: Int, bubbleSizePx: Int, nums: List<SmsNum>) {
+    fun show(bubbleCenterX: Int, bubbleCenterY: Int, bubbleSizePx: Int) {
         if (isShowing()) return
-        numbers = nums.sortedByDescending { it.born }
+        generating = false
         activeInflateContext = ThemeMode.themedContext(context)
         val root = try {
             rootView ?: LayoutInflater.from(activeInflateContext)
-                .inflate(R.layout.bubble_menu, null) as FrameLayout
+                .inflate(R.layout.bubble_sms_menu, null) as FrameLayout
         } catch (_: Exception) {
             rootView = null
             return
         }
         rootView = root
 
-        val panel = root.findViewById<LinearLayout>(R.id.menu_panel)
-        val scroll = root.findViewById<ScrollView>(R.id.menu_scroll)
-        val list = root.findViewById<LinearLayout>(R.id.menu_list)
-        val searchInput = root.findViewById<EditText>(R.id.menu_search)
-        if (panel == null || list == null || scroll == null || searchInput == null) {
+        val panel = root.findViewById<LinearLayout>(R.id.sms_panel)
+        val scroll = root.findViewById<ScrollView>(R.id.sms_scroll)
+        val list = root.findViewById<LinearLayout>(R.id.sms_list)
+        val empty = root.findViewById<ImageView>(R.id.sms_empty)
+        val input = root.findViewById<EditText>(R.id.sms_range)
+        val genW = root.findViewById<FrameLayout>(R.id.sms_gen_wrap)
+        val genT = root.findViewById<TextView>(R.id.sms_gen)
+        val genS = root.findViewById<ProgressBar>(R.id.sms_gen_spin)
+        val close = root.findViewById<ImageButton>(R.id.sms_close)
+        if (panel == null || list == null || scroll == null || empty == null ||
+            input == null || genW == null || genT == null || genS == null || close == null
+        ) {
             rootView = null
             return
         }
-        // The shell's X just closes this popup (it is the bubble exit in the
-        // proxy popup — not here).
-        root.findViewById<ImageButton>(R.id.menu_dismiss)?.setOnClickListener { hide() }
-        searchInput.hint = "Search numbers"
-        menuList = list
+        listView = list
+        emptyView = empty
+        searchInput = input
+        genWrap = genW
+        genLabel = genT
+        genSpin = genS
+        closeBtn = close
+
+        input.setText("")
+        syncGenButton("")
+        input.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                syncGenButton(s?.toString() ?: "")
+            }
+        })
+        input.setOnEditorActionListener { v, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_DONE) {
+                submitRange()
+                true
+            } else {
+                false
+            }
+        }
+        genT.setOnClickListener { submitRange() }
+        close.setOnClickListener {
+            input.setText("")
+            hide()
+        }
 
         val bounds = contentBounds()
         val panelWidth = minOf(
             dp(230f),
             (bounds.width() - bubbleSizePx - dp(16f)).coerceAtLeast(1)
         )
-        val maxHeightPx = minOf(dp(260f), bounds.height() - dp(32f)).coerceAtLeast(1)
+        val panelHeight = dp(280f)
 
         val panelLp = panel.layoutParams as? FrameLayout.LayoutParams
-            ?: FrameLayout.LayoutParams(panelWidth, FrameLayout.LayoutParams.WRAP_CONTENT)
+            ?: FrameLayout.LayoutParams(panelWidth, panelHeight)
         panelLp.width = panelWidth
-        panelLp.height = FrameLayout.LayoutParams.WRAP_CONTENT
+        panelLp.height = panelHeight
         panel.layoutParams = panelLp
-
-        renderList(list, "")
-
-        searchInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                renderList(list, s?.toString()?.trim()?.lowercase(Locale.ROOT) ?: "")
-                scroll.post { scroll.fullScroll(View.FOCUS_UP) }
-            }
-        })
-        searchInput.setOnClickListener {
-            searchInput.requestFocus()
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            imm.showSoftInput(searchInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
-        }
-        searchInput.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus) {
-                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                imm.showSoftInput(searchInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
-            }
-        }
 
         // Same smart 4-side positioning as the proxy popup.
         val margin8 = dp(8f)
@@ -149,7 +158,7 @@ class SmsMenuOverlay(
         val top = by - bounds.top - margin8
 
         fun fitsH(s: Int) = s >= panelWidth
-        fun fitsV(s: Int) = s >= maxHeightPx
+        fun fitsV(s: Int) = s >= panelHeight
 
         val hOptions = listOf("right" to right, "left" to left).filter { fitsH(it.second) }
         val vOptions = listOf("bottom" to bottom, "top" to top).filter { fitsV(it.second) }
@@ -168,11 +177,11 @@ class SmsMenuOverlay(
         }
         var panelY = when (side) {
             "bottom" -> by + bubbleSizePx + margin8
-            "top" -> by - maxHeightPx - margin8
-            else -> by + bubbleSizePx / 2 - maxHeightPx / 2
+            "top" -> by - panelHeight - margin8
+            else -> by + bubbleSizePx / 2 - panelHeight / 2
         }
         panelX = panelX.coerceIn(bounds.left + margin8, bounds.right - panelWidth - margin8)
-        panelY = panelY.coerceIn(bounds.top + margin8, bounds.bottom - maxHeightPx - margin8)
+        panelY = panelY.coerceIn(bounds.top + margin8, bounds.bottom - panelHeight - margin8)
 
         panelLp.leftMargin = panelX
         panelLp.topMargin = panelY
@@ -181,22 +190,19 @@ class SmsMenuOverlay(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             overlayType(),
-            0,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
-        params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
 
         root.alpha = 0f
         try {
             windowManager.addView(root, params)
         } catch (_: Exception) {
             rootView = null
-            menuList = null
+            listView = null
             return
         }
-
-        root.viewTreeObserver.addOnGlobalLayoutListener(globalLayoutListener)
 
         root.setOnClickListener { hide() }
         panel.isClickable = true
@@ -206,54 +212,31 @@ class SmsMenuOverlay(
         panel.scaleX = 0.55f
         panel.scaleY = 0.55f
         panel.alpha = 0f
-        panel.post {
-            val listHeight = list.measuredHeight
-            val targetHeight = if (listHeight > 0) listHeight.coerceAtMost(maxHeightPx) else maxHeightPx
-            val scrollLp = scroll.layoutParams as? LinearLayout.LayoutParams
-                ?: LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    targetHeight
-                )
-            if (scrollLp.height != targetHeight) {
-                scrollLp.height = targetHeight
-                scroll.layoutParams = scrollLp
-            }
-            val headerHeight = (panel.height - scroll.height).coerceAtLeast(0)
-            val trueHeight = headerHeight + targetHeight
-            val refinedY = when (side) {
-                "top" -> (by - trueHeight - margin8).coerceIn(bounds.top + margin8, (bounds.bottom - trueHeight - margin8).coerceAtLeast(bounds.top + margin8))
-                "bottom" -> (by + bubbleSizePx + margin8).coerceIn(bounds.top + margin8, (bounds.bottom - trueHeight - margin8).coerceAtLeast(bounds.top + margin8))
-                else -> (bubbleCenterY - trueHeight / 2).coerceIn(bounds.top + margin8, (bounds.bottom - trueHeight - margin8).coerceAtLeast(bounds.top + margin8))
-            }
-            if (refinedY != panelLp.topMargin) {
-                panelLp.topMargin = refinedY
-                panel.requestLayout()
-            }
-            panel.pivotX = when (side) {
-                "left" -> panelWidth.toFloat()
-                "top", "bottom" -> panelWidth / 2f
-                else -> 0f
-            }
-            panel.pivotY = when (side) {
-                "top" -> trueHeight.toFloat()
-                "bottom" -> 0f
-                else -> trueHeight / 2f
-            }
-            panel.animate()
-                .scaleX(1f).scaleY(1f).alpha(1f)
-                .setDuration(120)
-                .setInterpolator(FastOutSlowInInterpolator())
-                .start()
+        panel.pivotX = when (side) {
+            "left" -> panelWidth.toFloat()
+            "top", "bottom" -> panelWidth / 2f
+            else -> 0f
         }
+        panel.pivotY = when (side) {
+            "top" -> panelHeight.toFloat()
+            "bottom" -> 0f
+            else -> panelHeight / 2f
+        }
+        panel.animate()
+            .scaleX(1f).scaleY(1f).alpha(1f)
+            .setDuration(120)
+            .setInterpolator(FastOutSlowInInterpolator())
+            .start()
+
+        renderLive()
+        startTick()
     }
 
     fun hide() {
         handler.removeCallbacksAndMessages(null)
-        try {
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            rootView?.let { imm.hideSoftInputFromWindow(it.windowToken, 0) }
-        } catch (_: Exception) {
-        }
+        tickHandler.removeCallbacksAndMessages(null)
+        generating = false
+        hideKeyboard()
         val root = rootView ?: return
         if (!root.isAttachedToWindow) {
             cleanup()
@@ -263,63 +246,96 @@ class SmsMenuOverlay(
         cleanup()
     }
 
-    private fun renderList(list: LinearLayout, query: String) {
-        list.removeAllViews()
-        val digits = query.filter { it.isDigit() }
-        val matched = numbers.filter { n ->
-            if (query.isEmpty()) {
-                true
-            } else {
-                n.display.lowercase(Locale.ROOT).contains(query) ||
-                    n.full.lowercase(Locale.ROOT).contains(query) ||
-                    (n.code != null && n.code!!.lowercase(Locale.ROOT).contains(query)) ||
-                    (!arrived(n) && "waiting".contains(query)) ||
-                    (digits.isNotEmpty() && (n.display.filter { it.isDigit() }.contains(digits) || n.full.filter { it.isDigit() }.contains(digits)))
+    /** X swaps to the Gen pill as soon as the range holds any digit. */
+    private fun syncGenButton(text: String) {
+        val valid = text.filter { it.isDigit() }.isNotEmpty()
+        genWrap?.visibility = if (valid) View.VISIBLE else View.GONE
+        closeBtn?.visibility = if (valid) View.GONE else View.VISIBLE
+    }
+
+    /** Enter / Gen: blur + close the keyboard, lock ~1.2s, generate once. */
+    private fun submitRange() {
+        if (generating || !isShowing()) return
+        val digits = searchInput?.text?.toString()?.filter { it.isDigit() } ?: ""
+        if (digits.isEmpty()) return
+        generating = true
+        hideKeyboard()
+        searchInput?.clearFocus()
+        genLabel?.alpha = 0f
+        genSpin?.visibility = View.VISIBLE
+        handler.postDelayed({
+            try {
+                onGenerate(digits)
+            } catch (_: Exception) {
             }
-        }
-        if (matched.isEmpty() && numbers.isNotEmpty()) {
-            list.addView(sectionLabel("No matches"))
-        } else {
-            if (matched.isNotEmpty()) {
-                list.addView(sectionLabel(if (query.isEmpty()) "Numbers" else "Matches"))
-                matched.forEach { n -> list.addView(makeNumberRow(n)) }
-            } else {
-                list.addView(sectionLabel("No number yet"))
+            generating = false
+            genLabel?.alpha = 1f
+            genSpin?.visibility = View.GONE
+            if (isShowing()) {
+                renderLive()
+                startTick()
             }
-            list.addView(separatorView())
-            list.addView(
-                makeActionRow(flag = "+", name = "New number", hint = "get", onTap = {
-                    hide()
-                    onNewNumber()
-                })
-            )
-            list.addView(
-                makeActionRow(flag = "≡", name = "Open SMS tab", hint = "", onTap = {
-                    hide()
-                    onOpenSmsTab()
-                })
-            )
+        }, 1200)
+    }
+
+    private fun hideKeyboard() {
+        try {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            rootView?.let { imm.hideSoftInputFromWindow(it.windowToken, 0) }
+        } catch (_: Exception) {
         }
     }
 
-    private fun arrived(n: SmsNum): Boolean = n.code != null
+    private val tickRunnable = object : Runnable {
+        override fun run() {
+            if (!isShowing()) return
+            renderLive()
+            if (SmsWatcher.hasWaiting()) {
+                tickHandler.postDelayed(this, 1000)
+            }
+        }
+    }
 
-    private fun makeNumberRow(n: SmsNum): View {
-        val row = LayoutInflater.from(activeInflateContext).inflate(R.layout.bubble_country_row, menuList, false)
-        row.findViewById<TextView>(R.id.row_flag).text = n.flag
-        row.findViewById<TextView>(R.id.row_name).text = n.display
-        row.findViewById<TextView>(R.id.row_code).text = n.country
-        val dialView = row.findViewById<TextView>(R.id.row_dial)
-        val dot = row.findViewById<View>(R.id.row_dot)
-        if (arrived(n)) {
-            dialView.text = n.code
-            dialView.visibility = View.VISIBLE
-            dialView.setTextColor(Color.parseColor("#1C9C7C"))
-            dot.visibility = View.VISIBLE
+    private fun startTick() {
+        tickHandler.removeCallbacks(tickRunnable)
+        renderLive()
+        if (SmsWatcher.hasWaiting()) {
+            tickHandler.postDelayed(tickRunnable, 1000)
+        }
+    }
+
+    private fun renderLive() {
+        val list = listView ?: return
+        render(list, SmsWatcher.mine.sortedBy { it.born })
+    }
+
+    private fun render(list: LinearLayout, numbers: List<SmsNum>) {
+        list.removeAllViews()
+        emptyView?.visibility = if (numbers.isEmpty()) View.VISIBLE else View.GONE
+        numbers.forEach { n -> list.addView(makeRow(n)) }
+    }
+
+    private fun makeRow(n: SmsNum): View {
+        val row = LayoutInflater.from(activeInflateContext).inflate(R.layout.bubble_sms_row, listView, false)
+        row.findViewById<TextView>(R.id.sms_row_flag).text = n.flag
+        row.findViewById<TextView>(R.id.sms_row_name).text = n.display
+        val timeView = row.findViewById<TextView>(R.id.sms_row_time)
+        val spin = row.findViewById<ProgressBar>(R.id.sms_row_spin)
+        val codeView = row.findViewById<TextView>(R.id.sms_row_code)
+        try {
+            spin.indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#0C0C14"))
+        } catch (_: Exception) {
+        }
+        if (n.code != null) {
+            timeView.visibility = View.GONE
+            spin.visibility = View.GONE
+            codeView.visibility = View.VISIBLE
+            codeView.text = n.code
         } else {
-            dialView.text = "waiting"
-            dialView.visibility = View.VISIBLE
-            dot.visibility = View.GONE
+            timeView.visibility = View.VISIBLE
+            timeView.text = elapsed(n.born)
+            spin.visibility = View.VISIBLE
+            codeView.visibility = View.GONE
         }
         row.setOnClickListener {
             hide()
@@ -328,59 +344,30 @@ class SmsMenuOverlay(
         return row
     }
 
-    private fun makeActionRow(flag: String, name: String, hint: String, onTap: () -> Unit): View {
-        val row = LayoutInflater.from(activeInflateContext).inflate(R.layout.bubble_country_row, menuList, false)
-        row.findViewById<TextView>(R.id.row_flag).text = flag
-        row.findViewById<TextView>(R.id.row_name).text = name
-        row.findViewById<TextView>(R.id.row_code).text = ""
-        val dialView = row.findViewById<TextView>(R.id.row_dial)
-        if (hint.isEmpty()) {
-            dialView.visibility = View.GONE
-        } else {
-            dialView.text = hint
-            dialView.visibility = View.VISIBLE
-        }
-        row.findViewById<View>(R.id.row_dot).visibility = View.GONE
-        row.setOnClickListener { onTap() }
-        return row
-    }
-
-    private fun sectionLabel(text: String): TextView = TextView(context).apply {
-        this.text = text.uppercase(Locale.ROOT)
-        textSize = 9f
-        setTypeface(typeface, Typeface.BOLD)
-        letterSpacing = 0.08f
-        setTextColor(if (isLightMode()) Color.BLACK else Color.WHITE)
-        setPadding(dp(5f), dp(1f), 0, dp(2f))
-    }
-
-    private fun separatorView(): View = View(context).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(1f)
-        ).apply {
-            setMargins(dp(6f), 0, dp(6f), 0)
-        }
-        setBackgroundColor(Color.parseColor(if (isLightMode()) "#E4E4E7" else "#3F3F46"))
+    private fun elapsed(born: Long): String {
+        val sec = ((System.currentTimeMillis() - born) / 1000).coerceAtLeast(0)
+        return String.format("%02d:%02d", sec / 60, sec % 60)
     }
 
     private fun cleanup() {
         handler.removeCallbacksAndMessages(null)
+        tickHandler.removeCallbacksAndMessages(null)
+        generating = false
         val root = rootView
-        if (root != null) {
+        if (root != null && root.isAttachedToWindow) {
             try {
-                root.viewTreeObserver.removeOnGlobalLayoutListener(globalLayoutListener)
+                windowManager.removeView(root)
             } catch (_: Exception) {
-            }
-            if (root.isAttachedToWindow) {
-                try {
-                    windowManager.removeView(root)
-                } catch (_: Exception) {
-                }
             }
         }
         rootView = null
-        menuList = null
+        listView = null
+        emptyView = null
+        searchInput = null
+        genWrap = null
+        genLabel = null
+        genSpin = null
+        closeBtn = null
         try {
             onDismissed()
         } catch (_: Exception) {
@@ -430,27 +417,6 @@ class SmsMenuOverlay(
         val b = displayBounds()
         val i = systemBarInsets()
         return Rect(i.left, i.top, b.width() - i.right, b.height() - i.bottom)
-    }
-
-    /**
-     * When the search field is focused the IME covers the lower part of the
-     * overlay (SOFT_INPUT_ADJUST_RESIZE shrinks the window), so push the panel up
-     * so its bottom stays above the top of the keyboard.
-     */
-    private fun repositionPanelAboveIme(root: View) {
-        val panel = root.findViewById<LinearLayout>(R.id.menu_panel) ?: return
-        val displayH = displayBounds().height()
-        val imeHeight = (displayH - root.height).coerceAtLeast(0)
-        if (imeHeight <= 0) return
-        val bounds = contentBounds()
-        val panelBottom = panel.top + panel.height
-        val limitBottom = displayH - imeHeight
-        if (panelBottom > limitBottom) {
-            val delta = panelBottom - limitBottom
-            val lp = panel.layoutParams as? FrameLayout.LayoutParams ?: return
-            lp.topMargin = (lp.topMargin - delta).coerceAtLeast(bounds.top)
-            panel.requestLayout()
-        }
     }
 
     private fun overlayType(): Int =

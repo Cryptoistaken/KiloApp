@@ -290,8 +290,7 @@ class FloatingControlService : Service() {
         smsOverlay = SmsMenuOverlay(
             this,
             onNumberCopy = { display -> copySmsEntry(display) },
-            onNewNumber = { provisionSmsNumber(forceNew = true) },
-            onOpenSmsTab = { openSmsScreen() },
+            onGenerate = { digits -> provisionSmsNumber(range = digits) },
             onDismissed = { longPressFired = false }
         )
         circleMenu = CircleBubbleMenu(
@@ -1533,15 +1532,16 @@ class FloatingControlService : Service() {
 
     // SMS tap contract from the HTML mockup: single tap provisions a new
     // number (or does nothing while one waits), double-tap always
-    // regenerates, long-press opens the SMS screen (the popup equivalent).
-    private fun provisionSmsNumber(forceNew: Boolean = false) {
+    // regenerates, popup Gen always generates from its range and appends.
+    private fun provisionSmsNumber(range: String? = null, forceNew: Boolean = false) {
         try {
             SmsWatcher.start(this)
-            if (!forceNew && SmsWatcher.hasWaiting()) {
+            if (range == null && !forceNew && SmsWatcher.hasWaiting()) {
                 toast("Waiting for SMS... double-tap for a new number")
                 return
             }
-            val pat = SmsWatcher.countries.firstOrNull()?.prefix?.ifEmpty { null } ?: "228"
+            val pat = range?.filter { it.isDigit() }?.ifEmpty { null }
+                ?: SmsWatcher.countries.firstOrNull()?.prefix?.ifEmpty { null } ?: "228"
             SmsWatcher.provision(pat) { n ->
                 if (n == null) {
                     toast("No numbers available, try again")
@@ -1557,7 +1557,7 @@ class FloatingControlService : Service() {
     }
 
     // SMS long-press: same proxy-style panel, anchored at the bubble —
-    // numbers list, New number, Open SMS tab.
+    // range bar plus appending number rows.
     private fun openSmsPopup() {
         try {
             longPressFired = true
@@ -1567,43 +1567,21 @@ class FloatingControlService : Service() {
             smsOverlay?.show(
                 x + bubbleWindowSizePx / 2,
                 y + bubbleWindowSizePx / 2,
-                bubbleSizePx,
-                SmsWatcher.mine.toList()
+                bubbleSizePx
             )
         } catch (e: Exception) {
             Log.e(TAG, "open SMS popup failed", e)
         }
     }
 
-    // Popup number row: copy the arrived code, else the number itself.
+    // Popup number row: always copies the number, waiting or arrived.
     private fun copySmsEntry(display: String) {
         try {
-            val n = SmsWatcher.mine.firstOrNull { it.display == display }
-            val code = n?.code
-            if (code != null) {
-                copyText(code)
-                toast("Code copied: $code")
-            } else {
-                copyText(display)
-                toast("Number copied: $display")
-            }
+            copyText(display)
+            toast("Number copied: $display")
             bubbleView?.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
         } catch (e: Exception) {
             Log.e(TAG, "SMS popup copy failed", e)
-        }
-    }
-
-    // SMS long-press: open the app straight on the SMS tab (numbers + live
-    // feed), the on-device equivalent of the HTML SMS popup.
-    private fun openSmsScreen() {
-        try {
-            val i = Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                putExtra(MainActivity.EXTRA_OPEN_SMS, true)
-            }
-            startActivity(i)
-        } catch (e: Exception) {
-            Log.e(TAG, "open SMS screen failed", e)
         }
     }
 
