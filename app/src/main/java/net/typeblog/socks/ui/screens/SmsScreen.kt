@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -366,7 +367,7 @@ private fun MainPage(
                 modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
             )
             SectionHead("Today analysis", onOpenStats)
-            SwipeBox(onRight = onOpenStats, onLeft = null, padBottom = 0.dp) {
+            SwipeBox(onRight = onOpenStats, onLeft = onOpenStats, rightLabel = "Open", leftLabel = "Open", padBottom = 0.dp) {
                 StatTiles(total, otpCount, pct, onOpenStats)
             }
             Column(
@@ -431,21 +432,24 @@ private fun SwipeBox(
     content: @Composable () -> Unit,
 ) {
     var dx by remember { mutableStateOf(0f) }
-    Box(Modifier.fillMaxWidth().padding(bottom = padBottom)) {
-        Row(
-            modifier = Modifier.matchParentSize()
-                .background(Color.Black, RoundedCornerShape(12.dp))
-                .padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(text = rightLabel, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.weight(1f))
-            if (onLeft != null) {
-                Text(text = leftLabel, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+    Box(Modifier.fillMaxWidth().padding(bottom = padBottom).clip(RoundedCornerShape(12.dp))) {
+        if (dx != 0f) {
+            Row(
+                modifier = Modifier.matchParentSize()
+                    .background(Color.Black)
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(text = rightLabel, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.weight(1f))
+                if (onLeft != null) {
+                    Text(text = leftLabel, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                }
             }
         }
         Box(
-            modifier = Modifier
+            modifier = Modifier.fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
                 .offset { IntOffset(dx.roundToInt(), 0) }
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
