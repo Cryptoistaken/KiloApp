@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import net.typeblog.socks.MainActivity
 import net.typeblog.socks.R
@@ -59,6 +60,7 @@ object SmsNotify {
         try {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             clipboard?.setPrimaryClip(ClipData.newPlainText("SMS code", code))
+            Toast.makeText(context, "OTP copied $code", Toast.LENGTH_SHORT).show()
         } catch (_: Exception) {
             // Copy buttons on the notification remain as fallback.
         }
