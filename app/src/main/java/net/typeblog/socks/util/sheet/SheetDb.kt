@@ -222,7 +222,7 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 1)
     }
 
     fun walletBalance(): Double {
-        readableDatabase.rawQuery("SELECT v FROM wallet_kv WHERE k='balance'").use { c ->
+        readableDatabase.rawQuery("SELECT v FROM wallet_kv WHERE k='balance'", null).use { c ->
             if (!c.moveToFirst()) return 0.0
             return c.getString(0).toDoubleOrNull() ?: 0.0
         }
@@ -238,7 +238,8 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 1)
     fun walletTxs(): List<WalletTx> {
         val out = mutableListOf<WalletTx>()
         readableDatabase.rawQuery(
-            "SELECT id,createdAt,type,amount,balanceAfter,title,detail FROM wallet_tx ORDER BY createdAt DESC LIMIT 200"
+            "SELECT id,createdAt,type,amount,balanceAfter,title,detail FROM wallet_tx ORDER BY createdAt DESC LIMIT 200",
+            null
         ).use { c ->
             while (c.moveToNext()) {
                 out.add(
