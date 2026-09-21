@@ -60,6 +60,7 @@ object SmsNotify {
         try {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             clipboard?.setPrimaryClip(ClipData.newPlainText("SMS code", code))
+            buzzCopy(context)
             Toast.makeText(context, "OTP copied $code", Toast.LENGTH_SHORT).show()
         } catch (_: Exception) {
             // Copy buttons on the notification remain as fallback.
@@ -92,6 +93,14 @@ object SmsNotify {
     /** Short tick for arrivals and copies (OTP shown, number copied). */
     fun buzz(context: Context) {
         vibrate(context, longArrayOf(0, 60), intArrayOf(0, VibrationEffect.DEFAULT_AMPLITUDE))
+    }
+
+    /** Double tick for successful copies (auto-copy + notification buttons). */
+    fun buzzCopy(context: Context) {
+        vibrate(
+            context, longArrayOf(0, 40, 60, 60),
+            intArrayOf(0, VibrationEffect.DEFAULT_AMPLITUDE, 0, VibrationEffect.DEFAULT_AMPLITUDE)
+        )
     }
 
     /** Double tick for failures (provision returned nothing). */
