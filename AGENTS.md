@@ -145,10 +145,33 @@ codebase stays clean without future cleanups:
 7. **Refactors: snapshot tag first, one concern per commit**, update the
    Filesystem Map in the same commit, CI green before the next batch.
 
-## Roadmap (planned, not started)
+## Roadmap (planned, in progress, done)
 
-- SheetSubmit feature.
+### Sheet plan (active)
+- **App (KiloApp Android) is user-features-only.** Regular users and admins alike
+  get the same Sheet UI: My Files / Wallet / Archive tabs, file cards, sheet
+  grid, withdraw form. No admin views (pools, approvals, settings, tools,
+  analysis, user detail) exist in the app, for anyone.
+- **Website copy (`sheetsubmit/`) is admin-login-only.** It is a copy of the
+  SheetSubmit web project living in this repo. The backend refuses to mint
+  sessions for non-admin Telegram identities (`admin_only`), and the frontend
+  gates on `isAdmin`. Regular users cannot sign in to the website at all,
+  neither as user nor as admin.
+- **Local-first storage (app).** `util/sheet/` (SQLite `sheet.db`) is the
+  source of truth: files/rows/styles/columns/journal/snapshots/wallet/outbox.
+  Every mutation writes here first; online sync (when added) only backs it up.
+  SQLite survives offline use, crashes and app updates. It does NOT survive
+  uninstall (Android wipes app-private data) — uninstall survival comes from
+  SAF export copies in Download/Documents and/or encrypted online backup.
+- **SAF export.** Xlsx export waits on a parser dep; until then Download writes
+  RFC-4180 CSV through `ACTION_CREATE_DOCUMENT` (no permission needed, the
+  copy survives uninstall). Copy-all uses TSV to the clipboard.
+- Status: store layer committed (`2a7ee4e`); site-exact `ic_ss_*` icon set in
+  progress; Compose UI port next; website copy + admin gate after.
+
+### Later
 - KiloSMS features.
+- Online backup/sync for sheets (backup only, never the read/write source).
 - Final goal: a new `circle-bubble.html`-style control bubble that controls everything. Tons of work required — plan placeholder only for now.
 
 ## Filesystem Map & References (KEEP UPDATED)
@@ -232,6 +255,7 @@ Notes on the merged notification/dot pass:
   - `ProfileDetailSheet.kt` — Bottom sheet opened by tapping a card: icon + name + sub, Provider/Type + Used/Server(no port) facts, Copy (clipboard `host:port:user:pass`, flips to bold Copied with icon hidden, no Toast) / Test (SocksTester + Toast) / Edit / Duplicate (`duplicateProfile` in ProxiesScreen, `Profile.copyTo`, no engine change) / Delete rows with `ic_sheet_*` icons (`lucide_copy` for Copy). Delete reuses the existing confirm dialog. Opens fully expanded (`skipPartiallyExpanded`).
 - `navigation/AppNavigation.kt` — NavHost destinations (incl. `theme` route)
 - `screens/` — BubbleSettingsScreen (Lock/Classic/Circle styles; Circle gates alignment options each with a live 4-icon preview + button-size slider + full preview), CountriesScreen, RecentsScreen (full recents list from Home See all; taps select AND connect via `VpnViewModel.pickAndConnectCountry`, bottom bar hidden), SmsScreen (SMS tab: mockup port — main/numbers/live/activity pages + country/confirm/item sheets, state in `SmsWatcher`, OTP notifications with Copy action), DebugLogsScreen, ProxiesScreen (list + swipe + dialogs + FAB; form lives in AddEditProxySheet; Home pick mode keeps full functionality, only tap selects + returns), AddEditProxySheet (add/edit form + proxy-string parse), SettingsScreen, SplitTunnelingScreen, StatusScreen (Home: Profile picker field + hero ConnectionCard with country selector + Data used + Connection details + Recents at the bottom; home country picks return via `VpnViewModel.pickCountry`), ThemeScreen, AdvancedSettingsScreen
+- `screens/sheet/` — Sheet tab port (user-only, same for admins in-app; no admin views): SheetScreen (My Files / Wallet / Archive tabs + open-file routing + BackHandler), SheetUi (site-exact status colors, StatusDot, PresetIcon, PasswordBadge, empty state), SheetFilesTab + SheetFileCard + SheetCreateDialogs (cards, FAB create, type/password picks, rename, SAF CSV download, dep-free xlsx import), SheetArchiveTab (restore/delete-forever, days-left), SheetWalletTab (balance USD/BDT, withdraw form, history), SheetDetailScreen (toolbar, grid, QuickEditBar, selection bar, archived viewer)
   - `AdvancedSettingsScreen.kt` — Advanced Settings page (Accelerator master + Primary checker + Checker mode + Cache last IP + Proxy health probe + Recheck interval + Cache proxy DNS). Engine honors prefs only while master is ON.
   - `ThemeScreen.kt` — Theme picker page: Light / Dark / Device theme cards with mini phone previews; writes PREF_THEME_MODE.
   - `SplitTunnelingScreen.kt` — Include-only single mode: feature header + toggle card (enabling jumps to Included page) + Included-apps row. Three pages: main, Included (dedicated list + FAB to add, empty state, minus to remove), Add apps (searchable full list, + flips to check). Same engine prefs minus bypass (`PREF_ADV_PER_APP` / `PREF_ADV_APP_LIST`; legacy `PREF_ADV_APP_BYPASS` ignored, removed from `settings.xml`). Picker hides own package, prunes stale entries on open, auto-turns split OFF when leaving with zero effective apps. IP-address rows skipped: engine has no IP split-tunneling support. Included page opens directly via `startOnApps` arg (refuse-to-connect link).
@@ -240,10 +264,18 @@ Notes on the merged notification/dot pass:
 - `viewmodel/VpnViewModel.kt` — Vpn state, AIDL binding, split Include-empty guard, `awaitStopped` restart wait, accelerator DNS warm-up, `pickAndConnectCountry` (recent tapped: rewrite + connect)
 
 ### Drawables added for this pass
+- `drawable/ic_ss_*.xml` (34 site-exact Sheet icons ported from the website SVGs: cookie/coda, twofa/authenticator, page/soundcloud-solid, facebook, myfiles/redis, wallet/invoiceplane, archive/proton-drive, doc2x FAB, pw_dgd swirl, pw_love silhouette, undo/redo, check_arrow pixel, restore, merge, compact, download/upload/copy/pencil/trash/more/check/square/plus, textcolor/fill/eraser/paste, bkash/nagad/usdt/binance)
 - `drawable/lucide_minus.xml`, `ic_proton_filter.xml`, `ic_proton_apps.xml` (vector icons for the split tunneling rows)
 - `drawable/ic_sheet_test.xml`, `ic_sheet_edit.xml`, `ic_sheet_duplicate.xml`, `ic_sheet_delete.xml` (filled icons for the profile detail sheet rows)
 - `drawable/ic_notification_transparent.xml` (required invisible notification small icon)
 - `drawable/ic_copy.xml`, `ic_paste.xml` (fill icons for Copy/Paste, tinted to text color; no green)
+
+### `sheetsubmit/` — admin-only website copy (no separate git history)
+- Copy of the SheetSubmit web project (Pages + backend + worker, minus
+  node_modules/dist/.git/.github/android). Backend refuses non-admin Telegram
+  identities at verify/test-login (`admin_only` 403, API 2.0.38); `RequireAuth`
+  walls non-admin sessions; login page states admin-only. Regular users cannot
+  sign in here at all; they use the Android app.
 
 ### Native C — `app/src/main/jni/`
 | Area | Purpose |
