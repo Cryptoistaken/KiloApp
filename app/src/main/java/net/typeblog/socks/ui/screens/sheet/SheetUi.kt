@@ -104,15 +104,18 @@ fun PasswordBadge(password: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun EmptySheetState(title: String, sub: String, modifier: Modifier = Modifier) {
+fun EmptySheetState(icon: Int, title: String, sub: String, modifier: Modifier = Modifier) {
     androidx.compose.foundation.layout.Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Image(
-            painter = painterResource(R.drawable.ic_ss_doc2x),
+            painter = painterResource(icon),
             contentDescription = null,
-            modifier = Modifier.size(48.dp)
+            modifier = Modifier.size(48.dp),
+            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                MaterialTheme.colorScheme.onSurfaceVariant
+            )
         )
         androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(12.dp))
         Text(

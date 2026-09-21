@@ -209,6 +209,7 @@ fun SheetFilesTab(
                     contentAlignment = Alignment.Center
                 ) {
                     EmptySheetState(
+                        icon = net.typeblog.socks.R.drawable.ic_ss_empty_files,
                         title = "No files yet",
                         sub = "Tap + to create your first file."
                     )

@@ -138,6 +138,7 @@ fun SheetArchiveTab(
                 contentAlignment = Alignment.Center
             ) {
                 EmptySheetState(
+                    icon = R.drawable.ic_ss_empty_archive,
                     title = "No archived files.",
                     sub = "Kept here for 30 days."
                 )
