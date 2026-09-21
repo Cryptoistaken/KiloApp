@@ -56,8 +56,12 @@ import net.typeblog.socks.util.Constants.ACTION_VPN_STATE_CHANGED
 import net.typeblog.socks.util.Constants.BUBBLE_STYLE_CLASSIC
 import net.typeblog.socks.util.Constants.BUBBLE_STYLE_CIRCLE
 import net.typeblog.socks.util.Constants.BUBBLE_STYLE_LOCK
+import net.typeblog.socks.util.Constants.CIRCLE_DOWN
+import net.typeblog.socks.util.Constants.CIRCLE_LEFT
+import net.typeblog.socks.util.Constants.CIRCLE_RIGHT
 import net.typeblog.socks.util.Constants.CIRCLE_SIZE_DEFAULT
 import net.typeblog.socks.util.Constants.CIRCLE_SMALL
+import net.typeblog.socks.util.Constants.CIRCLE_UP
 import net.typeblog.socks.util.Constants.PREF_CIRCLE_ALIGN
 import net.typeblog.socks.util.Constants.PREF_CIRCLE_SIZE
 import android.content.ClipData
@@ -306,7 +310,14 @@ class FloatingControlService : Service() {
             onSmsLongPress = { circleMenu?.hide(); openSmsPopup() },
             onSheetTap = { circleMenu?.hide(); toast("SheetSubmit coming soon") },
             onNameTap = { copyRandomName() },
-            onDismissed = { circleMenuOpen = false; longPressFired = false; setCircleGlyph() },
+            onDismissed = {
+                circleMenuOpen = false
+                longPressFired = false
+                setCircleGlyph()
+                // Anchor is free again: settle inside the clearance so the
+                // next expand always fits.
+                nudgeBubbleIntoClearance()
+            },
             onCloseAnim = { playMenuClosePulse() }
         )
         prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -320,9 +331,16 @@ class FloatingControlService : Service() {
                 // Slider grows the trigger AND the 4 open menu items together:
                 // rebuild the trigger live, then resize the open menu in
                 // place (no collapse needed). Trigger stays on top after its
-                // window re-add so items keep diving underneath it.
+                // window re-add so items keep diving underneath it. While the
+                // menu is open the trigger keeps its anchor spot (no
+                // clearance nudge — that would detach it from its items).
                 if (isCircleStyle()) {
-                    recreateBubbleForStyleChange(bubbleStyle, preserveCenter = true)
+                    val menuOpen = circleMenu?.isShowing() == true
+                    recreateBubbleForStyleChange(
+                        bubbleStyle,
+                        preserveCenter = true,
+                        applyClearance = !menuOpen
+                    )
                     try {
                         val newSize = PreferenceManager.getDefaultSharedPreferences(this)
                             .getInt(
@@ -340,12 +358,16 @@ class FloatingControlService : Service() {
                 }
             } else if (key == PREF_CIRCLE_ALIGN) {
                 // Alignment switch moves the open menu bubbles live on screen
-                // (circle <-> up/down/left/right) — no collapse needed.
+                // (circle <-> up/down/left/right) — no collapse needed. When
+                // closed, nudge the parked trigger inside the new clearance
+                // so the next expand always fits (never while open: the
+                // trigger is the menu's anchor).
                 if (isCircleStyle()) {
                     try {
                         val newAlign = PreferenceManager.getDefaultSharedPreferences(this)
                             .getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL
                         circleMenu?.updateAlign(newAlign)
+                        if (circleMenu?.isShowing() != true) nudgeBubbleIntoClearance()
                     } catch (_: Exception) {
                     }
                 }
@@ -402,11 +424,7 @@ class FloatingControlService : Service() {
      */
     private fun reClampBubblePosition() {
         val lp = params ?: return
-        val bounds = currentDragBounds()
-        val maxX = (bounds.right - bubbleWindowSizePx).coerceAtLeast(bounds.left)
-        val maxY = bubbleMaxY(bounds)
-        val newX = lp.x.coerceIn(bounds.left, maxX)
-        val newY = lp.y.coerceIn(bounds.top, maxY)
+        val (newX, newY) = clampBubbleToBounds(lp.x, lp.y)
         if (newX != lp.x || newY != lp.y) {
             lp.x = newX
             lp.y = newY
@@ -423,7 +441,7 @@ class FloatingControlService : Service() {
         updateStatusLabelPosition()
     }
 
-    private fun recreateBubbleForStyleChange(newStyle: String, preserveCenter: Boolean = false) {
+    private fun recreateBubbleForStyleChange(newStyle: String, preserveCenter: Boolean = false, applyClearance: Boolean = true) {
         bubbleStyle = newStyle
         val oldX = params?.x
         val oldY = params?.y
@@ -440,17 +458,17 @@ class FloatingControlService : Service() {
         bubbleView = createBubbleView()
         params = buildLayoutParams()
         if (preserveCenter && oldCenterX != null && oldCenterY != null) {
-            val bounds = currentDragBounds()
-            val maxX = (bounds.right - bubbleWindowSizePx).coerceAtLeast(bounds.left)
-            val maxY = bubbleMaxY(bounds)
-            params?.x = (oldCenterX - bubbleWindowSizePx / 2).coerceIn(bounds.left, maxX)
-            params?.y = (oldCenterY - bubbleWindowSizePx / 2).coerceIn(bounds.top, maxY)
+            val (nx, ny) = clampBubbleToBounds(
+                oldCenterX - bubbleWindowSizePx / 2,
+                oldCenterY - bubbleWindowSizePx / 2,
+                applyClearance
+            )
+            params?.x = nx
+            params?.y = ny
         } else if (oldX != null && oldY != null) {
-            val bounds = currentDragBounds()
-            val maxX = (bounds.right - bubbleWindowSizePx).coerceAtLeast(bounds.left)
-            val maxY = bubbleMaxY(bounds)
-            params?.x = oldX.coerceIn(bounds.left, maxX)
-            params?.y = oldY.coerceIn(bounds.top, maxY)
+            val (nx, ny) = clampBubbleToBounds(oldX, oldY, applyClearance)
+            params?.x = nx
+            params?.y = ny
         }
         flagPillView = createFlagPillView()
         flagPillParams = buildFlagPillLayoutParams()
@@ -923,6 +941,100 @@ class FloatingControlService : Service() {
             .coerceAtLeast(bounds.top)
     }
 
+    /**
+     * Required clearance around the trigger CENTER so an expanded circle
+     * menu always fits on screen: [left, top, right, bottom] in px. Circle
+     * needs its orbit radius on every side; lines need the full strip
+     * (OFF + 3*GAP) on their side, item half + 8dp elsewhere. Zero when the
+     * circle style is off. Mirrors CircleBubbleMenu's layout math.
+     */
+    private fun menuClearancePx(): IntArray {
+        if (!isCircleStyle()) return intArrayOf(0, 0, 0, 0)
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val align = prefs.getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL
+        val sizeDp = prefs.getInt(PREF_CIRCLE_SIZE, Constants.CIRCLE_SIZE_DEFAULT)
+            .coerceIn(Constants.CIRCLE_SIZE_MIN, Constants.CIRCLE_SIZE_MAX)
+        val density = resources.displayMetrics.density
+        val slotMargin = (sizeDp * density / 2 - density + 8 * density).toInt()
+        val gap = (58 * density).toInt()
+        val off = (62 * density).toInt()
+        val r = (68.75f * density).toInt()
+        val reach = off + 3 * gap
+        return when (align) {
+            CIRCLE_UP -> intArrayOf(slotMargin, reach + slotMargin, slotMargin, slotMargin)
+            CIRCLE_DOWN -> intArrayOf(slotMargin, slotMargin, slotMargin, reach + slotMargin)
+            CIRCLE_RIGHT -> intArrayOf(slotMargin, slotMargin, reach + slotMargin, slotMargin)
+            CIRCLE_LEFT -> intArrayOf(reach + slotMargin, slotMargin, slotMargin, slotMargin)
+            else -> {
+                val c = r + slotMargin
+                intArrayOf(c, c, c, c)
+            }
+        }
+    }
+
+    /**
+     * Clamp a desired top-left bubble position into the drag bounds, inset
+     * by the menu clearance so the trigger can never park where its
+     * expanded items would clip. Falls back to the plain trigger fit when
+     * the screen is too small for the full clearance.
+     */
+    private fun clampBubbleToBounds(x: Int, y: Int, applyClearance: Boolean = true): Pair<Int, Int> {
+        val bounds = currentDragBounds()
+        var minX = bounds.left
+        var maxX = (bounds.right - bubbleWindowSizePx).coerceAtLeast(minX)
+        var minY = bounds.top
+        var maxY = bubbleMaxY(bounds)
+        if (applyClearance && isCircleStyle() && bubbleWindowSizePx > 0) {
+            val cl = menuClearancePx()
+            val winHalf = bubbleWindowSizePx / 2
+            val cMinX = bounds.left + cl[0] - winHalf
+            val cMaxX = bounds.right - cl[2] - winHalf
+            if (cMinX <= cMaxX) {
+                minX = maxOf(minX, cMinX)
+                maxX = minOf(maxX, cMaxX)
+            }
+            val cMinY = bounds.top + cl[1] - winHalf
+            val cMaxY = bounds.bottom - cl[3] - winHalf
+            val pillMaxY = bubbleMaxY(bounds)
+            if (cMinY <= minOf(cMaxY, pillMaxY)) {
+                minY = maxOf(minY, cMinY)
+                maxY = minOf(maxY, minOf(cMaxY, pillMaxY))
+            }
+            if (minX > maxX) {
+                minX = bounds.left
+                maxX = (bounds.right - bubbleWindowSizePx).coerceAtLeast(minX)
+            }
+            if (minY > maxY) {
+                minY = bounds.top
+                maxY = bubbleMaxY(bounds)
+            }
+        }
+        return Pair(x.coerceIn(minX, maxX), y.coerceIn(minY, maxY))
+    }
+
+    /** Nudge the parked trigger inside the menu clearance (never mid-drag
+     * or while the open menu uses it as anchor). */
+    private fun nudgeBubbleIntoClearance() {
+        val lp = params ?: return
+        if (dragging) return
+        if (circleMenu?.isShowing() == true) return
+        val (nx, ny) = clampBubbleToBounds(lp.x, lp.y)
+        if (nx != lp.x || ny != lp.y) {
+            lp.x = nx
+            lp.y = ny
+            try {
+                if (bubbleView?.isAttachedToWindow == true) {
+                    windowManager?.updateViewLayout(bubbleView, lp)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "nudge into clearance failed", e)
+            }
+            updateFlagPillPosition()
+            updateStatusLabelPosition()
+            persistBubblePosition()
+        }
+    }
+
     private fun updateStatusLabelPosition() {
         val lp = statusLabelParams ?: return
         val bp = params ?: return
@@ -1004,11 +1116,9 @@ class FloatingControlService : Service() {
         val savedX = prefs.getInt(PREF_BUBBLE_X, Int.MIN_VALUE)
         val savedY = prefs.getInt(PREF_BUBBLE_Y, Int.MIN_VALUE)
         if (savedX == Int.MIN_VALUE || savedY == Int.MIN_VALUE) return
-        val bounds = currentDragBounds()
-        val maxX = (bounds.right - bubbleWindowSizePx).coerceAtLeast(bounds.left)
-        val maxY = bubbleMaxY(bounds)
-        lp.x = savedX.coerceIn(bounds.left, maxX)
-        lp.y = savedY.coerceIn(bounds.top, maxY)
+        val (nx, ny) = clampBubbleToBounds(savedX, savedY)
+        lp.x = nx
+        lp.y = ny
     }
 
     private fun persistBubblePosition() {
@@ -1096,17 +1206,15 @@ class FloatingControlService : Service() {
                         longPressHandler.removeCallbacks(longPressRunnable)
                     }
                     if (dragging) {
-                        // Overlay windows use TOP|START / TOP|CENTER_HORIZONTAL gravity
-                        // relative to the display frame, so clamp the bubble inside the
-                        // visible content area: display bounds minus ALL four system-bar
-                        // /cutout insets, applied symmetrically to min AND max edges.
-                        // bubbleMaxY also reserves the flag pill and status label, so
-                        // neither follower can be pushed under the nav bar.
-                        val bounds = currentDragBounds()
-                        val maxX = (bounds.right - bubbleWindowSizePx).coerceAtLeast(bounds.left)
-                        val maxY = bubbleMaxY(bounds)
-                        lp.x = (initialX + (event.rawX - initialRawX).toInt()).coerceIn(bounds.left, maxX)
-                        lp.y = (initialY + (event.rawY - initialRawY).toInt()).coerceIn(bounds.top, maxY)
+                        // Clamp inside the visible area, inset by the menu
+                        // clearance so the trigger can never park where its
+                        // expanded items would clip off-screen.
+                        val (nx, ny) = clampBubbleToBounds(
+                            initialX + (event.rawX - initialRawX).toInt(),
+                            initialY + (event.rawY - initialRawY).toInt()
+                        )
+                        lp.x = nx
+                        lp.y = ny
                         try {
                             windowManager?.updateViewLayout(v, lp)
                             updateFlagPillPosition()
