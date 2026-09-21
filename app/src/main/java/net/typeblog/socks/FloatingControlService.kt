@@ -1709,7 +1709,7 @@ class FloatingControlService : Service() {
             val name = NamesRepo.random(this)
             copyText(name)
             bubbleView?.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-            toast("Copied")
+            toast("Copied $name")
         } catch (e: Exception) {
             Log.e(TAG, "Name copy failed", e)
         }
@@ -1731,7 +1731,7 @@ class FloatingControlService : Service() {
                     .maxByOrNull { it.born }
                 if (last != null) {
                     copyText(last.display)
-                    toast("Copied")
+                    toast("Copied ${last.display}")
                     bubbleView?.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                     return
                 }
@@ -1749,10 +1749,10 @@ class FloatingControlService : Service() {
             }
             SmsWatcher.provision(digits) { n ->
                 if (n == null) {
-                    toast("No numbers - retry")
+                    toast("No numbers available, try again")
                 } else {
                     copyText(n.display)
-                    toast("Copied")
+                    toast("Copied ${n.display}")
                 }
             }
             if (openPopup) openSmsPopup()
@@ -1816,7 +1816,7 @@ class FloatingControlService : Service() {
     private fun copySmsEntry(display: String) {
         try {
             copyText(display)
-            toast("Copied")
+            toast("Copied $display")
             bubbleView?.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
         } catch (e: Exception) {
             Log.e(TAG, "SMS popup copy failed", e)
