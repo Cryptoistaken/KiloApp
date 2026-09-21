@@ -1,0 +1,293 @@
+import { lazy, Suspense, useMemo } from "react";
+import {
+  Navigate,
+  Outlet,
+  RouterProvider,
+  createBrowserRouter,
+  useLocation,
+  useParams,
+} from "react-router";
+
+import PageSkeleton, { Skeleton } from "@/components/ui/page-skeleton";
+
+import Sidebar from "@/components/layout/Sidebar";
+import Topbar from "@/components/layout/Topbar";
+import { useAuth } from "@/contexts/AuthContext";
+import { api } from "@/lib/api";
+import { useTheme } from "@/lib/theme";
+import { lazyRetry } from "@/lib/lazyRetry";
+
+const HomePage = lazyRetry(() => import("@/pages/HomePage"));
+const SheetPage = lazyRetry(() => import("@/pages/SheetPage"));
+const LoginScreen = lazyRetry(() => import("@/components/auth/LoginScreen"));
+
+const BubbleMode = lazy(() => import("@/components/bubble/BubbleMode"));
+const BubbleDesignPage = lazy(() => import("@/pages/BubbleDesignPage"));
+
+function getBubbleFileId(): string | null {
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    const isAndroid =
+      !!(window as unknown as { Android?: unknown }).Android;
+    const file = qs.get("file");
+    if (qs.get("bubble") === "1" && file && isAndroid) return file;
+  } catch {
+    // ignore malformed query
+  }
+  return null;
+}
+
+type DetailedSkeletonVariant = "files" | "archive" | "pools" | "admin" | "admin-detail" | "tools" | "splitter" | "sheet";
+
+function skeletonForPath(pathname: string): DetailedSkeletonVariant {
+  if (pathname.includes("/file/")) return "sheet";
+  if (pathname.startsWith("/archive/")) return "sheet";
+  if (pathname.startsWith("/archive")) return "archive";
+  if (pathname.startsWith("/pools")) return "pools";
+  if (pathname.startsWith("/approvals")) return "pools";
+  if (pathname.startsWith("/settings")) return "pools";
+  if (pathname.startsWith("/admin/user/")) return "admin-detail";
+  if (pathname.startsWith("/admin")) return "admin";
+  if (pathname.startsWith("/analysis")) return "admin";
+  if (pathname === "/tools" || pathname === "/tools/") return "tools";
+  if (pathname === "/tools/splitter" || pathname === "/tools/splitter/") return "splitter";
+  if (pathname.startsWith("/bubble-design")) return "splitter";
+  return "files";
+}
+
+function LoadingShell({ variant }: { variant: DetailedSkeletonVariant }) {
+  const sheet = variant === "sheet";
+  // /approvals and /settings map to the "pools" variant in skeletonForPath, so the pools
+  // branch below covers /pools, /approvals and /settings (same style + pane).
+  const poolsLike = variant === "pools";
+  const paneStyle = poolsLike
+    ? { padding: "24px", maxWidth: 960 }
+    : variant === "tools" || variant === "splitter"
+      ? { padding: "32px 24px", maxWidth: 960 }
+      : undefined;
+  const paneId = poolsLike
+    ? "homePanePools"
+    : variant === "tools" || variant === "splitter"
+      ? "homePaneTools"
+      : variant === "archive"
+        ? "homePaneArchive"
+        : variant === "admin" || variant === "admin-detail"
+          ? "homePaneAdmin"
+          : "homePaneFiles";
+  return (
+    <div className="flex h-dvh flex-col lg:flex-row">
+      {!sheet ? (
+        <div className="hidden w-60 shrink-0 flex-col gap-2 border-r border-border bg-background p-2 lg:flex" aria-hidden="true">
+          <div className="flex items-center gap-2 px-2 py-2">
+            <Skeleton className="size-5 rounded-sm" />
+            <Skeleton className="h-4 w-24 rounded" />
+          </div>
+          {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-9 w-full rounded-md" />)}
+        </div>
+      ) : null}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <header className={sheet ? undefined : "home-topbar"}>
+        <div className="topbar" aria-hidden="true">
+          <div className="topbar-l">
+            <Skeleton className="h-5 w-5 rounded-sm" />
+            <Skeleton className="h-4 w-28 rounded" />
+          </div>
+          <Skeleton className="h-8 w-8 rounded-full" />
+        </div>
+      </header>
+      <main id="main-content" className="flex flex-1 min-h-0 flex-col">
+        {!sheet ? (
+          <div id="homeTabBar" aria-hidden="true">
+            <div className="home-tabs">
+              {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-9 w-24 rounded-md" />)}
+            </div>
+          </div>
+        ) : null}
+        <div
+          id={!sheet ? paneId : undefined}
+          className={!sheet ? "home-pane" : undefined}
+          style={paneStyle ? { ...paneStyle, margin: "0 auto", width: "100%" } : undefined}
+        >
+          <PageSkeleton variant={variant} className="min-h-0" sheetToolbar={false} />
+        </div>
+      </main>
+      </div>
+    </div>
+  );
+}
+
+function Layout() {
+  const { pathname } = useLocation();
+  const { user } = useAuth();
+  const variant = skeletonForPath(pathname);
+  // Admin-only sidebar rail, full height on the left (desktop and phones —
+  // same rail, tap the trigger on touch); the header sits only over the main
+  // column, never above the sidebar. Regulars get Topbar + tabs everywhere.
+  // Sheet pages keep the full Topbar on every size.
+  const isFilePage =
+    pathname.startsWith("/file/") ||
+    pathname.startsWith("/archive/") ||
+    /\/admin\/user\/[^/]+\/file\/[^/]+/.test(pathname);
+  const isAdmin = !!user?.isAdmin;
+  return (
+    <div className="flex h-dvh flex-row">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[9999] focus:rounded-md focus:bg-(--bg) focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-(--text) focus:shadow-md focus:outline-none focus:ring-2 focus:ring-(--ring)"
+      >
+        Skip to content
+      </a>
+      {isFilePage || !isAdmin ? null : <Sidebar />}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {isFilePage ? (
+          <header>
+            <Topbar />
+          </header>
+        ) : (
+          <header className={isAdmin ? "home-topbar admin" : "home-topbar"}>
+            <Topbar />
+          </header>
+        )}
+        <main id="main-content" tabIndex={-1} className="flex flex-1 flex-col min-h-0 min-w-0 focus:outline-none">
+          <Suspense fallback={<PageSkeleton variant={variant} className="min-h-0" sheetToolbar={variant !== "sheet"} />}>
+            <Outlet />
+          </Suspense>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+// Fallbacks for hand-typed bare admin URLs with a missing id segment — send the
+// user back to the nearest real state instead of a blank screen.
+function AdminFileFallback() {
+  const { userId } = useParams();
+  return <Navigate to={userId ? `/admin/user/${userId}` : "/admin"} replace />;
+}
+
+const router = createBrowserRouter([
+  {
+    path: "/",
+    element: <RequireAuth />,
+    children: [
+      {
+        element: <Layout />,
+        children: [
+          { index: true, element: <HomePage /> },
+          { path: "files", element: <HomePage /> },
+          { path: "archive", element: <HomePage /> },
+          { path: "archive/:id", element: <SheetPage /> },
+          { path: "wallet", element: <HomePage /> },
+          { path: "withdrawals", element: <HomePage /> },
+          { path: "pools", element: <Navigate to="/pools/dgddigital/cookies_only" replace /> },
+          { path: "pools/:password/:poolId", element: <HomePage /> },
+          { path: "approvals", element: <HomePage /> },
+          { path: "settings", element: <HomePage /> },
+          { path: "admin", element: <HomePage /> },
+          { path: "analysis", element: <HomePage /> },
+          { path: "tools", element: <HomePage /> },
+          { path: "tools/splitter", element: <HomePage /> },
+          { path: "tools/pool-lookup", element: <HomePage /> },
+          { path: "admin/user", element: <Navigate to="/admin" replace /> },
+          { path: "admin/user/:userId", element: <HomePage /> },
+          { path: "admin/user/:userId/file", element: <AdminFileFallback /> },
+          { path: "admin/user/:userId/file/:fileId", element: <SheetPage /> },
+          { path: "file/:id", element: <SheetPage /> },
+          { path: "bubble-design", element: <BubbleDesignPage /> },
+          { path: "*", element: <HomePage /> },
+        ],
+      },
+    ],
+  },
+  { path: "login", element: <LoginRoute /> },
+  { path: "*", element: <Navigate to="/" replace /> },
+]);
+
+// Public sign-in page. Reads the redirect-back destination + expired flag from
+// RequireAuth's navigation state; already-logged-in visitors bounce to the app.
+function LoginRoute() {
+  const { user, loading } = useAuth();
+  const { state } = useLocation() as { state?: { from?: unknown; expired?: boolean } };
+  const next = typeof state?.from === "string" && state.from.startsWith("/") && !state.from.startsWith("//")
+    ? state.from
+    : "/";
+  if (loading) return <LoadingShell variant="files" />;
+  if (user) return <Navigate to={next} replace />;
+  return (
+    <div className="flex h-dvh flex-col">
+      <Suspense fallback={<LoadingShell variant="files" />}>
+        <LoginScreen
+          notice={state?.expired ? "Session expired. Please log in again." : undefined}
+          next={next}
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+// Gate for everything except /login: loading shell → bounce to /login carrying
+// the original destination → Android bubble → the authed Layout tree.
+function RequireAuth() {
+  const { user, loading, sessionExpired } = useAuth();
+  const location = useLocation();
+  const bubbleFileId = useMemo(() => getBubbleFileId(), []);
+
+  if (loading) {
+    return bubbleFileId
+      ? <PageSkeleton variant="sheet" className="min-h-dvh" sheetToolbar={false} />
+      : <LoadingShell variant={skeletonForPath(location.pathname)} />;
+  }
+
+  if (!user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname + location.search, expired: sessionExpired }}
+      />
+    );
+  }
+
+  // Admin-only website (second layer; the backend refuses non-admin sessions
+  // too): anyone holding a non-admin session lands here, never in the app.
+  if (!user.isAdmin) {
+    return (
+      <div className="flex h-dvh flex-col items-center justify-center gap-3 p-6 text-center">
+        <div className="text-base font-semibold">Admin access only</div>
+        <div className="text-sm text-muted-foreground">Regular users sign in from the Android app.</div>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => {
+            api.logout().catch(() => {}).finally(() => {
+              localStorage.removeItem("ss_had_session");
+              localStorage.removeItem("ss_auth_user");
+              sessionStorage.removeItem("ss_wallet_ts");
+              window.location.href = "/login";
+            });
+          }}
+        >
+          Log out
+        </button>
+      </div>
+    );
+  }
+
+  // Android floating-bubble mini window (?bubble=1&file=<id>) — code-split so the
+  // main bundle stays lean; only loads inside the Android WebView.
+  if (bubbleFileId) {
+    return (
+      <Suspense fallback={<PageSkeleton variant="sheet" className="min-h-dvh" sheetToolbar={false} />}>
+        <BubbleMode fileId={bubbleFileId} />
+      </Suspense>
+    );
+  }
+
+  return <Outlet />;
+}
+
+export default function App() {
+  // Apply the saved theme on first paint — the login screen has no theme toggle of its own.
+  useTheme();
+  return <RouterProvider router={router} />;
+}

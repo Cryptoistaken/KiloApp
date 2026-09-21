@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+.playwright-artifacts-0
+.playwright
+package-lock.json
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Env (never commit secrets — token lives in backend/.env)
+.env
+.env.*
+deploy.env
+
+# Logs
+*.log
+
+.agents
+.claude
+skills-lock.json
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Android
+android/.gradle/
+android/app/build/
+android/local.properties
+android/android-release.keystore
+release-fingerprint.txt
+
+# Playwright MCP artifacts (screenshots/snapshots — local only)
+.playwright-mcp/
+tmp_artifact*/
+compare-*.html
+
+# Local adaptiveness plan (research doc — never commit)
+adaptiveness.plan.md
+
+# Re-include project .bat files hidden by global gitignore (*.bat)
+!redeploy.bat
+!android/gradlew.bat
+test/*
+!test/test.ts
+!test/dupcheck.ts
+!test/pipeline.ts
+!test/twoSession.ts
+!test/benchmark.ts
+!test/stress.ts
+!test/performance.ts
+!test/lib.ts
+!test/accounts.example.json
+!test/.env.example
+Pages/test-results/.last-run.json

@@ -1,0 +1,642 @@
+import { ArrowLeft } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+
+import { api } from "@/lib/api";
+import { forgetFile } from "@/lib/idb";
+import { useConfirm } from "@/lib/confirm";
+import { useToast } from "@/lib/toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { useProfileCache } from "@/stores/profileCache";
+import { fileTypeDef } from "@/lib/types";
+import type { AdminUser, ArchiveFile, Row, SheetFile } from "@/lib/types";
+import { downloadXlsx } from "@/lib/xlsx";
+import { fmtMoney, inputToUsd, usdToInput, useCurrency, type Currency } from "@/lib/currency";
+import ProfileAvatar from "@/components/profile/ProfileAvatar";
+import SlideSwitch from "@/components/ui/slide-switch";
+import EmptyState from "./EmptyState";
+import PageSkeleton, { Skeleton } from "@/components/ui/page-skeleton";
+import FileCard from "./FileCard";
+import SearchInput from "@/components/ui/search-input";
+import { useModalA11y } from "@/hooks/useModalA11y";
+
+function userName(u: { name?: string; firstName?: string; lastName?: string; username?: string }): string {
+  return u.name?.trim() || ((u.firstName ?? "") + " " + (u.lastName ?? "")).trim() || (u.username ? "@" + u.username : "") || "Unknown";
+}
+
+export default function AdminView({ initialUserId, view = "grid" }: { initialUserId?: string; view?: "grid" | "list" }) {
+  const showToast = useToast();
+  const confirm = useConfirm();
+  const { user: me } = useAuth();
+  const navigate = useNavigate();
+
+  const [stats, setStats] = useState<{ totalUsers: number; totalFiles: number } | null>(null);
+  const [users, setUsers] = useState<AdminUser[] | null>(null);
+  const [detailUser, setDetailUser] = useState<AdminUser | null>(null);
+  const [detailArchived, setDetailArchived] = useState<ArchiveFile[]>([]);
+  const [search, setSearch] = useState("");
+  const [renameFileId, setRenameFileId] = useState<string | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [userFileTab, setUserFileTab] = useState<"files" | "archive">("files");
+  const [creditOpen, setCreditOpen] = useState(false);
+  const [creditAmount, setCreditAmount] = useState("");
+  const [creditTitle, setCreditTitle] = useState("Manual credit");
+  const [creditCurrency, setCreditCurrency] = useState<Currency>("USD");
+  const [creditMode, setCreditMode] = useState<"credit" | "debit">("credit");
+  const [creditBusy, setCreditBusy] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const renameRef = useModalA11y(!!renameFileId, () => setRenameFileId(null));
+  const creditRef = useModalA11y(creditOpen, () => setCreditOpen(false));
+  const [currency] = useCurrency();
+
+  const loadList = useCallback(async () => {
+    setListError(null);
+    try {
+      const [s, u] = await Promise.all([api.adminStats(), api.adminUsers()]);
+      setStats(s);
+      setUsers(u);
+      useProfileCache.getState().setProfiles(u as unknown[]);
+    } catch {
+      setListError("Unable to load users. Please try again.");
+      showToast("Unable to load users. Please try again.");
+    }
+  }, [showToast]);
+
+  const reloadDetail = useCallback(async (userId: string) => {
+    setDetailLoading(true);
+    setDetailError(null);
+    try {
+      const [u, a] = await Promise.all([api.adminUser(userId), api.adminUserArchive(userId)]);
+      setDetailUser(u);
+      setDetailArchived(a);
+      useProfileCache.getState().setProfiles([u as unknown]);
+    } catch {
+      setDetailError("Unable to load user. Please try again.");
+      showToast("Unable to load user. Please try again.");
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
+  }, []);
+
+  const showList = useCallback(() => {
+    if (detailUser) navigate("/admin");
+    else navigate("/admin");
+  }, [navigate, detailUser]);
+
+  const showDetail = useCallback((userId: string) => {
+    navigate(`/admin/user/${userId}`);
+  }, [navigate]);
+
+  // Deep-link sync: /admin/user/:id opens that user's detail; /admin resets to list.
+  useEffect(() => {
+    if (initialUserId) {
+      void reloadDetail(initialUserId).catch(() => navigate("/admin"));
+    } else {
+      setDetailUser(null);
+      setDetailArchived([]);
+      setDetailError(null);
+      void loadList();
+    }
+  }, [initialUserId, loadList, navigate, reloadDetail]);
+
+  const onSearch = (q: string) => {
+    setSearch(q);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      const query = q.trim();
+      if (query) {
+        try {
+          setUsers(await api.adminSearchUsers(query));
+        } catch {
+          showToast("Search failed. Please try again.");
+          void loadList();
+        }
+      } else {
+        void loadList();
+      }
+    }, 300);
+  };
+
+  const deleteUser = async () => {
+    if (!detailUser) return;
+    const ok = await confirm("Permanently delete this user and all their files? This cannot be undone.", "Delete User");
+    if (!ok) return;
+    try {
+      await api.adminDeleteUser(detailUser.id);
+    } catch {
+      showToast("Unable to delete user. Please try again.");
+      return;
+    }
+    showList();
+  };
+
+  const banUser = async () => {
+    if (!detailUser) return;
+    const ok = await confirm("Ban this user? They will lose access immediately.", "Ban");
+    if (!ok) return;
+    try {
+      await api.adminBanUser(detailUser.id);
+    } catch {
+      showToast("Unable to ban user. Please try again.");
+      return;
+    }
+    setDetailUser({ ...detailUser, banned: true });
+    void loadList();
+  };
+
+  const unbanUser = async () => {
+    if (!detailUser) return;
+    const ok = await confirm("Unban this user? Access will be restored.", "Unban");
+    if (!ok) return;
+    try {
+      await api.adminUnbanUser(detailUser.id);
+    } catch {
+      showToast("Unable to unban user. Please try again.");
+      return;
+    }
+    setDetailUser({ ...detailUser, banned: false });
+    void loadList();
+  };
+
+  const openCredit = () => {
+    setCreditAmount("");
+    setCreditTitle("Manual credit");
+    setCreditCurrency(currency);
+    setCreditMode("credit");
+    setCreditOpen(true);
+  };
+
+  const switchCreditCurrency = (c: Currency) => {
+    if (c === creditCurrency) return;
+    setCreditAmount((raw) => {
+      if (!raw.trim() || !Number.isFinite(Number(raw))) return raw;
+      return usdToInput(inputToUsd(raw, creditCurrency), c);
+    });
+    setCreditCurrency(c);
+  };
+
+  const switchCreditMode = (mode: "credit" | "debit") => {
+    setCreditMode(mode);
+    const want = mode === "credit" ? "Manual credit" : "Manual debit";
+    const other = mode === "credit" ? "Manual debit" : "Manual credit";
+    if (!creditTitle.trim() || creditTitle.trim() === other) setCreditTitle(want);
+  };
+
+  const commitCredit = async () => {
+    if (!detailUser || creditBusy) return;
+    const amount = Math.round(inputToUsd(creditAmount.trim(), creditCurrency) * 100) / 100;
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 100000) {
+      showToast(creditCurrency === "USD" ? "Enter a valid amount up to 100,000." : "Enter a valid amount.");
+      return;
+    }
+    const title = creditTitle.trim() || (creditMode === "credit" ? "Manual credit" : "Manual debit");
+    setCreditBusy(true);
+    try {
+      const res = await api.adminAdjustBalance(detailUser.id, amount, title, creditMode);
+      setCreditOpen(false);
+      await reloadDetail(detailUser.id);
+      showToast(creditMode === "credit" ? `Added ${fmtMoney(res.amount, creditCurrency)} to ${userName(detailUser)}.` : `Removed ${fmtMoney(res.amount, creditCurrency)} from ${userName(detailUser)}.`);
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : "";
+      showToast(raw.replace(/^\d+ \S+ - /, "") || "Unable to adjust balance. Please try again.");
+    } finally {
+      setCreditBusy(false);
+    }
+  };
+
+  const removeFile = async (fileId: string) => {
+    const ok = await confirm("Move this file to archive?", "Archive");
+    if (!ok) return;
+    try {
+      await api.adminDeleteFile(fileId);
+    } catch {
+      showToast("Unable to archive file. Please try again.");
+      return;
+    }
+    if (detailUser) await reloadDetail(detailUser.id);
+    void loadList();
+  };
+
+  const downloadFile = async (file: SheetFile) => {
+    let rows: Row[];
+    try {
+      rows = await api.adminFileRows(file.id);
+    } catch {
+      showToast("Unable to load rows. Please try again.");
+      return;
+    }
+    if (!rows || !rows.length) {
+      showToast("No data available to download.");
+      return;
+    }
+    try {
+      await downloadXlsx(rows, fileTypeDef(file.type).columns, file.name);
+    } catch {
+      showToast("Unable to download file. Please try again.");
+    }
+  };
+
+  const openRename = (fileId: string, name: string) => {
+    setRenameFileId(fileId);
+    setRenameName(name);
+  };
+
+  const commitRename = async () => {
+    const name = renameName.trim();
+    if (!name) {
+      showToast("Please enter a file name.");
+      return;
+    }
+    if (!renameFileId) return;
+    try {
+      await api.adminUpdateFile(renameFileId, { name });
+    } catch {
+      showToast("Unable to rename file. Please try again.");
+      return;
+    }
+    setRenameFileId(null);
+    if (detailUser) await reloadDetail(detailUser.id);
+    void loadList();
+  };
+
+  const restoreArchived = async (fileId: string) => {
+    if (!detailUser) return;
+    try {
+      await api.adminRestoreArchived(detailUser.id, fileId);
+    } catch {
+      showToast("Unable to restore file. Please try again.");
+      return;
+    }
+    await reloadDetail(detailUser.id);
+    void loadList();
+  };
+
+  const deleteArchived = async (fileId: string) => {
+    if (!detailUser) return;
+    const ok = await confirm("Permanently delete this file? This cannot be undone.", "Delete forever");
+    if (!ok) return;
+    try {
+      await api.adminDeleteArchived(detailUser.id, fileId);
+    } catch {
+      showToast("Unable to delete file. Please try again.");
+      return;
+    }
+    void forgetFile(fileId).catch(() => {});
+    await reloadDetail(detailUser.id);
+    void loadList();
+  };
+
+  if (initialUserId && !detailUser) {
+    if (detailLoading || users === null) return <PageSkeleton variant="admin-detail" />;
+    if (detailError) {
+      return (
+        <div style={{ padding: 24, textAlign: "center" }}>
+          <div role="alert" style={{ fontSize: 13, color: "var(--red)", marginBottom: 12 }}>{detailError}</div>
+          <button type="button" className="btn" onClick={() => reloadDetail(initialUserId)}>Retry</button>
+        </div>
+      );
+    }
+  }
+
+  if (detailUser) {
+    const files = detailUser.files ?? [];
+    return (
+      <>
+        <button type="button" className="btn btn-ghost admin-back-btn" onClick={showList}>
+          <ArrowLeft size={14} />
+          Back to users
+        </button>
+        <div className="admin-user-header">
+          <div className="admin-detail-header">
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <ProfileAvatar
+                photoUrl={detailUser.photoUrl}
+                fallback={userName(detailUser).charAt(0).toUpperCase()}
+                className="admin-detail-avatar admin-user-avatar-placeholder"
+                verified={detailUser.isAdmin}
+              />
+            </div>
+            <div className="admin-detail-info">
+              <div className="admin-detail-name" dir="auto" style={{ unicodeBidi: "isolate" }}>{userName(detailUser)}</div>
+              <div className="admin-detail-meta">
+                {detailUser.username ? "@" + detailUser.username : "ID: " + detailUser.id}
+              </div>
+              {detailUser.phone ? (
+                <div className="admin-detail-meta" dir="ltr" style={{ unicodeBidi: "isolate" }}>
+                  +{detailUser.phone.replace(/^\+/, "")}
+                </div>
+              ) : null}
+              <div className="admin-detail-meta">
+                Joined{" "}
+                {detailUser.createdAt
+                  ? new Date(detailUser.createdAt).toLocaleDateString()
+                  : "-"}
+              </div>
+              <div className="admin-detail-meta">
+                {detailUser.fileCount || 0} files, {detailUser.archivedCount || 0} archived
+              </div>
+              <div className="admin-detail-meta">
+                Balance: {fmtMoney(detailUser.balance ?? 0, currency)}
+              </div>
+            </div>
+            <div className="admin-detail-actions">
+                {detailUser.id !== me?.id ? (
+                <>
+                  <button type="button" className="btn btn-sm" onClick={openCredit}>
+                    Credit balance
+                  </button>
+                  {!detailUser.isAdmin ? (
+                  <>{detailUser.banned ? (
+                    <button type="button" className="btn btn-sm" onClick={() => void unbanUser()}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true"><title>ban</title><path fill="currentColor" d="M12 2c5.5 0 10 4.5 10 10s-4.5 10-10 10S2 17.5 2 12S6.5 2 12 2m0 2c-1.9 0-3.6.6-4.9 1.7l11.2 11.2c1-1.4 1.7-3.1 1.7-4.9c0-4.4-3.6-8-8-8m4.9 14.3L5.7 7.1C4.6 8.4 4 10.1 4 12c0 4.4 3.6 8 8 8c1.9 0 3.6-.6 4.9-1.7" /></svg>
+                      Unban User
+                    </button>
+                  ) : (
+                    <button type="button" className="btn btn-danger btn-sm" onClick={() => void banUser()}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true"><title>ban</title><path fill="currentColor" d="M12 2c5.5 0 10 4.5 10 10s-4.5 10-10 10S2 17.5 2 12S6.5 2 12 2m0 2c-1.9 0-3.6.6-4.9 1.7l11.2 11.2c1-1.4 1.7-3.1 1.7-4.9c0-4.4-3.6-8-8-8m4.9 14.3L5.7 7.1C4.6 8.4 4 10.1 4 12c0 4.4 3.6 8 8 8c1.9 0 3.6-.6 4.9-1.7" /></svg>
+                      Ban User
+                    </button>
+                  )}
+                  <button type="button" className="btn btn-danger btn-sm" onClick={() => void deleteUser()}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true"><title>delete</title><path fill="currentColor" d="M7 21q-.825 0-1.412-.587T5 19V6H4V4h5V3h6v1h5v2h-1v13q0 .825-.587 1.413T17 21zm2-4h2V8H9zm4 0h2V8h-2z" /></svg>
+                    Delete User
+                  </button>
+                  </>
+                  ) : null}
+                </>
+              ) : detailUser.isAdmin ? (
+                <span style={{ fontSize: 12, color: "var(--text3)", fontWeight: 600 }}>Admin. Actions unavailable.</span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <div className="pool-switch" role="tablist" aria-label="User file sections">
+            <button type="button" role="tab" aria-selected={userFileTab === "files"} aria-controls="admin-files-panel" id="admin-tab-files" className={userFileTab === "files" ? "active" : ""} onClick={() => setUserFileTab("files")} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 512 512" aria-hidden="true" className="dark:hidden"><linearGradient id="SVGnuJMQSqw" x1="256" x2="256" y1="506.703" y2="5.298" gradientUnits="userSpaceOnUse"><stop offset="0" /><stop offset=".5" stop-opacity=".75" /><stop offset="1" stop-opacity=".5" /></linearGradient><path fill="url(#SVGnuJMQSqw)" d="M503.2 146.5L256 5.3L8.8 146.5V196l30.9 17.6l-30.9 17.7v49.4l30.9 17.7L8.8 316v49.5L256 506.7l247.2-141.2V316l-30.9-17.6l30.9-17.7v-49.4l-30.9-17.7l30.9-17.6z" /><path d="M508.5 196v-49.4c0-1.9-1-3.7-2.7-4.6L258.6.7c-1.6-.9-3.6-.9-5.3 0L6.2 141.9c-1.7.9-2.7 2.7-2.7 4.6V196c0 1.9 1 3.7 2.7 4.6l22.8 13l-22.8 13.1c-1.7.9-2.7 2.7-2.7 4.6v49.4c0 1.9 1 3.7 2.7 4.6L29 298.4l-22.8 13c-1.7.9-2.7 2.7-2.7 4.6v49.4c0 1.9 1 3.7 2.7 4.6l247.2 141.2c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7L505.8 370c1.6-.9 2.7-2.7 2.7-4.6V316c0-1.9-1-3.7-2.7-4.6l-22.8-13l22.8-13.1c1.6-.9 2.7-2.7 2.7-4.6v-49.4c0-1.9-1-3.7-2.7-4.6L483 213.6l22.8-13.1c1.6-.9 2.7-2.6 2.7-4.5M256 11.4l236.5 135.1L256 281.7L19.5 146.5zm241.9 351L256 500.6L14.1 362.4v-37.2l239.2 136.7c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l239.2-136.7v37.2zm-5.4-46.4L256 451.2L19.5 316l20.2-11.6l213.6 122.1c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l213.6-122.1zm5.4-38.4L256 415.9L14.1 277.6v-37.2l239.2 136.7c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l239.2-136.7v37.2zm-5.4-46.3L256 366.4L19.5 231.3l20.2-11.6l213.6 122.1c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l213.6-122.1zm5.4-38.4L256 331.1L14.1 192.9v-37.2l239.2 136.7c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l239.2-136.7v37.2z" /></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 512 512" aria-hidden="true" className="hidden dark:inline"><title>databasement-light</title><linearGradient id="SVGvA5iYcsQ" x1="256" x2="256" y1="506.703" y2="5.298" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff" /><stop offset=".5" stop-color="#fff" stop-opacity=".75" /><stop offset="1" stop-color="#fff" stop-opacity=".5" /></linearGradient><path fill="url(#SVGvA5iYcsQ)" d="M503.2 146.5L256 5.3L8.8 146.5V196l30.9 17.6l-30.9 17.7v49.4l30.9 17.7L8.8 316v49.5L256 506.7l247.2-141.2V316l-30.9-17.6l30.9-17.7v-49.4l-30.9-17.7l30.9-17.6z" /><path fill="#fff" d="M508.5 196v-49.4c0-1.9-1-3.7-2.7-4.6L258.6.7c-1.6-.9-3.6-.9-5.3 0L6.2 141.9c-1.7.9-2.7 2.7-2.7 4.6V196c0 1.9 1 3.7 2.7 4.6l22.8 13l-22.8 13.1c-1.7.9-2.7 2.7-2.7 4.6v49.4c0 1.9 1 3.7 2.7 4.6L29 298.4l-22.8 13c-1.7.9-2.7 2.7-2.7 4.6v49.4c0 1.9 1 3.7 2.7 4.6l247.2 141.2c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7L505.8 370c1.6-.9 2.7-2.7 2.7-4.6V316c0-1.9-1-3.7-2.7-4.6l-22.8-13l22.8-13.1c1.6-.9 2.7-2.7 2.7-4.6v-49.4c0-1.9-1-3.7-2.7-4.6L483 213.6l22.8-13.1c1.6-.9 2.7-2.6 2.7-4.5M256 11.4l236.5 135.1L256 281.7L19.5 146.5zm241.9 351L256 500.6L14.1 362.4v-37.2l239.2 136.7c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l239.2-136.7v37.2zm-5.4-46.4L256 451.2L19.5 316l20.2-11.6l213.6 122.1c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l213.6-122.1zm5.4-38.4L256 415.9L14.1 277.6v-37.2l239.2 136.7c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l239.2-136.7v37.2zm-5.4-46.3L256 366.4L19.5 231.3l20.2-11.6l213.6 122.1c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l213.6-122.1zm5.4-38.4L256 331.1L14.1 192.9v-37.2l239.2 136.7c.8.5 1.7.7 2.6.7s1.8-.2 2.6-.7l239.2-136.7v37.2z" /></svg>
+              Files <span style={{ marginLeft: 6, fontFamily: "var(--mono)", fontSize: 11, opacity: .7 }}>{files.length}</span></button>
+            <button type="button" role="tab" aria-selected={userFileTab === "archive"} aria-controls="admin-archive-panel" id="admin-tab-archive" className={userFileTab === "archive" ? "active" : ""} onClick={() => setUserFileTab("archive")} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 512 512" aria-hidden="true" className="dark:hidden"><title>opnsense-dark</title><path d="M112 0v112h288v288h112V160.2L352.4 0zm288 512V400H112V112H0v240.4L160.2 512z" /></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 512 512" aria-hidden="true" className="hidden dark:inline"><title>opnsense</title><path fill="#de3c07" d="M512 160.2V400H400V112H112V0h240.4zM112 112H0v240.4L160.2 512H400V400H112z" /></svg>
+              Archive <span style={{ marginLeft: 6, fontFamily: "var(--mono)", fontSize: 11, opacity: .7 }}>{detailArchived.length}</span></button>
+          </div>
+        </div>
+
+        {detailLoading ? <PageSkeleton variant="admin-detail" /> : userFileTab === "files" ? (
+          files.length === 0 ? (
+            <EmptyState title="No files." sub="This user has no files yet." />
+          ) : (
+            <div id="admin-files-panel" role="tabpanel" aria-labelledby="admin-tab-files" className={view === "list" ? "files-list" : "files-grid"}>
+              {files.map((f) => (
+                <FileCard
+                  key={f.id}
+                  file={f}
+                  list={view === "list"}
+                  selectable={false}
+                  onOpen={() => navigate(`/admin/user/${detailUser.id}/file/${f.id}`)}
+                  onDownload={() => void downloadFile(f)}
+                  onRename={() => openRename(f.id, f.name)}
+                  onDelete={() => void removeFile(f.id)}
+                  onToggleSelect={() => {}}
+                />
+              ))}
+            </div>
+          )
+        ) : detailArchived.length === 0 ? (
+          <EmptyState title="No archived files." sub="Archived files appear here for 30 days." />
+        ) : (
+          <div id="admin-archive-panel" role="tabpanel" aria-labelledby="admin-tab-archive" className={view === "list" ? "files-list" : "files-grid"}>
+            {detailArchived.map((f) => {
+              const daysLeft = Math.max(
+                0,
+                30 - Math.floor((Date.now() - (f.deletedAt || 0)) / 86400000),
+              );
+              return (
+                <FileCard
+                  key={f.id}
+                  file={f}
+                  list={view === "list"}
+                  selectable={false}
+                  disableOpen
+                  daysLeft={daysLeft}
+                  onRestore={() => void restoreArchived(f.id)}
+                  onDelete={() => void deleteArchived(f.id)}
+                  onToggleSelect={() => {}}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        <div
+          className={`modal-overlay${renameFileId ? " open" : ""}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setRenameFileId(null);
+          }}
+        >
+          <div ref={renameRef} className="modal-box" role="dialog" aria-modal="true" aria-labelledby="admin-rename-title">
+            <div id="admin-rename-title" className="modal-title">Rename file</div>
+            <input
+              className="modal-input"
+              type="text"
+              aria-label="File name"
+              value={renameName}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setRenameName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void commitRename();
+                } else if (e.key === "Escape") {
+                  setRenameFileId(null);
+                }
+              }}
+            />
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setRenameFileId(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => void commitRename()}>
+                Rename
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={`modal-overlay${creditOpen ? " open" : ""}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setCreditOpen(false);
+          }}
+        >
+          <div ref={creditRef} className="modal-box" role="dialog" aria-modal="true" aria-labelledby="admin-credit-title">
+            <div id="admin-credit-title" className="modal-title">{creditMode === "credit" ? "Add balance" : "Reduce balance"}</div>
+            <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 4 }}>Current balance: {fmtMoney(detailUser?.balance ?? 0, creditCurrency)}{creditMode === "debit" ? " — may go below zero." : ""}</div>
+            <div style={{ marginTop: 12 }}>
+              <SlideSwitch options={[{ value: "credit", label: "Add" }, { value: "debit", label: "Reduce" }] as const} value={creditMode} onChange={switchCreditMode} ariaLabel="Adjustment direction" />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, marginTop: 12 }}>
+              <label style={{ fontSize: 12, color: "var(--text3)", fontWeight: 600 }} htmlFor="admin-credit-amount">Amount</label>
+              <SlideSwitch options={[{ value: "USD", label: "USD" }, { value: "BDT", label: "BDT" }] as const} value={creditCurrency} onChange={switchCreditCurrency} ariaLabel="Credit currency" />
+            </div>
+            <input
+              id="admin-credit-amount"
+              className="modal-input"
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              placeholder="0.00"
+              aria-label="Credit amount"
+              value={creditAmount}
+              onChange={(e) => setCreditAmount(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void commitCredit();
+                } else if (e.key === "Escape") {
+                  setCreditOpen(false);
+                }
+              }}
+            />
+            <label style={{ display: "block", fontSize: 12, color: "var(--text3)", fontWeight: 600, marginBottom: 4, marginTop: 12 }} htmlFor="admin-credit-title-input">Title</label>
+            <input
+              id="admin-credit-title-input"
+              className="modal-input"
+              type="text"
+              aria-label="Credit title"
+              placeholder="e.g. Advance payment"
+              value={creditTitle}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setCreditTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void commitCredit();
+                } else if (e.key === "Escape") {
+                  setCreditOpen(false);
+                }
+              }}
+            />
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setCreditOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" disabled={creditBusy} onClick={() => void commitCredit()}>
+                {creditBusy ? (creditMode === "credit" ? "Adding…" : "Removing…") : (creditMode === "credit" ? "Add" : "Remove")}
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (users === null && !listError) return <PageSkeleton variant="admin" />;
+
+  return (
+      <>
+      {listError ? <div role="alert" style={{ fontSize: 13, color: "var(--red)", background: "var(--red-bg)", border: "1px solid var(--red)", borderRadius: "var(--r)", padding: "8px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}><span>{listError}</span><button type="button" className="btn btn-sm" onClick={() => void loadList()}>Retry</button></div> : null}
+      <div className="admin-stats">
+        <div className="admin-stat-card" aria-busy={stats === null}>
+          <div className="admin-stat-value">{stats ? stats.totalUsers : "-"}</div>
+          <div className="admin-stat-label">Total Users</div>
+        </div>
+        <div className="admin-stat-card" aria-busy={stats === null}>
+          <div className="admin-stat-value">{stats ? stats.totalFiles : "-"}</div>
+          <div className="admin-stat-label">Total Files</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16, marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: "var(--text3)", fontWeight: 500 }}>{users === null ? <Skeleton className="h-4 w-20" /> : `${users.length} users`}</div>
+        <SearchInput
+            placeholder="Search users..."
+            aria-label="Search users"
+            autoComplete="off"
+            value={search}
+            onChange={(e) => onSearch(e.target.value)}
+            containerStyle={{ width: "100%" }}
+        />
+      </div>
+      <div className="admin-user-list">
+        {users === null
+          ? (
+              <PageSkeleton variant="admin" />
+            )
+          : users.length === 0
+            ? (
+                <EmptyState title="No users found." sub={search.trim() ? "Try a different search." : "No users yet."} />
+              )
+            : users.map((u) => {
+                const name = userName(u);
+                const joined = u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "";
+                return (
+                  <div
+                    key={u.id}
+                    className="admin-user-card"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => showDetail(u.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        showDetail(u.id);
+                      }
+                    }}
+                  >
+                    <div className="admin-user-avatar-wrap" style={{ position: "relative" }}>
+                      <ProfileAvatar
+                        photoUrl={u.photoUrl}
+                        fallback={name.charAt(0).toUpperCase()}
+                        className="admin-user-avatar admin-user-avatar-placeholder"
+                        verified={u.isAdmin}
+                      />
+                    </div>
+                    <div className="admin-user-info">
+                      <div className="admin-user-name" dir="auto" style={{ unicodeBidi: "isolate" }}>
+                        <span dir="auto" style={{ unicodeBidi: "isolate" }}>{name}</span>
+                        {u.banned ? (
+                          <span
+                            style={{
+                              marginLeft: 6,
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: "var(--red)",
+                              background: "var(--red-bg)",
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                            }}
+                          >
+                            Banned
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="admin-user-username">
+                        {u.username ? "@" + u.username : "ID: " + u.id}
+                      </div>
+                    </div>
+                    <div className="admin-user-meta">
+                      <div className="admin-user-stat">
+                        <span className="admin-user-stat-val">{u.fileCount || 0}</span> files
+                      </div>
+                      <div className="admin-user-stat">
+                        <span className="admin-user-stat-val">{joined}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+      </div>
+      </>
+  );
+}
