@@ -433,8 +433,10 @@ class SmsMenuOverlay(
             spin.visibility = View.VISIBLE
             codeView.visibility = View.GONE
         }
+        // Quick-access popup: tap copies the code when one arrived,
+        // else the number while waiting. Never the full message.
         row.setOnClickListener {
-            onNumberCopy(n.display)
+            onNumberCopy(n.code ?: n.display)
         }
         codeView.setOnClickListener {
             n.code?.let { onNumberCopy(it) }
