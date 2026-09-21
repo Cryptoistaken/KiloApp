@@ -434,8 +434,10 @@ class SmsMenuOverlay(
             codeView.visibility = View.GONE
         }
         row.setOnClickListener {
-            hide()
             onNumberCopy(n.display)
+        }
+        codeView.setOnClickListener {
+            n.code?.let { onNumberCopy(it) }
         }
         return row
     }
