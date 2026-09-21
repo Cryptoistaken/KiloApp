@@ -338,6 +338,17 @@ class FloatingControlService : Service() {
                     } catch (_: Exception) {
                     }
                 }
+            } else if (key == PREF_CIRCLE_ALIGN) {
+                // Alignment switch moves the open menu bubbles live on screen
+                // (circle <-> up/down/left/right) — no collapse needed.
+                if (isCircleStyle()) {
+                    try {
+                        val newAlign = PreferenceManager.getDefaultSharedPreferences(this)
+                            .getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL
+                        circleMenu?.updateAlign(newAlign)
+                    } catch (_: Exception) {
+                    }
+                }
             } else if (key == PREF_THEME_MODE) {
                 // Manual Theme pick: re-apply the theme-wired bubble elements
                 // (spinner tint, Connecting label) and re-inflate the popup so

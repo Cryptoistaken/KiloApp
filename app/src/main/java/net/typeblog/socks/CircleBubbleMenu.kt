@@ -387,10 +387,24 @@ class CircleBubbleMenu(
      * refreshes [slots] so the close fly-home targets match the new sizes.
      */
     fun updateSize(newSizeDp: Int) {
+        if (newSizeDp == lastSizeDp) return
+        applyLayout(newSizeDp, lastAlign)
+    }
+
+    /**
+     * Live-move an open menu when the alignment setting changes: same
+     * in-place relayout as [updateSize] but for the new slot arrangement
+     * (circle vs up/down/left/right). No collapse + re-expand needed.
+     */
+    fun updateAlign(newAlign: String) {
+        if (newAlign == lastAlign) return
+        applyLayout(lastSizeDp, newAlign)
+    }
+
+    private fun applyLayout(newSizeDp: Int, newAlign: String) {
         val root = rootView ?: return
         val box = container ?: return
         if (!root.isAttachedToWindow) return
-        if (newSizeDp == lastSizeDp) return
         if (btnViews.size != 4) return
         try {
             val density = context.resources.displayMetrics.density
@@ -400,7 +414,7 @@ class CircleBubbleMenu(
             val gapPx = (58 * density).toInt()
             val offPx = (62 * density).toInt()
             val rPx = (68.75f * density).toInt()
-            val pts: List<Pair<Int, Int>> = when (lastAlign) {
+            val pts: List<Pair<Int, Int>> = when (newAlign) {
                 CIRCLE_UP -> List(4) { 0 to -(offPx + it * gapPx) }
                 CIRCLE_DOWN -> List(4) { 0 to (offPx + it * gapPx) }
                 CIRCLE_RIGHT -> List(4) { (offPx + it * gapPx) to 0 }
@@ -483,6 +497,7 @@ class CircleBubbleMenu(
             } catch (_: Exception) {
             }
             lastSizeDp = newSizeDp
+            lastAlign = newAlign
         } catch (_: Exception) {
         }
     }
