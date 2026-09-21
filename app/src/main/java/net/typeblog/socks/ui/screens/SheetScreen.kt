@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -63,27 +64,38 @@ fun SheetScreen(modifier: Modifier = Modifier) {
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Row(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(top = 8.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant,
+                    androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                )
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             SheetHomeTab(
                 selected = tab == SheetTab.FILES,
                 icon = R.drawable.ic_ss_myfiles,
                 label = "My Files",
-                onClick = { tab = SheetTab.FILES },
-                modifier = Modifier.weight(1f)
-            )
-            SheetHomeTab(
-                selected = tab == SheetTab.WALLET,
-                icon = R.drawable.ic_ss_wallet,
-                label = "Wallet",
-                onClick = { tab = SheetTab.WALLET },
-                modifier = Modifier.weight(1f)
+                onClick = { tab = SheetTab.FILES }
             )
             SheetHomeTab(
                 selected = tab == SheetTab.ARCHIVE,
                 icon = R.drawable.ic_ss_archive,
                 label = "Archive",
-                onClick = { tab = SheetTab.ARCHIVE },
-                modifier = Modifier.weight(1f)
+                onClick = { tab = SheetTab.ARCHIVE }
+            )
+            SheetHomeTab(
+                selected = tab == SheetTab.WALLET,
+                icon = R.drawable.ic_ss_wallet,
+                label = "Wallet",
+                onClick = { tab = SheetTab.WALLET }
             )
         }
         when (tab) {

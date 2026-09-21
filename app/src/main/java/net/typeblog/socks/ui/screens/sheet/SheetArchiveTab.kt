@@ -16,11 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -34,7 +32,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,7 +65,6 @@ fun SheetArchiveTab(
 
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     val selectionMode = selectedIds.isNotEmpty()
-    var isList by rememberSaveable { mutableStateOf(false) }
 
     var deleteTarget by remember { mutableStateOf<SheetFile?>(null) }
     var restoreBulk by remember { mutableStateOf(false) }
@@ -133,26 +129,7 @@ fun SheetArchiveTab(
                 }
             }
         } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Spacer(modifier = Modifier.weight(1f))
-                TextButton(onClick = { isList = false }) {
-                    Text(
-                        "Grid",
-                        fontWeight = if (!isList) FontWeight.Bold else FontWeight.Normal
-                    )
-                }
-                TextButton(onClick = { isList = true }) {
-                    Text(
-                        "List",
-                        fontWeight = if (isList) FontWeight.Bold else FontWeight.Normal
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.size(4.dp))
         }
 
         if (sorted.isEmpty()) {
@@ -164,28 +141,6 @@ fun SheetArchiveTab(
                     title = "No archived files.",
                     sub = "Kept here for 30 days."
                 )
-            }
-        } else if (isList) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(sorted, key = { it.id }) { f ->
-                    SheetArchiveCard(
-                        file = f,
-                        selected = selectedIds.contains(f.id),
-                        selectionMode = selectionMode,
-                        onOpen = { onOpenArchived(f.id) },
-                        onToggleSelect = { toggleSelect(f.id) },
-                        onRestore = {
-                            selectedIds = selectedIds - f.id
-                            io { store.archiveFile(f.id, false) }
-                            toast(appCtx, "File restored.")
-                        },
-                        onDelete = { deleteTarget = f }
-                    )
-                }
             }
         } else {
             LazyVerticalGrid(
