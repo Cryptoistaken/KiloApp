@@ -1,7 +1,6 @@
 package net.typeblog.socks.ui.screens.sheet
 
 import android.content.Context
-import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.combinedClickable
@@ -54,10 +53,6 @@ import net.typeblog.socks.util.sheet.SheetFile
 import net.typeblog.socks.util.sheet.SheetPreset
 import net.typeblog.socks.util.sheet.SheetStore
 import net.typeblog.socks.util.sheet.daysLeft
-
-private fun toast(ctx: Context, msg: String) {
-    Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
-}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

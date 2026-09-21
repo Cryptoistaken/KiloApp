@@ -2,9 +2,8 @@ package net.typeblog.socks.ui.screens.sheet
 
 import android.content.Context
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contracts.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -74,15 +73,6 @@ private val PALETTE = listOf(
     "#16a34a", "#00acc1", "#0070f3", "#6366f1", "#795548"
 )
 
-private fun toast(ctx: Context, msg: String) {
-    Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
-}
-
-private fun sanitizeFileName(name: String): String {
-    val s = name.trim().ifEmpty { "file" }
-    return s.replace(Regex("[^A-Za-z0-9._-]+"), "_").take(80)
-}
-
 private fun parseHexColor(hex: String?): Color? {
     if (hex == null) return null
     var h = hex.trim().removePrefix("#")
@@ -109,7 +99,8 @@ fun SheetDetailScreen(
     fileId: String,
     archived: Boolean = false,
     onBack: () -> Unit = {},
-    onRestoreArchived: (String) -> Unit = {}
+    onRestoreArchived: (String) -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val appCtx = remember(context) { context.applicationContext }
@@ -263,7 +254,7 @@ fun SheetDetailScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxSize()) {
         // Top row.
         Row(
             modifier = Modifier

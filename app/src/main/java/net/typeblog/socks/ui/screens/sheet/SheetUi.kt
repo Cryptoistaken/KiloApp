@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.typeblog.socks.R
 import net.typeblog.socks.util.sheet.SheetPreset
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.Image
 
 // Shared bits for the Sheet port. Icons are 1:1 ports of the website SVGs
@@ -136,4 +138,13 @@ fun fmtDate(ts: Long): String {
 fun fmtUsd(v: Double): String {
     val r = Math.round(v * 100) / 100.0
     return if (r == 0.0) "0.00" else if (r == Math.floor(r)) "%,d".format(r.toLong()) else "%,.2f".format(r)
+}
+
+internal fun toast(ctx: Context, msg: String) {
+    Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+}
+
+internal fun sanitizeFileName(name: String): String {
+    val s = name.trim().ifEmpty { "file" }
+    return s.replace(Regex("[^A-Za-z0-9._-]+"), "_").take(80)
 }

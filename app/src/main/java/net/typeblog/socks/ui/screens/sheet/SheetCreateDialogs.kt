@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Xml
-import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -60,15 +59,6 @@ fun presetTitle(p: SheetPreset): String = when (p) {
     SheetPreset.COOKIE -> "Cookie"
     SheetPreset.COMBO -> "2fa"
     SheetPreset.PAGE -> "Page"
-}
-
-fun sanitizeFileName(name: String): String {
-    val s = name.trim().ifEmpty { "file" }
-    return s.replace(Regex("[^A-Za-z0-9._-]+"), "_").take(80)
-}
-
-fun toast(ctx: Context, msg: String) {
-    Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
 }
 
 @Composable
