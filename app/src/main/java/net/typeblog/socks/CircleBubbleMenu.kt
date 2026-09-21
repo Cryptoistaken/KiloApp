@@ -236,6 +236,10 @@ class CircleBubbleMenu(
                                     true
                                 } else {
                                     val now = android.os.SystemClock.uptimeMillis()
+                                    try {
+                                        v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                    } catch (_: Exception) {
+                                    }
                                     if (now - lastTap < 300) {
                                         singlePending?.let { handler.removeCallbacks(it) }
                                         singlePending = null
@@ -270,12 +274,28 @@ class CircleBubbleMenu(
                         }
                         false
                     }
-                    setOnClickListener { taps[i]() }
+                    setOnClickListener {
+                        try {
+                            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        } catch (_: Exception) {
+                        }
+                        taps[i]()
+                    }
                 }
                 if (i == 0) {
                     setOnLongClickListener {
                         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         onProxyLongPress()
+                        true
+                    }
+                } else if (i == 2 || i == 3) {
+                    // Sheet / Name have no long-press action: still give
+                    // long-press haptic so no bubble feels dead.
+                    setOnLongClickListener {
+                        try {
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        } catch (_: Exception) {
+                        }
                         true
                     }
                 }
