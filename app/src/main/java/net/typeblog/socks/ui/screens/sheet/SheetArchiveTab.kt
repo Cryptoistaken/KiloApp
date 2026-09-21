@@ -315,20 +315,17 @@ private fun SheetArchiveCard(
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (selected) {
-                MaterialTheme.colorScheme.primaryContainer
+                MaterialTheme.colorScheme.surfaceVariant
             } else {
                 MaterialTheme.colorScheme.surface
             }
         ),
-        border = if (selected) {
-            androidx.compose.foundation.BorderStroke(
-                1.dp,
-                MaterialTheme.colorScheme.primary
-            )
-        } else {
-            null
-        },
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.outlineVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -338,10 +335,10 @@ private fun SheetArchiveCard(
                     onClick = { if (selectionMode) onToggleSelect() else onOpen() },
                     onLongClick = { onToggleSelect() }
                 )
-                .padding(12.dp)
+                .padding(14.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                PresetIcon(preset = file.preset, sizeDp = 14)
+                FileIconTile(preset = file.preset)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -371,50 +368,54 @@ private fun SheetArchiveCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                 }
-                Image(
-                    painter = painterResource(R.drawable.ic_ss_facebook),
-                    contentDescription = null,
-                    modifier = Modifier.size(12.dp)
-                )
+                TypeBadgePill({
+                    Image(
+                        painter = painterResource(R.drawable.ic_ss_facebook),
+                        contentDescription = null,
+                        modifier = Modifier.size(10.dp)
+                    )
+                })
                 Spacer(modifier = Modifier.width(4.dp))
-                PasswordBadge(password = file.password)
+                TypeBadgePill({ PasswordBadge(password = file.password) })
                 if (!selectionMode) {
                     Box {
                         IconButton(
                             onClick = { menuOpen = true },
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(24.dp)
                         ) {
                             Image(
                                 painter = painterResource(R.drawable.ic_ss_more),
                                 contentDescription = "More actions",
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(14.dp),
+                                colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             )
                         }
                         androidx.compose.material3.DropdownMenu(
                             expanded = menuOpen,
                             onDismissRequest = { menuOpen = false }
                         ) {
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text(if (selected) "Deselect" else "Select") },
+                            SheetMenuItem(
+                                icon = R.drawable.ic_ss_square,
+                                label = if (selected) "Deselect" else "Select",
                                 onClick = {
                                     menuOpen = false
                                     onToggleSelect()
                                 }
                             )
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text("Restore") },
+                            SheetMenuItem(
+                                icon = R.drawable.ic_ss_restore,
+                                label = "Restore",
                                 onClick = {
                                     menuOpen = false
                                     onRestore()
                                 }
                             )
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        "Delete forever",
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                },
+                            SheetMenuItem(
+                                icon = R.drawable.ic_ss_trash,
+                                label = "Delete forever",
+                                danger = true,
                                 onClick = {
                                     menuOpen = false
                                     onDelete()
@@ -430,7 +431,7 @@ private fun SheetArchiveCard(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 ArchiveIndicatorCell(
-                    color = Color(0xFF9AA0A6),
+                    color = rowsIndicatorColor(),
                     label = file.rowCount.toString()
                 )
                 if (file.liveCount + file.deadCount > 0) {

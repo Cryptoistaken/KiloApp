@@ -16,12 +16,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,7 +30,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,6 +38,40 @@ import net.typeblog.socks.util.sheet.SheetCsv
 import net.typeblog.socks.util.sheet.SheetDb
 import net.typeblog.socks.util.sheet.SheetFile
 import net.typeblog.socks.util.sheet.SheetStore
+
+@Composable
+private fun ViewSwitchButton(
+    selected: Boolean,
+    icon: Int,
+    label: String,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.surface
+                else androidx.compose.ui.graphics.Color.Transparent
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(7.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.foundation.Image(
+            painter = painterResource(icon),
+            contentDescription = label,
+            modifier = Modifier.size(16.dp),
+            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                if (selected) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        )
+    }
+}
 
 @Composable
 fun SheetFilesTab(
@@ -86,7 +114,7 @@ fun SheetFilesTab(
                         val f = db.getFile(t.id) ?: return@withContext "File not found."
                         val rows = db.loadRows(t.id)
                         if (rows.none { it.isData(f.preset.columns) }) {
-                            return@withContext "Please add content first."
+                            return@withContext "Add content first."
                         }
                         appCtx.contentResolver.openOutputStream(uri)?.use { out ->
                             out.write(SheetCsv.build(f.preset.columns, rows).toByteArray(Charsets.UTF_8))
@@ -121,23 +149,8 @@ fun SheetFilesTab(
         }
     }
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { createMenu = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Create file")
-            }
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
             if (selectionMode) {
                 Row(
                     modifier = Modifier
@@ -181,26 +194,7 @@ fun SheetFilesTab(
                     }
                 }
             } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Spacer(modifier = Modifier.weight(1f))
-                    TextButton(onClick = { isList = false }) {
-                        Text(
-                            "Grid",
-                            fontWeight = if (!isList) FontWeight.Bold else FontWeight.Normal
-                        )
-                    }
-                    TextButton(onClick = { isList = true }) {
-                        Text(
-                            "List",
-                            fontWeight = if (isList) FontWeight.Bold else FontWeight.Normal
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.size(4.dp))
             }
 
             if (files.isEmpty()) {
@@ -279,6 +273,51 @@ fun SheetFilesTab(
                 }
             }
         }
+        if (!selectionMode) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(16.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ViewSwitchButton(
+                    selected = !isList,
+                    icon = net.typeblog.socks.R.drawable.ic_ss_view_grid,
+                    label = "Grid view",
+                    onClick = { isList = false }
+                )
+                ViewSwitchButton(
+                    selected = isList,
+                    icon = net.typeblog.socks.R.drawable.ic_ss_view_list,
+                    label = "List view",
+                    onClick = { isList = true }
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .size(48.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.onSurface)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { createMenu = true }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = painterResource(net.typeblog.socks.R.drawable.ic_ss_doc2x),
+                    contentDescription = "Create file",
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
     }
 
     if (createMenu) {
@@ -329,8 +368,8 @@ fun SheetFilesTab(
                                 importDraft(appCtx, store, ask.preset, password, up)
                             }
                         } catch (e: Exception) {
-                            if (up == null) "Unable to create file. Please try again."
-                            else "Unable to import file. Please try again."
+                            if (up == null) "Create failed."
+                            else "Import failed."
                         }
                     }
                     toast(appCtx, msg)
@@ -356,7 +395,7 @@ fun SheetFilesTab(
                     val ok = withContext(Dispatchers.IO) {
                         store.renameFile(rt.id, name)
                     }
-                    toast(appCtx, if (ok) "File renamed." else "Unable to rename. Please try again.")
+                    toast(appCtx, if (ok) "File renamed." else "Rename failed.")
                 }
             },
             onDismiss = {

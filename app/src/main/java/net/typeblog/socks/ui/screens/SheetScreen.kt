@@ -1,13 +1,16 @@
 package net.typeblog.socks.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -104,10 +107,22 @@ private fun SheetHomeTab(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val contentColor = if (selected) MaterialTheme.colorScheme.primary
+    val contentColor = if (selected) MaterialTheme.colorScheme.onSurface
     else MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         modifier = modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.surface
+                else androidx.compose.ui.graphics.Color.Transparent
+            )
+            .then(
+                if (selected) Modifier.border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant,
+                    androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                ) else Modifier
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -115,18 +130,18 @@ private fun SheetHomeTab(
                 onClickLabel = label,
                 onClick = onClick
             )
-            .padding(vertical = 8.dp, horizontal = 4.dp),
+            .padding(vertical = 7.dp, horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
+        Image(
             painter = painterResource(icon),
             contentDescription = null,
-            tint = contentColor
+            modifier = Modifier.size(14.dp)
         )
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            fontWeight = FontWeight.SemiBold,
             color = contentColor,
             modifier = Modifier.padding(start = 6.dp)
         )

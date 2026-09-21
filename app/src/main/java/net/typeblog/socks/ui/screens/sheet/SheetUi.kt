@@ -140,6 +140,65 @@ fun fmtUsd(v: Double): String {
     return if (r == 0.0) "0.00" else if (r == Math.floor(r)) "%,d".format(r.toLong()) else "%,.2f".format(r)
 }
 
+@Composable
+fun rowsIndicatorColor(): Color {
+    return if (androidx.compose.foundation.isSystemInDarkTheme()) Color(0xFFEDEDED) else Color(0xFF525252)
+}
+
+@Composable
+fun FileIconTile(preset: SheetPreset, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        PresetIcon(preset = preset, sizeDp = 14)
+    }
+}
+
+@Composable
+fun TypeBadgePill(content: @Composable () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+    }
+}
+
+@Composable
+fun SheetMenuItem(
+    icon: Int,
+    label: String,
+    danger: Boolean = false,
+    onClick: () -> Unit
+) {
+    androidx.compose.material3.DropdownMenuItem(
+        text = {
+            Text(
+                label,
+                color = if (danger) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurface
+            )
+        },
+        leadingIcon = {
+            Image(
+                painter = painterResource(icon),
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                colorFilter = if (danger) androidx.compose.ui.graphics.ColorFilter.tint(MaterialTheme.colorScheme.error)
+                else androidx.compose.ui.graphics.ColorFilter.tint(MaterialTheme.colorScheme.onSurfaceVariant)
+            )
+        },
+        onClick = onClick
+    )
+}
+
 internal fun toast(ctx: Context, msg: String) {
     Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
 }
