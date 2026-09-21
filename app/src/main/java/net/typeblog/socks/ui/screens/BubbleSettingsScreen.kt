@@ -29,8 +29,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -82,6 +87,9 @@ import net.typeblog.socks.util.Constants.PREF_BUBBLE_STYLE
 import net.typeblog.socks.util.Constants.PREF_CIRCLE_ALIGN
 import net.typeblog.socks.util.Constants.PREF_CIRCLE_SIZE
 import net.typeblog.socks.util.Constants.PREF_FLOATING_CONTROL
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -385,9 +393,16 @@ private fun TickSlider(
  * on screen. Same fixed math as circle-bubble.html + [net.typeblog.socks.CircleBubbleMenu]:
  * GAP 58dp / OFF 62dp for lines, 68.75dp radius for the small circle.
  * Trigger = buttonDp, items = buttonDp - 2, so the middle hamburger grows
- * together with the side bubbles when the slider moves. Item positions and
- * sizes animate, so switching alignment or scrubbing the size plays the
- * transition live.
+ * together with the side bubbles when the slider moves.
+ *
+ * Visuals mirror the overlay exactly: dark trigger (#27272A + faint light
+ * stroke) with the X glyph it shows while open, #F4F4F5 items, proxy lock
+ * at 0.58 scale nudged 2dp left while disconnected.
+ *
+ * Alignment switches replay the overlay choreography: items collapse home
+ * staggered (circle i*70ms, lines reverse (n-1-i)*70ms, layer spins -360
+ * for circle only), slots swap while hidden, then items expand staggered
+ * (circle i*20ms, lines i*60ms) on the same 300/0.866 springs.
  */
 @Composable
 private fun CircleAlignPreview(
@@ -396,11 +411,16 @@ private fun CircleAlignPreview(
     boxW: Int,
     boxH: Int
 ) {
-    // Trigger = full slider size, items = size - 2, exactly like the HTML.
+    fun isLine(a: String): Boolean =
+        a == CIRCLE_UP || a == CIRCLE_DOWN || a == CIRCLE_RIGHT || a == CIRCLE_LEFT
+
+    // Trigger = full slider size, items = size - 2, exactly like the overlay.
     val triggerDp = buttonDp.dp
     val itemDp = (buttonDp - 2).coerceAtLeast(16).dp
-    val abtn by animateDpAsState(itemDp, spring(), label = "btn")
-    val centerDp by animateDpAsState(triggerDp, spring(), label = "center")
+    val menuSpringDp = spring<Dp>(stiffness = 300f, dampingRatio = 0.866f)
+    val menuSpringF = spring<Float>(stiffness = 300f, dampingRatio = 0.866f)
+    val abtn by animateDpAsState(itemDp, menuSpringDp, label = "btn")
+    val centerDp by animateDpAsState(triggerDp, menuSpringDp, label = "center")
     // Fixed spread from the HTML mockup: lines OFF 62 + GAP 58 per step,
     // small circle radius 68.75. Slider never moves the spread, only the
     // bubble diameters.
@@ -414,16 +434,65 @@ private fun CircleAlignPreview(
         CIRCLE_LEFT -> (-(off + gap * i)) to 0.dp
         else -> listOf(0.dp to -r, r to 0.dp, 0.dp to r, -r to 0.dp)[i]
     }
-    val raw = List(4) { pt(it) }
+    val slots = List(4) { pt(it) }
+    // Per-item collapse/expand progress + layer spin, driven by LaunchedEffect.
+    val reveals = remember { List(4) { Animatable(0f) } }
+    val spin = remember { Animatable(0f) }
+    var ready by remember { mutableStateOf(false) }
+    var openSlots by remember { mutableStateOf(slots) }
+    var openAlign by remember { mutableStateOf(align) }
+    LaunchedEffect(align) {
+        if (!ready) {
+            // First mount: staggered entry, like the overlay show().
+            openSlots = slots
+            openAlign = align
+            val lineNow = isLine(align)
+            openSlots.mapIndexed { i, _ ->
+                launch {
+                    delay(if (lineNow) i * 60L else i * 20L)
+                    reveals[i].animateTo(1f, menuSpringF)
+                }
+            }.joinAll()
+            ready = true
+            return@LaunchedEffect
+        }
+        // 1. Collapse home from the OLD slots, staggered like hide().
+        val closeLine = isLine(openAlign)
+        val spinJob = if (!closeLine) {
+            launch {
+                spin.animateTo(-360f, tween(420))
+                spin.snapTo(0f)
+            }
+        } else {
+            null
+        }
+        openSlots.mapIndexed { i, _ ->
+            launch {
+                delay(if (closeLine) (3 - i) * 70L else i * 70L)
+                reveals[i].animateTo(0f, menuSpringF)
+            }
+        }.joinAll()
+        spinJob?.join()
+        // 2. Swap slots while hidden, then expand staggered like show().
+        openSlots = slots
+        openAlign = align
+        val lineNow = isLine(align)
+        openSlots.mapIndexed { i, _ ->
+            launch {
+                delay(if (lineNow) i * 60L else i * 20L)
+                reveals[i].animateTo(1f, menuSpringF)
+            }
+        }.joinAll()
+    }
     val half = abtn / 2
     val centerHalf = centerDp / 2
-    val minX = minOf(-centerHalf, raw.minOf { it.first - half })
-    val maxX = maxOf(centerHalf, raw.maxOf { it.first + half })
-    val minY = minOf(-centerHalf, raw.minOf { it.second - half })
-    val maxY = maxOf(centerHalf, raw.maxOf { it.second + half })
+    val minX = minOf(-centerHalf, openSlots.minOf { it.first - half })
+    val maxX = maxOf(centerHalf, openSlots.maxOf { it.first + half })
+    val minY = minOf(-centerHalf, openSlots.minOf { it.second - half })
+    val maxY = maxOf(centerHalf, openSlots.maxOf { it.second + half })
     // Center the content (anchor + items) inside the box.
-    val cx = boxW.dp / 2 - (minX + maxX) / 2
-    val cy = boxH.dp / 2 - (minY + maxY) / 2
+    val acx by animateDpAsState(boxW.dp / 2 - (minX + maxX) / 2, menuSpringDp, label = "cx")
+    val acy by animateDpAsState(boxH.dp / 2 - (minY + maxY) / 2, menuSpringDp, label = "cy")
     val icons = listOf(
         R.drawable.ic_proton_lock_open_filled_2 to Color(0xFFCC2D4F),
         R.drawable.ic_tab_sms to Color(0xFF18181B),
@@ -431,41 +500,57 @@ private fun CircleAlignPreview(
         R.drawable.ic_name_person to Color(0xFF18181B)
     )
     Box(modifier = Modifier.size(boxW.dp, boxH.dp)) {
-        // Center bubble: dark orb + menu glyph, like the Circle style.
+        // Center bubble: dark orb + light stroke + X glyph, exactly what the
+        // overlay trigger shows while its menu is open.
         Box(
             modifier = Modifier
-                .offset(cx - centerDp / 2, cy - centerDp / 2)
+                .offset(acx - centerDp / 2, acy - centerDp / 2)
                 .size(centerDp)
                 .clip(CircleShape)
-                .background(Color(0xFF27272A)),
+                .background(Color(0xFF27272A))
+                .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                painter = painterResource(R.drawable.ic_menu_burger),
+                painter = painterResource(R.drawable.ic_close_x),
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(centerDp * 0.45f)
+                modifier = Modifier.size(centerDp * 0.43f)
             )
         }
-        // The 4 option bubbles, animated to their targets.
-        raw.forEachIndexed { i, (tx, ty) ->
-            val ax by animateDpAsState(tx, spring(), label = "x$i")
-            val ay by animateDpAsState(ty, spring(), label = "y$i")
-            val (icon, tint) = icons[i]
-            Box(
-                modifier = Modifier
-                    .offset(cx + ax - half, cy + ay - half)
-                    .size(abtn)
-                    .clip(CircleShape)
-                    .background(Color.White),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(icon),
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size((abtn * 0.4f).coerceAtLeast(8.dp))
-                )
+        // The 4 option bubbles ride the collapse/expand progress; the layer
+        // spins -360 on circle close, exactly like the overlay.
+        Box(
+            modifier = Modifier.fillMaxSize().graphicsLayer {
+                rotationZ = spin.value
+            }
+        ) {
+            openSlots.forEachIndexed { i, (sx, sy) ->
+                val rv = reveals[i].value
+                val sc = 0.2f + 0.8f * rv
+                val (icon, tint) = icons[i]
+                Box(
+                    modifier = Modifier
+                        .offset(acx + sx * rv - half, acy + sy * rv - half)
+                        .size(abtn)
+                        .graphicsLayer {
+                            scaleX = sc
+                            scaleY = sc
+                            alpha = rv
+                        }
+                        .clip(CircleShape)
+                        .background(Color(0xFFF4F4F5)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(icon),
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier
+                            .size(((if (i == 0) abtn * 0.58f else abtn * 0.4f)).coerceAtLeast(8.dp))
+                            .then(if (i == 0) Modifier.offset(x = (-2).dp) else Modifier)
+                    )
+                }
             }
         }
     }
