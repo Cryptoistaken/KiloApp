@@ -442,47 +442,52 @@ private fun CircleAlignPreview(
     var openSlots by remember { mutableStateOf(slots) }
     var openAlign by remember { mutableStateOf(align) }
     LaunchedEffect(align) {
+        suspend fun closeAll(fromLine: Boolean) {
+            val spinJob = if (!fromLine) {
+                launch {
+                    spin.animateTo(-360f, tween(420))
+                    spin.snapTo(0f)
+                }
+            } else {
+                null
+            }
+            openSlots.mapIndexed { i, _ ->
+                launch {
+                    delay(if (fromLine) (3 - i) * 70L else i * 70L)
+                    reveals[i].animateTo(0f, menuSpringF)
+                }
+            }.joinAll()
+            spinJob?.join()
+        }
+        suspend fun openAll(toLine: Boolean) {
+            openSlots.mapIndexed { i, _ ->
+                launch {
+                    delay(if (toLine) i * 60L else i * 20L)
+                    reveals[i].animateTo(1f, menuSpringF)
+                }
+            }.joinAll()
+        }
         if (!ready) {
             // First mount: staggered entry, like the overlay show().
             openSlots = slots
             openAlign = align
-            val lineNow = isLine(align)
-            openSlots.mapIndexed { i, _ ->
-                launch {
-                    delay(if (lineNow) i * 60L else i * 20L)
-                    reveals[i].animateTo(1f, menuSpringF)
-                }
-            }.joinAll()
+            openAll(isLine(align))
             ready = true
-            return@LaunchedEffect
-        }
-        // 1. Collapse home from the OLD slots, staggered like hide().
-        val closeLine = isLine(openAlign)
-        val spinJob = if (!closeLine) {
-            launch {
-                spin.animateTo(-360f, tween(420))
-                spin.snapTo(0f)
-            }
         } else {
-            null
+            // Alignment switch: collapse home from the OLD slots, swap
+            // while hidden, expand to the new ones — like hide() + show().
+            closeAll(isLine(openAlign))
+            openSlots = slots
+            openAlign = align
+            openAll(isLine(align))
         }
-        openSlots.mapIndexed { i, _ ->
-            launch {
-                delay(if (closeLine) (3 - i) * 70L else i * 70L)
-                reveals[i].animateTo(0f, menuSpringF)
-            }
-        }.joinAll()
-        spinJob?.join()
-        // 2. Swap slots while hidden, then expand staggered like show().
-        openSlots = slots
-        openAlign = align
-        val lineNow = isLine(align)
-        openSlots.mapIndexed { i, _ ->
-            launch {
-                delay(if (lineNow) i * 60L else i * 20L)
-                reveals[i].animateTo(1f, menuSpringF)
-            }
-        }.joinAll()
+        // Ambient loop: replay collapse + expand every 4s on the selected
+        // alignment so the preview never sits static.
+        while (true) {
+            delay(4000)
+            closeAll(isLine(openAlign))
+            openAll(isLine(openAlign))
+        }
     }
     val half = abtn / 2
     val centerHalf = centerDp / 2
