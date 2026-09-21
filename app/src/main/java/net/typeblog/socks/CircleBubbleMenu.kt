@@ -2,6 +2,9 @@ package net.typeblog.socks
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -10,12 +13,15 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
+import net.typeblog.socks.util.SMS_EXPIRE_SEC
+import net.typeblog.socks.util.SmsWatcher
 import net.typeblog.socks.util.Constants.CIRCLE_DOWN
 import net.typeblog.socks.util.Constants.CIRCLE_LEFT
 import net.typeblog.socks.util.Constants.CIRCLE_RIGHT
@@ -85,6 +91,16 @@ class CircleBubbleMenu(
     private var lastProxySubColor: Int = Color.WHITE
     private var winParams: WindowManager.LayoutParams? = null
     private var proxySubView: android.widget.TextView? = null
+    // SMS bubble live state: envelope icon vs 7-min expiry ring.
+    private var smsIcon: ImageView? = null
+    private var smsRing: ExpiryRingView? = null
+    private val smsTick = object : Runnable {
+        override fun run() {
+            if (!isShowing()) return
+            refreshSmsIcon()
+            handler.postDelayed(this, 1000)
+        }
+    }
     // Glyph scale fractions per item (Proxy 0.58, rest 0.4) — must match show().
     private var hiding = false
     private var animGen = 0
@@ -199,6 +215,17 @@ class CircleBubbleMenu(
                 }
                 val glyph = (itemSize * frac).toInt().coerceAtLeast(1)
                 addView(iv, FrameLayout.LayoutParams(glyph, glyph, Gravity.CENTER))
+                if (i == 1) {
+                    // SMS keeps its envelope plus a hidden 7-min expiry
+                    // ring; refreshSmsIcon swaps them while a number lives.
+                    smsIcon = iv
+                    val ringPx = (itemSize - 6 * density).toInt().coerceAtLeast(1)
+                    val ring = ExpiryRingView(context).apply {
+                        visibility = View.GONE
+                    }
+                    addView(ring, FrameLayout.LayoutParams(ringPx, ringPx, Gravity.CENTER))
+                    smsRing = ring
+                }
                 isClickable = true
                 isFocusable = true
                 // Touch equivalent of the mockup's whileHover scale 1.1,
@@ -397,6 +424,10 @@ class CircleBubbleMenu(
             startSpring(sy, i * openStaggerMs, gen, requireOpen = true)
         }
         springs = newSprings
+        // SMS expiry ring ticks while the menu is open.
+        refreshSmsIcon()
+        handler.removeCallbacks(smsTick)
+        handler.post(smsTick)
     }
 
     /**
@@ -477,6 +508,16 @@ class CircleBubbleMenu(
                     glp.height = glyph
                     btn.getChildAt(0)?.layoutParams = glp
                 }
+                if (i == 1) {
+                    smsRing?.let { ring ->
+                        val ringPx = (itemSize - 6 * density).toInt().coerceAtLeast(1)
+                        (ring.layoutParams as? FrameLayout.LayoutParams)?.let { rlp ->
+                            rlp.width = ringPx
+                            rlp.height = ringPx
+                            ring.layoutParams = rlp
+                        }
+                    }
+                }
                 val lx = (centers[i].first - minX - itemSize / 2).toFloat()
                 val ly = (centers[i].second - minY - itemSize / 2).toFloat()
                 (btn.layoutParams as? FrameLayout.LayoutParams)?.let { blp ->
@@ -518,6 +559,7 @@ class CircleBubbleMenu(
             }
             lastSizeDp = newSizeDp
             lastAlign = newAlign
+            refreshSmsIcon()
         } catch (_: Exception) {
         }
     }
@@ -532,6 +574,7 @@ class CircleBubbleMenu(
         val root = rootView ?: return
         if (hiding) return
         hiding = true
+        handler.removeCallbacks(smsTick)
         animGen++
         val gen = animGen
         cancelSprings()
@@ -654,6 +697,9 @@ class CircleBubbleMenu(
         rootView = null
         winParams = null
         proxySubView = null
+        smsIcon = null
+        smsRing = null
+        handler.removeCallbacks(smsTick)
         try {
             container?.setRenderEffect(null)
         } catch (_: Exception) {
@@ -671,6 +717,77 @@ class CircleBubbleMenu(
         }
         try {
             onDismissed()
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * 7:00 expiry ring for the SMS bubble, ported from the SMS page
+     * ItemSheet ExpiryRing: counts down the last generated number's life —
+     * green, amber under 3:00, red under 1:00 — mm:ss in the middle.
+     */
+    private inner class ExpiryRingView(ctx: Context) : View(ctx) {
+        var leftSec: Long = SMS_EXPIRE_SEC
+        private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            color = Color.parseColor("#E4E4E7")
+        }
+        private val fgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+        }
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            typeface = android.graphics.Typeface.create(
+                android.graphics.Typeface.DEFAULT,
+                android.graphics.Typeface.BOLD
+            )
+        }
+        private val oval = RectF()
+
+        override fun onDraw(c: Canvas) {
+            super.onDraw(c)
+            val w = width.toFloat()
+            if (w <= 0) return
+            val sw = w * 0.097f
+            bgPaint.strokeWidth = sw
+            fgPaint.strokeWidth = sw
+            val pad = sw / 2 + 1f
+            oval.set(pad, pad, w - pad, w - pad)
+            c.drawArc(oval, 0f, 360f, false, bgPaint)
+            val frac = (leftSec.toFloat() / SMS_EXPIRE_SEC).coerceIn(0f, 1f)
+            val col = when {
+                leftSec < 60 -> Color.parseColor("#CC2D4F")
+                leftSec < 180 -> Color.parseColor("#F59E0B")
+                else -> Color.parseColor("#16A34A")
+            }
+            fgPaint.color = col
+            textPaint.color = col
+            textPaint.textSize = w * 0.22f
+            c.drawArc(oval, -90f, 360f * frac, false, fgPaint)
+            val label = "%02d:%02d".format(leftSec / 60, leftSec % 60)
+            c.drawText(label, w / 2, w / 2 - (textPaint.descent() + textPaint.ascent()) / 2, textPaint)
+        }
+    }
+
+    /** Swap the SMS envelope for the expiry ring while the last generated
+     * number is alive; envelope returns after expiry. */
+    private fun refreshSmsIcon() {
+        val ring = smsRing ?: return
+        val icon = smsIcon ?: return
+        try {
+            val now = java.lang.System.currentTimeMillis()
+            val lastBorn = SmsWatcher.mine.maxOfOrNull { it.born } ?: 0L
+            val alive = lastBorn > 0 && now - lastBorn < SMS_EXPIRE_SEC * 1000
+            if (alive) {
+                ring.leftSec = ((lastBorn + SMS_EXPIRE_SEC * 1000 - now) / 1000).coerceAtLeast(0)
+                if (ring.visibility != View.VISIBLE) ring.visibility = View.VISIBLE
+                if (icon.visibility != View.GONE) icon.visibility = View.GONE
+                ring.invalidate()
+            } else {
+                if (ring.visibility != View.GONE) ring.visibility = View.GONE
+                if (icon.visibility != View.VISIBLE) icon.visibility = View.VISIBLE
+            }
         } catch (_: Exception) {
         }
     }
