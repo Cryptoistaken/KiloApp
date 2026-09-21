@@ -264,6 +264,9 @@ class SmsMenuOverlay(
 
         renderLive()
         startTick()
+        // Bubble-tap generations open the popup BEFORE the async provision
+        // lands: watch for it like submitRange does so the row appears.
+        watchForFreshNumber(java.lang.System.currentTimeMillis())
     }
 
     fun hide() {
@@ -391,7 +394,13 @@ class SmsMenuOverlay(
 
     private fun renderLive() {
         val list = listView ?: return
-        render(list, SmsWatcher.mine.sortedBy { it.born })
+        // Pending on top, newest first — mirrors the HTML mockup.
+        render(
+            list,
+            SmsWatcher.mine.sortedWith(
+                compareBy({ it.code != null }, { -it.born })
+            )
+        )
     }
 
     private fun render(list: LinearLayout, numbers: List<SmsNum>) {

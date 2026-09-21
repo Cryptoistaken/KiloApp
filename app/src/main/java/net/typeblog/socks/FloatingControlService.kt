@@ -64,6 +64,7 @@ import net.typeblog.socks.util.Constants.CIRCLE_SMALL
 import net.typeblog.socks.util.Constants.CIRCLE_UP
 import net.typeblog.socks.util.Constants.PREF_CIRCLE_ALIGN
 import net.typeblog.socks.util.Constants.PREF_CIRCLE_SIZE
+import net.typeblog.socks.util.Constants.PREF_SMS_LAST_RANGE
 import android.content.ClipData
 import android.content.ClipboardManager
 import net.typeblog.socks.util.NamesRepo
@@ -305,8 +306,8 @@ class FloatingControlService : Service() {
             this,
             onProxyTap = { circleMenu?.hide(); handleTap() },
             onProxyLongPress = { circleMenu?.hide(); openCountryMenu() },
-            onSmsTap = { circleMenu?.hide(); provisionSmsNumber() },
-            onSmsDoubleTap = { circleMenu?.hide(); provisionSmsNumber(forceNew = true) },
+            onSmsTap = { circleMenu?.hide(); provisionSmsNumber(openPopup = true) },
+            onSmsDoubleTap = { circleMenu?.hide(); provisionSmsNumber(forceNew = true, openPopup = true) },
             onSmsLongPress = { circleMenu?.hide(); openSmsPopup() },
             onSheetTap = { circleMenu?.hide(); toast("SheetSubmit coming soon") },
             onNameTap = { copyRandomName() },
@@ -1714,19 +1715,29 @@ class FloatingControlService : Service() {
         circleMenu?.hide()
     }
 
-    // SMS tap contract from the HTML mockup: single tap provisions a new
-    // number (or does nothing while one waits), double-tap always
-    // regenerates, popup Gen always generates from its range and appends.
-    private fun provisionSmsNumber(range: String? = null, forceNew: Boolean = false) {
+    // SMS tap contract from the HTML mockup: single tap resolves
+    // clipboard range -> last used -> console most-hit range, generates +
+    // auto-copies + opens the popup (blocked while one waits); double-tap
+    // force-news the same way; popup Gen always generates from its range.
+    private fun provisionSmsNumber(range: String? = null, forceNew: Boolean = false, openPopup: Boolean = false) {
         try {
             SmsWatcher.start(this)
             if (range == null && !forceNew && SmsWatcher.hasWaiting()) {
                 toast("Waiting for SMS... double-tap for a new number")
                 return
             }
-            val pat = range?.filter { it.isDigit() }?.ifEmpty { null }
-                ?: SmsWatcher.countries.firstOrNull()?.prefix?.ifEmpty { null } ?: "228"
-            SmsWatcher.provision(pat) { n ->
+            val digits = range?.filter { it.isDigit() }?.ifEmpty { null } ?: resolveSmsRange()
+            if (digits == null) {
+                toast("Copy a range like 23762XXX first")
+                openSmsPopup()
+                return
+            }
+            try {
+                PreferenceManager.getDefaultSharedPreferences(this)
+                    .edit().putString(PREF_SMS_LAST_RANGE, digits).apply()
+            } catch (_: Exception) {
+            }
+            SmsWatcher.provision(digits) { n ->
                 if (n == null) {
                     toast("No numbers available, try again")
                 } else {
@@ -1734,10 +1745,43 @@ class FloatingControlService : Service() {
                     toast("Number copied: ${n.display}")
                 }
             }
+            if (openPopup) openSmsPopup()
         } catch (e: Exception) {
             Log.e(TAG, "SMS provision from bubble failed", e)
             toast("SMS unavailable right now")
         }
+    }
+
+    /**
+     * Range for bubble-tap generation, HTML-approved priority: clipboard
+     * text like 23762XXX (may be unreadable in background — falls through),
+     * then last used range, then the console's most-hit range
+     * (countries are count-sorted, sampleRange wins over bare prefix).
+     * Null when nothing anywhere yields 3+ digits.
+     */
+    private fun resolveSmsRange(): String? {
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val t = cm?.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim() ?: ""
+            val m = Regex("""\+?[\dXx][\dXx\s.\-()]{2,}""").find(t)?.value
+            if (m != null && m.filter { it.isDigit() }.length >= 3) {
+                return m.filter { it.isDigit() }
+            }
+        } catch (_: Exception) {
+        }
+        try {
+            val last = PreferenceManager.getDefaultSharedPreferences(this)
+                .getString(PREF_SMS_LAST_RANGE, "") ?: ""
+            if (last.filter { it.isDigit() }.length >= 3) return last.filter { it.isDigit() }
+        } catch (_: Exception) {
+        }
+        try {
+            val top = SmsWatcher.countries.firstOrNull()
+            val cand = top?.sampleRange?.ifEmpty { null } ?: top?.prefix ?: ""
+            if (cand.filter { it.isDigit() }.length >= 3) return cand.filter { it.isDigit() }
+        } catch (_: Exception) {
+        }
+        return null
     }
 
     // SMS long-press: same proxy-style panel, anchored at the bubble —

@@ -67,6 +67,9 @@ object Constants {
     const val CIRCLE_SIZE_DEFAULT = 48
     const val CIRCLE_SIZE_MIN = 36
     const val CIRCLE_SIZE_MAX = 72
+    // SMS bubble: last used digit range (e.g. 23762 from 23762XXX) so
+    // single/double tap keep working after restarts.
+    const val PREF_SMS_LAST_RANGE = "sms_last_range"
     const val PREF_SKIPPED_UPDATE_VERSION = "skipped_update_version"
     // Split-tunnel: single Include-only mode. Global keys (PREF_ADV_*) are the
     // single source of truth (written by SplitTunnelingScreen); the legacy
