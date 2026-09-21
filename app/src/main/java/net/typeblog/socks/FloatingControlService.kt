@@ -317,10 +317,26 @@ class FloatingControlService : Service() {
                     recreateBubbleForStyleChange(newStyle)
                 }
             } else if (key == PREF_CIRCLE_SIZE) {
-                // Slider grows the middle + side bubbles together: rebuild the
-                // Circle trigger at the new diameter live.
+                // Slider grows the trigger AND the 4 open menu items together:
+                // rebuild the trigger live, then resize the open menu in
+                // place (no collapse needed). Trigger stays on top after its
+                // window re-add so items keep diving underneath it.
                 if (isCircleStyle()) {
-                    recreateBubbleForStyleChange(bubbleStyle)
+                    recreateBubbleForStyleChange(bubbleStyle, preserveCenter = true)
+                    try {
+                        val newSize = PreferenceManager.getDefaultSharedPreferences(this)
+                            .getInt(
+                                PREF_CIRCLE_SIZE,
+                                Constants.CIRCLE_SIZE_DEFAULT
+                            )
+                            .coerceIn(
+                                Constants.CIRCLE_SIZE_MIN,
+                                Constants.CIRCLE_SIZE_MAX
+                            )
+                        circleMenu?.updateSize(newSize)
+                        if (circleMenu?.isShowing() == true) bringBubbleToFront()
+                    } catch (_: Exception) {
+                    }
                 }
             } else if (key == PREF_THEME_MODE) {
                 // Manual Theme pick: re-apply the theme-wired bubble elements
@@ -396,10 +412,14 @@ class FloatingControlService : Service() {
         updateStatusLabelPosition()
     }
 
-    private fun recreateBubbleForStyleChange(newStyle: String) {
+    private fun recreateBubbleForStyleChange(newStyle: String, preserveCenter: Boolean = false) {
         bubbleStyle = newStyle
         val oldX = params?.x
         val oldY = params?.y
+        // Size slider: keep the trigger's CENTER stable so it never detaches
+        // from open menu items; style switches keep legacy top-left behavior.
+        val oldCenterX = params?.let { it.x + bubbleWindowSizePx / 2 }
+        val oldCenterY = params?.let { it.y + bubbleWindowSizePx / 2 }
         stopLockSequence()
         stopTimer()
         stopBreathing()
@@ -408,7 +428,13 @@ class FloatingControlService : Service() {
         removeBubbleFromWindow()
         bubbleView = createBubbleView()
         params = buildLayoutParams()
-        if (oldX != null && oldY != null) {
+        if (preserveCenter && oldCenterX != null && oldCenterY != null) {
+            val bounds = currentDragBounds()
+            val maxX = (bounds.right - bubbleWindowSizePx).coerceAtLeast(bounds.left)
+            val maxY = bubbleMaxY(bounds)
+            params?.x = (oldCenterX - bubbleWindowSizePx / 2).coerceIn(bounds.left, maxX)
+            params?.y = (oldCenterY - bubbleWindowSizePx / 2).coerceIn(bounds.top, maxY)
+        } else if (oldX != null && oldY != null) {
             val bounds = currentDragBounds()
             val maxX = (bounds.right - bubbleWindowSizePx).coerceAtLeast(bounds.left)
             val maxY = bubbleMaxY(bounds)

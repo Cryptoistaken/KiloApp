@@ -77,6 +77,15 @@ class CircleBubbleMenu(
     private var btnViews: List<FrameLayout> = emptyList()
     private var springs: List<SpringAnimation> = emptyList()
     private var lastAlign = ""
+    private var lastBx = 0
+    private var lastBy = 0
+    private var lastSizeDp = 0
+    private var lastProxyConnected = false
+    private var lastProxySub = ""
+    private var lastProxySubColor: Int = Color.WHITE
+    private var winParams: WindowManager.LayoutParams? = null
+    private var proxySubView: android.widget.TextView? = null
+    // Glyph scale fractions per item (Proxy 0.58, rest 0.4) — must match show().
     private var hiding = false
     private var animGen = 0
     private val handler = Handler(Looper.getMainLooper())
@@ -97,6 +106,13 @@ class CircleBubbleMenu(
         animGen++
         val gen = animGen
         lastAlign = align
+        lastBx = bx
+        lastBy = by
+        lastSizeDp = sizeDp
+        lastProxyConnected = proxyConnected
+        lastProxySub = proxySub
+        lastProxySubColor = proxySubColor
+        proxySubView = null
         val density = context.resources.displayMetrics.density
         // Button diameter follows the slider; spread stays fixed like the HTML
         // (GAP 58dp / OFF 62dp / small-circle radius 68.75dp) so the slider
@@ -311,6 +327,7 @@ class CircleBubbleMenu(
                     }
                 )
                 sub.post { sub.translationX = -sub.width / 2f }
+                proxySubView = sub
             } catch (_: Exception) {
             }
         }
@@ -332,6 +349,7 @@ class CircleBubbleMenu(
         params.gravity = Gravity.TOP or Gravity.START
         params.x = minX
         params.y = minY
+        winParams = params
         try {
             windowManager.addView(root, params)
         } catch (_: Exception) {
@@ -359,6 +377,114 @@ class CircleBubbleMenu(
             startSpring(sy, i * openStaggerMs, gen, requireOpen = true)
         }
         springs = newSprings
+    }
+
+    /**
+     * Live-resize an open menu when the size slider moves: the trigger alone
+     * used to grow while the 4 item bubbles stayed small until collapse +
+     * re-expand. Recomputes the same layout math as [show] and applies it in
+     * place — no teardown, no entry animation, translations stay at 0. Also
+     * refreshes [slots] so the close fly-home targets match the new sizes.
+     */
+    fun updateSize(newSizeDp: Int) {
+        val root = rootView ?: return
+        val box = container ?: return
+        if (!root.isAttachedToWindow) return
+        if (newSizeDp == lastSizeDp) return
+        if (btnViews.size != 4) return
+        try {
+            val density = context.resources.displayMetrics.density
+            val metrics = context.resources.displayMetrics
+            val size = (newSizeDp * density).toInt().coerceAtLeast(1)
+            val itemSize = (size - 2 * density).toInt().coerceAtLeast(1)
+            val gapPx = (58 * density).toInt()
+            val offPx = (62 * density).toInt()
+            val rPx = (68.75f * density).toInt()
+            val pts: List<Pair<Int, Int>> = when (lastAlign) {
+                CIRCLE_UP -> List(4) { 0 to -(offPx + it * gapPx) }
+                CIRCLE_DOWN -> List(4) { 0 to (offPx + it * gapPx) }
+                CIRCLE_RIGHT -> List(4) { (offPx + it * gapPx) to 0 }
+                CIRCLE_LEFT -> List(4) { (-(offPx + it * gapPx)) to 0 }
+                else -> listOf(0 to -rPx, rPx to 0, 0 to rPx, -rPx to 0)
+            }
+            val margin = itemSize / 2 + (8 * density).toInt()
+            val bx = lastBx
+            val by = lastBy
+            val centers = pts.map { (dx, dy) ->
+                val cx = (bx + dx).coerceIn(margin, (metrics.widthPixels - margin).coerceAtLeast(margin))
+                val cy = (by + dy).coerceIn(margin, (metrics.heightPixels - margin).coerceAtLeast(margin))
+                cx to cy
+            }
+            val pad = (itemSize / 2 + 12 * density).toInt()
+            val subExtra = if (lastProxySub.isNotEmpty()) (20 * density).toInt() else 0
+            val minX = minOf(bx, centers.minOf { it.first }) - pad
+            val minY = minOf(by, centers.minOf { it.second }) - pad
+            val maxX = maxOf(bx, centers.maxOf { it.first }) + pad
+            val maxY = maxOf(by, centers.maxOf { it.second }) + pad + subExtra
+            val winW = (maxX - minX).coerceAtLeast(1)
+            val winH = (maxY - minY).coerceAtLeast(1)
+            val abx = (bx - minX).toFloat()
+            val aby = (by - minY).toFloat()
+            box.pivotX = abx
+            box.pivotY = aby
+
+            val fracs = listOf(0.58f, 0.4f, 0.4f, 0.4f)
+            val newDeltas = mutableListOf<Pair<Float, Float>>()
+            var proxyCx = abx
+            var proxyCy = aby
+            btnViews.forEachIndexed { i, btn ->
+                try {
+                    btn.animate().cancel()
+                } catch (_: Exception) {
+                }
+                val glyph = (itemSize * fracs[i]).toInt().coerceAtLeast(1)
+                (btn.getChildAt(0)?.layoutParams as? FrameLayout.LayoutParams)?.let { glp ->
+                    glp.width = glyph
+                    glp.height = glyph
+                    btn.getChildAt(0)?.layoutParams = glp
+                }
+                val lx = (centers[i].first - minX - itemSize / 2).toFloat()
+                val ly = (centers[i].second - minY - itemSize / 2).toFloat()
+                (btn.layoutParams as? FrameLayout.LayoutParams)?.let { blp ->
+                    blp.width = itemSize
+                    blp.height = itemSize
+                    blp.leftMargin = lx.toInt()
+                    blp.topMargin = ly.toInt()
+                    btn.layoutParams = blp
+                }
+                btn.translationX = 0f
+                btn.translationY = 0f
+                btn.scaleX = 1f
+                btn.scaleY = 1f
+                btn.alpha = 1f
+                newDeltas.add(Pair(abx - itemSize / 2 - lx, aby - itemSize / 2 - ly))
+                if (i == 0) {
+                    proxyCx = lx + itemSize / 2
+                    proxyCy = ly + itemSize / 2
+                }
+            }
+            slots = newDeltas
+            proxySubView?.let { sub ->
+                (sub.layoutParams as? FrameLayout.LayoutParams)?.let { slp ->
+                    slp.leftMargin = proxyCx.toInt()
+                    slp.topMargin = (proxyCy + itemSize / 2 + (2 * density).toInt()).toInt()
+                    sub.layoutParams = slp
+                }
+                sub.post { sub.translationX = -sub.width / 2f }
+            }
+            try {
+                winParams?.let { p ->
+                    p.x = minX
+                    p.y = minY
+                    p.width = winW
+                    p.height = winH
+                    windowManager.updateViewLayout(root, p)
+                }
+            } catch (_: Exception) {
+            }
+            lastSizeDp = newSizeDp
+        } catch (_: Exception) {
+        }
     }
 
     /**
@@ -491,6 +617,8 @@ class CircleBubbleMenu(
     private fun finishRemove() {
         val root = rootView
         rootView = null
+        winParams = null
+        proxySubView = null
         try {
             container?.setRenderEffect(null)
         } catch (_: Exception) {
