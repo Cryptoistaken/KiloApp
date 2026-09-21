@@ -309,7 +309,7 @@ class FloatingControlService : Service() {
             onSmsTap = { circleMenu?.hide(); provisionSmsNumber(openPopup = true) },
             onSmsDoubleTap = { circleMenu?.hide(); provisionSmsNumber(forceNew = true, openPopup = true) },
             onSmsLongPress = { circleMenu?.hide(); openSmsPopup() },
-            onSheetTap = { circleMenu?.hide(); toast("SheetSubmit coming soon") },
+            onSheetTap = { circleMenu?.hide(); toast("Coming soon") },
             onNameTap = { copyRandomName() },
             onDismissed = {
                 circleMenuOpen = false
@@ -1708,7 +1708,7 @@ class FloatingControlService : Service() {
             val name = NamesRepo.random(this)
             copyText(name)
             bubbleView?.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-            toast("Copied $name")
+            toast("Copied")
         } catch (e: Exception) {
             Log.e(TAG, "Name copy failed", e)
         }
@@ -1723,12 +1723,12 @@ class FloatingControlService : Service() {
         try {
             SmsWatcher.start(this)
             if (range == null && !forceNew && SmsWatcher.hasWaiting()) {
-                toast("Waiting for SMS... double-tap for a new number")
+                toast("Waiting... double-tap = new")
                 return
             }
             val digits = range?.filter { it.isDigit() }?.ifEmpty { null } ?: resolveSmsRange()
             if (digits == null) {
-                toast("Copy a range like 23762XXX first")
+                toast("Paste a range first")
                 openSmsPopup()
                 return
             }
@@ -1739,16 +1739,16 @@ class FloatingControlService : Service() {
             }
             SmsWatcher.provision(digits) { n ->
                 if (n == null) {
-                    toast("No numbers available, try again")
+                    toast("No numbers - retry")
                 } else {
                     copyText(n.display)
-                    toast("Number copied: ${n.display}")
+                    toast("Copied")
                 }
             }
             if (openPopup) openSmsPopup()
         } catch (e: Exception) {
             Log.e(TAG, "SMS provision from bubble failed", e)
-            toast("SMS unavailable right now")
+            toast("SMS unavailable")
         }
     }
 
@@ -1806,7 +1806,7 @@ class FloatingControlService : Service() {
     private fun copySmsEntry(display: String) {
         try {
             copyText(display)
-            toast("Number copied: $display")
+            toast("Copied")
             bubbleView?.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
         } catch (e: Exception) {
             Log.e(TAG, "SMS popup copy failed", e)
