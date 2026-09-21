@@ -65,6 +65,7 @@ import net.typeblog.socks.util.Constants.CIRCLE_UP
 import net.typeblog.socks.util.Constants.PREF_CIRCLE_ALIGN
 import net.typeblog.socks.util.Constants.PREF_CIRCLE_SIZE
 import net.typeblog.socks.util.Constants.PREF_SMS_LAST_RANGE
+import net.typeblog.socks.util.SMS_EXPIRE_SEC
 import android.content.ClipData
 import android.content.ClipboardManager
 import net.typeblog.socks.util.NamesRepo
@@ -1722,9 +1723,18 @@ class FloatingControlService : Service() {
     private fun provisionSmsNumber(range: String? = null, forceNew: Boolean = false, openPopup: Boolean = false) {
         try {
             SmsWatcher.start(this)
-            if (range == null && !forceNew && SmsWatcher.hasWaiting()) {
-                toast("Waiting... double-tap = new")
-                return
+            if (range == null && !forceNew) {
+                // Single-tap while a number is alive: copy the last one.
+                val now = java.lang.System.currentTimeMillis()
+                val last = SmsWatcher.mine
+                    .filter { now - it.born < SMS_EXPIRE_SEC * 1000 }
+                    .maxByOrNull { it.born }
+                if (last != null) {
+                    copyText(last.display)
+                    toast("Copied")
+                    bubbleView?.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                    return
+                }
             }
             val digits = range?.filter { it.isDigit() }?.ifEmpty { null } ?: resolveSmsRange()
             if (digits == null) {
