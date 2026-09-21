@@ -81,19 +81,19 @@ fun SheetScreen(modifier: Modifier = Modifier) {
         ) {
             SheetHomeTab(
                 selected = tab == SheetTab.FILES,
-                icon = R.drawable.ic_ss_myfiles,
+                icon = if (tab == SheetTab.FILES) R.drawable.ic_ss_myfiles_sel else R.drawable.ic_ss_myfiles_idle,
                 label = "My Files",
                 onClick = { tab = SheetTab.FILES }
             )
             SheetHomeTab(
                 selected = tab == SheetTab.ARCHIVE,
-                icon = R.drawable.ic_ss_archive,
+                icon = if (tab == SheetTab.ARCHIVE) R.drawable.ic_ss_archive_sel else R.drawable.ic_ss_archive_idle,
                 label = "Archive",
                 onClick = { tab = SheetTab.ARCHIVE }
             )
             SheetHomeTab(
                 selected = tab == SheetTab.WALLET,
-                icon = R.drawable.ic_ss_wallet,
+                icon = if (tab == SheetTab.WALLET) R.drawable.ic_ss_wallet_sel else R.drawable.ic_ss_wallet_idle,
                 label = "Wallet",
                 onClick = { tab = SheetTab.WALLET }
             )
@@ -149,7 +149,8 @@ private fun SheetHomeTab(
         Image(
             painter = painterResource(icon),
             contentDescription = null,
-            modifier = Modifier.size(14.dp)
+            modifier = Modifier.size(14.dp),
+            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(contentColor)
         )
         Text(
             text = label,
