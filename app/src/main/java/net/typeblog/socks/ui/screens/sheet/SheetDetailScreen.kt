@@ -8,6 +8,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -107,6 +108,7 @@ fun SheetDetailScreen(
     val store = remember(appCtx) { SheetStore.get(appCtx) }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     val openFile by store.openFile.collectAsState()
     val rows by store.openRows.collectAsState()
@@ -143,6 +145,9 @@ fun SheetDetailScreen(
     var draft by remember { mutableStateOf("") }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedItems by remember { mutableStateOf(setOf<Pair<Int, String>>()) }
+    var lastTapCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    var lastTapTime by remember { mutableStateOf(0L) }
+    var pendingTapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     var checkMenu by remember { mutableStateOf(false) }
     var overflowMenu by remember { mutableStateOf(false) }
@@ -152,6 +157,7 @@ fun SheetDetailScreen(
     var confirmClearSelection by remember { mutableStateOf(false) }
     var confirmDeleteDead by remember { mutableStateOf(false) }
     var confirmRestore by remember { mutableStateOf(false) }
+    var confirmCompact by remember { mutableStateOf(false) }
     var downloadName by remember { mutableStateOf("") }
 
     fun io(block: suspend () -> Unit) {
@@ -254,6 +260,64 @@ fun SheetDetailScreen(
         }
     }
 
+    var detailUploadMode by remember { mutableStateOf("replace") }
+    val detailUploadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val mode = detailUploadMode
+        scope.launch {
+            val msg = withContext(Dispatchers.IO) {
+                try {
+                    val draft = parseUpload(appCtx, uri) ?: return@withContext "Import failed."
+                    val f = openFile ?: return@withContext "Import failed."
+                    val cols = f.preset.columns
+                    val db = net.typeblog.socks.util.sheet.SheetDb(appCtx)
+                    if (mode == "merge") {
+                        val existing = db.loadRows(f.id)
+                        val dataExisting = existing.filter { it.isData(cols) }
+                        val incoming = draft.rows.mapIndexed { i, r ->
+                            net.typeblog.socks.util.sheet.SheetRow(
+                                rowIdx = dataExisting.size + i,
+                                cookies = r.cookies,
+                                twofakey = if (cols.any { it.key == "twofakey" }) r.twofakey else "",
+                                uid = r.uid
+                            )
+                        }
+                        val merged = (dataExisting + incoming).take(net.typeblog.socks.util.sheet.MAX_GRID_ROWS)
+                        db.tx { d ->
+                            db.saveAllRows(d, f.id, merged.mapIndexed { idx, r -> r.copy(rowIdx = idx) })
+                            db.recordOp(d, f.id, "merge")
+                        }
+                        store.open(f.id)
+                        "Merged " + incoming.size + " rows."
+                    } else {
+                        if (draft.rows.size > net.typeblog.socks.util.sheet.MAX_GRID_ROWS) {
+                            return@withContext "Too many rows. Maximum " + net.typeblog.socks.util.sheet.MAX_GRID_ROWS + " rows allowed. Please split the file."
+                        }
+                        val cleaned = draft.rows.take(net.typeblog.socks.util.sheet.MAX_GRID_ROWS).mapIndexed { i, r ->
+                            net.typeblog.socks.util.sheet.SheetRow(
+                                rowIdx = i,
+                                cookies = r.cookies,
+                                twofakey = if (cols.any { it.key == "twofakey" }) r.twofakey else "",
+                                uid = r.uid
+                            )
+                        }
+                        db.tx { d ->
+                            db.saveAllRows(d, f.id, cleaned)
+                            db.recordOp(d, f.id, "replace")
+                        }
+                        store.open(f.id)
+                        "Imported " + cleaned.size + " rows."
+                    }
+                } catch (e: Exception) {
+                    "Import failed."
+                }
+            }
+            toast(appCtx, msg)
+        }
+    }
+
     Column(modifier = modifier.fillMaxSize()) {
         // Top row.
         Row(
@@ -294,13 +358,15 @@ fun SheetDetailScreen(
                 IconButton(onClick = { io { store.undo() } }, enabled = canUndo) {
                     Icon(
                         painter = painterResource(R.drawable.ic_ss_undo),
-                        contentDescription = "Undo"
+                        contentDescription = "Undo",
+                        modifier = Modifier.size(18.dp)
                     )
                 }
                 IconButton(onClick = { io { store.redo() } }, enabled = canRedo) {
                     Icon(
                         painter = painterResource(R.drawable.ic_ss_redo),
-                        contentDescription = "Redo"
+                        contentDescription = "Redo",
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -308,7 +374,7 @@ fun SheetDetailScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(
                     onClick = { doCheck() },
-                    enabled = !checking
+                    enabled = !checking && (readOnly || dupRows.isEmpty())
                 ) {
                     if (checking) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -323,7 +389,8 @@ fun SheetDetailScreen(
                         IconButton(onClick = { checkMenu = true }) {
                             Icon(
                                 painter = painterResource(R.drawable.ic_ss_check_arrow),
-                                contentDescription = "More check options"
+                                contentDescription = "More check options",
+                                modifier = Modifier.size(12.dp)
                             )
                         }
                         DropdownMenu(
@@ -367,10 +434,12 @@ fun SheetDetailScreen(
                 }
             }
             Box {
-                IconButton(onClick = { overflowMenu = true }) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_ss_more),
-                        contentDescription = "More actions"
+                TextButton(onClick = { overflowMenu = true }) {
+                    Text(
+                        text = "⋮",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 DropdownMenu(
@@ -379,6 +448,14 @@ fun SheetDetailScreen(
                 ) {
                     DropdownMenuItem(
                         text = { Text("Copy all data") },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_ss_copy),
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
                         onClick = {
                             overflowMenu = false
                             copyAllData()
@@ -387,6 +464,14 @@ fun SheetDetailScreen(
                     if (!readOnly) {
                         DropdownMenuItem(
                             text = { Text("Download xlsx") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_ss_download),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
                             onClick = {
                                 overflowMenu = false
                                 val f = openFile
@@ -405,28 +490,61 @@ fun SheetDetailScreen(
                         )
                         DropdownMenuItem(
                             text = { Text("Upload xlsx") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_ss_upload),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
                             onClick = {
                                 overflowMenu = false
-                                toast(appCtx, "Upload not available yet.")
+                                detailUploadMode = "replace"
+                                detailUploadLauncher.launch("*/*")
                             }
                         )
                         DropdownMenuItem(
                             text = { Text("Merge") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_ss_merge),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
                             onClick = {
                                 overflowMenu = false
-                                toast(appCtx, "Merge not available yet.")
+                                detailUploadMode = "merge"
+                                detailUploadLauncher.launch("*/*")
                             }
                         )
                         DropdownMenuItem(
                             text = { Text("Compact") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_ss_compact),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
                             onClick = {
                                 overflowMenu = false
-                                io { store.compactRows() }
-                                toast(appCtx, "Sheet compacted.")
+                                confirmCompact = true
                             }
                         )
                         DropdownMenuItem(
                             text = { Text("Delete inactive") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_ss_trash),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
                             onClick = {
                                 overflowMenu = false
                                 deleteDeadWithCount()
@@ -434,6 +552,14 @@ fun SheetDetailScreen(
                         )
                         DropdownMenuItem(
                             text = { Text("Restore last save") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_ss_restore),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
                             onClick = {
                                 overflowMenu = false
                                 confirmRestore = true
@@ -444,11 +570,8 @@ fun SheetDetailScreen(
                         val visible = !hidden.contains(col.key)
                         DropdownMenuItem(
                             text = { Text(col.label) },
-                            trailingIcon = {
-                                Switch(
-                                    checked = visible,
-                                    onCheckedChange = null
-                                )
+                            leadingIcon = {
+                                ColToggleBox(checked = visible)
                             },
                             onClick = {
                                 val next = hidden.toMutableSet()
@@ -473,7 +596,7 @@ fun SheetDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Archived file. View only.",
+                        text = "Archived file - view only. You can check UIDs and copy data.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.weight(1f)
                     )
@@ -609,8 +732,46 @@ fun SheetDetailScreen(
                                                 )
                                                 return@combinedClickable
                                             }
-                                            selectedCell = selKey
-                                            draft = row.cell(col.key)
+                                            val now = System.currentTimeMillis()
+                                            if (lastTapCell == selKey && now - lastTapTime < 400) {
+                                                pendingTapJob?.cancel()
+                                                pendingTapJob = null
+                                                lastTapCell = null
+                                                val v = row.cell(col.key)
+                                                if (v.isNotEmpty()) {
+                                                    clipboard.setText(AnnotatedString(v))
+                                                    toast(appCtx, "Copied.")
+                                                    selectedCell = selKey
+                                                    draft = v
+                                                } else {
+                                                    val pasted = clipboard.getText()?.text ?: ""
+                                                    if (pasted.isEmpty()) {
+                                                        toast(appCtx, "Clipboard is empty.")
+                                                    } else {
+                                                        selectedCell = selKey
+                                                        draft = pasted
+                                                        scope.launch {
+                                                            val ok = withContext(Dispatchers.IO) { store.setCell(selKey.first, selKey.second, pasted) }
+                                                            if (!ok) toast(appCtx, "Duplicate value. Please use a unique value.")
+                                                        }
+                                                    }
+                                                }
+                                                return@combinedClickable
+                                            }
+                                            if (selectedCell != null && selectedCell != selKey) {
+                                                commitDraft()
+                                            }
+                                            lastTapCell = selKey
+                                            lastTapTime = now
+                                            pendingTapJob?.cancel()
+                                            val targetRow = row.rowIdx
+                                            val targetCol = col.key
+                                            val targetVal = row.cell(col.key)
+                                            pendingTapJob = scope.launch {
+                                                kotlinx.coroutines.delay(400)
+                                                selectedCell = Pair(targetRow, targetCol)
+                                                draft = targetVal
+                                            }
                                         },
                                         onLongClick = {
                                             if (!readOnly && row.locked) {
@@ -620,6 +781,10 @@ fun SheetDetailScreen(
                                                 )
                                                 return@combinedClickable
                                             }
+                                            pendingTapJob?.cancel()
+                                            pendingTapJob = null
+                                            lastTapCell = null
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                             selectionMode = true
                                             selectedCell = null
                                             selectedItems = selectedItems + selKey
@@ -719,6 +884,8 @@ fun SheetDetailScreen(
             if (sel != null) {
                 val st = styles[styleKey(sel.first, sel.second)]
                 val bold = st?.bold == true
+                val textColorHex = st?.color ?: "#000000"
+                val cellBgHex = st?.bg
                 Surface(
                     tonalElevation = 3.dp,
                     modifier = Modifier.fillMaxWidth()
@@ -731,28 +898,34 @@ fun SheetDetailScreen(
                             OutlinedTextField(
                                 value = draft,
                                 onValueChange = { draft = it },
-                                label = { Text("Formula") },
+                                placeholder = { Text("Enter value") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                 keyboardActions = KeyboardActions(onDone = { commitDraft() }),
                                 modifier = Modifier.weight(1f)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            TextButton(onClick = { commitDraft() }) { Text("Done") }
                         }
                         Spacer(modifier = Modifier.size(4.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            horizontalArrangement = Arrangement.Center
                         ) {
-                            TextButton(
-                                onClick = {
-                                    val cur = st
-                                    val next = (cur ?: CellStyle()).copy(bold = !(cur?.bold ?: false))
-                                    val clean = if (next.bg == null && next.color == null && !next.bold) null else next
-                                    io { store.setStyle(sel.first, sel.second, clean) }
-                                }
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp))
+                                    .background(
+                                        if (bold) MaterialTheme.colorScheme.primaryContainer
+                                        else androidx.compose.ui.graphics.Color.Transparent
+                                    )
+                                    .combinedClickable(onClick = {
+                                        val cur = st
+                                        val next = (cur ?: CellStyle()).copy(bold = !(cur?.bold ?: false))
+                                        val clean = if (next.bg == null && next.color == null && !next.bold) null else next
+                                        io { store.setStyle(sel.first, sel.second, clean) }
+                                    }),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     "B",
@@ -761,75 +934,136 @@ fun SheetDetailScreen(
                                     color = if (bold) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            IconButton(onClick = { picker = "text" }) {
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(22.dp)
+                                    .background(MaterialTheme.colorScheme.outlineVariant)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp))
+                                    .combinedClickable(onClick = { picker = "text" }),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_textcolor),
-                                    contentDescription = "Text color"
+                                    contentDescription = "Text color",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .padding(bottom = 2.dp)
+                                        .size(width = 16.dp, height = 3.dp)
+                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(1.dp))
+                                        .background(parseHexColor(textColorHex) ?: MaterialTheme.colorScheme.onSurface)
                                 )
                             }
-                            IconButton(onClick = { picker = "fill" }) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp))
+                                    .combinedClickable(onClick = { picker = "fill" }),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_fill),
-                                    contentDescription = "Cell fill"
+                                    contentDescription = "Cell fill",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .padding(bottom = 2.dp)
+                                        .size(width = 16.dp, height = 3.dp)
+                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(1.dp))
+                                        .background(parseHexColor(cellBgHex) ?: androidx.compose.ui.graphics.Color.Transparent)
                                 )
                             }
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(22.dp)
+                                    .background(MaterialTheme.colorScheme.outlineVariant)
+                            )
                             IconButton(
                                 onClick = {
-                                    val v = rows.getOrNull(sel.first)?.cell(sel.second) ?: ""
+                                    val v = draft.ifEmpty { rows.getOrNull(sel.first)?.cell(sel.second) ?: "" }
                                     if (v.isEmpty()) {
                                         toast(appCtx, "Cell is empty.")
                                     } else {
                                         clipboard.setText(AnnotatedString(v))
                                         toast(appCtx, "Copied.")
                                     }
-                                }
+                                },
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_copy),
-                                    contentDescription = "Copy cell"
+                                    contentDescription = "Copy",
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                             IconButton(
                                 onClick = {
-                                    val pasted = clipboard.getText()?.text ?: ""
-                                    if (pasted.isEmpty()) {
-                                        toast(appCtx, "Clipboard is empty.")
-                                    } else {
-                                        draft = pasted
+                                    scope.launch {
+                                        val pasted = clipboard.getText()?.text ?: ""
+                                        if (pasted.isEmpty()) {
+                                            toast(appCtx, "Clipboard is empty.")
+                                        } else {
+                                            draft = pasted
+                                            val ok = withContext(Dispatchers.IO) { store.setCell(sel.first, sel.second, pasted) }
+                                            if (!ok) toast(appCtx, "Duplicate value. Please use a unique value.")
+                                        }
                                     }
-                                }
+                                },
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_paste),
-                                    contentDescription = "Paste cell"
+                                    contentDescription = "Paste",
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                             IconButton(
                                 onClick = {
                                     draft = ""
                                     io { store.clearCells(setOf(sel)) }
-                                }
+                                },
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_eraser),
-                                    contentDescription = "Clear cell"
+                                    contentDescription = "Clear",
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(22.dp)
+                                    .background(MaterialTheme.colorScheme.outlineVariant)
+                            )
                             IconButton(
-                                onClick = {
-                                    io { store.compactRows() }
-                                    toast(appCtx, "Sheet compacted.")
-                                }
+                                onClick = { confirmCompact = true },
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_compact),
-                                    contentDescription = "Compact rows"
+                                    contentDescription = "Compact",
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
-                            IconButton(onClick = { deleteDeadWithCount() }) {
+                            IconButton(
+                                onClick = { deleteDeadWithCount() },
+                                modifier = Modifier.size(36.dp)
+                            ) {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_trash),
-                                    contentDescription = "Delete inactive rows"
+                                    contentDescription = "Delete inactive",
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
@@ -958,6 +1192,24 @@ fun SheetDetailScreen(
         )
     }
 
+    if (confirmCompact) {
+        AlertDialog(
+            onDismissRequest = { confirmCompact = false },
+            title = { Text("Remove empty rows between used rows to compact the sheet?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmCompact = false
+                        io { store.compactRows() }
+                    }
+                ) { Text("Compact") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmCompact = false }) { Text("Cancel") }
+            }
+        )
+    }
+
     val pick = picker
     val selPick = selectedCell
     if (pick != null && selPick != null) {
@@ -1034,5 +1286,32 @@ private fun CheckSwitchRow(
             modifier = Modifier.weight(1f)
         )
         Switch(checked = checked, onCheckedChange = { onToggle() })
+    }
+}
+
+@Composable
+private fun ColToggleBox(checked: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(16.dp)
+            .border(
+                1.5.dp,
+                if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                androidx.compose.foundation.shape.RoundedCornerShape(3.dp)
+            )
+            .background(
+                if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                androidx.compose.foundation.shape.RoundedCornerShape(3.dp)
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (checked) {
+            Icon(
+                painter = painterResource(R.drawable.ic_ss_check),
+                contentDescription = null,
+                modifier = Modifier.size(10.dp),
+                tint = MaterialTheme.colorScheme.onPrimary
+            )
+        }
     }
 }

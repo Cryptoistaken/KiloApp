@@ -211,7 +211,7 @@ fun SheetFilesTab(
                     EmptySheetState(
                         icon = net.typeblog.socks.R.drawable.ic_ss_empty_files,
                         title = "No files yet",
-                        sub = "Tap + to create your first file."
+                        sub = "Select the + button to create your first file."
                     )
                 }
             } else if (isList) {
@@ -356,7 +356,7 @@ fun SheetFilesTab(
     val ask = pwAsk
     if (ask != null) {
         PasswordPickDialog(
-            loveFirst = ask.upload?.loveHint == true,
+            upload = ask.upload,
             onDismiss = {
                 pwAsk = null
                 if (ask.upload != null) typePick = null

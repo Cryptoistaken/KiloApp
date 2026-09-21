@@ -5,6 +5,8 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Xml
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -20,6 +23,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -73,18 +77,19 @@ fun CreateFileMenuDialog(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
-                    modifier = Modifier.padding(bottom = 8.dp),
+                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Image(
                         painter = painterResource(R.drawable.ic_ss_facebook),
                         contentDescription = null,
-                        modifier = Modifier.size(14.dp)
+                        modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         "Facebook",
-                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -93,20 +98,40 @@ fun CreateFileMenuDialog(
                         title = presetTitle(p),
                         desc = PRESET_DESC[p] ?: "",
                         icon = {
-                            PresetIcon(preset = p, sizeDp = 16)
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                PresetIcon(preset = p, sizeDp = 15)
+                            }
                         },
                         onClick = { onPickPreset(p) }
                     )
                 }
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
                 CreateOptionRow(
                     title = "Upload xlsx",
                     desc = "Import data from file",
                     icon = {
-                        Image(
-                            painter = painterResource(R.drawable.ic_ss_upload),
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(R.drawable.ic_ss_upload),
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
                     },
                     onClick = onPickUpload
                 )
@@ -172,7 +197,7 @@ fun TypePickDialog(
 
 @Composable
 fun PasswordPickDialog(
-    loveFirst: Boolean,
+    upload: UploadDraft?,
     onDismiss: () -> Unit,
     onPick: (String) -> Unit
 ) {
@@ -182,19 +207,19 @@ fun PasswordPickDialog(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    "Shared by default.",
+                    "Files under these passwords are shared by default.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.size(12.dp))
                 PasswordOptionRow(
                     password = DGD_PASSWORD,
-                    suggested = !loveFirst,
+                    detected = upload != null && upload.loveHint == false,
                     onClick = { onPick(DGD_PASSWORD) }
                 )
                 PasswordOptionRow(
                     password = LOVE_PASSWORD,
-                    suggested = loveFirst,
+                    detected = upload != null && upload.loveHint == true,
                     onClick = { onPick(LOVE_PASSWORD) }
                 )
             }
@@ -301,17 +326,17 @@ private fun CreateOptionRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             icon()
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.bodyMedium,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = desc,
-                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -338,7 +363,15 @@ private fun TypeOptionRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            PresetIcon(preset = preset, sizeDp = 16)
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                PresetIcon(preset = preset, sizeDp = 15)
+            }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -354,12 +387,20 @@ private fun TypeOptionRow(
                     )
                     if (detected) {
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Detected",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = AliveGreen
-                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
+                                .background(AliveGreen.copy(alpha = 0.12f))
+                                .padding(horizontal = 6.dp, vertical = 1.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Detected",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = AliveGreen
+                            )
+                        }
                     }
                 }
                 Text(
@@ -375,7 +416,7 @@ private fun TypeOptionRow(
 @Composable
 private fun PasswordOptionRow(
     password: String,
-    suggested: Boolean,
+    detected: Boolean,
     onClick: () -> Unit
 ) {
     TextButton(
@@ -394,14 +435,22 @@ private fun PasswordOptionRow(
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            if (suggested) {
+            if (detected) {
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Suggested",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AliveGreen
-                )
+                Box(
+                    modifier = Modifier
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
+                        .background(AliveGreen.copy(alpha = 0.12f))
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Detected from file",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AliveGreen
+                    )
+                }
             }
         }
     }
