@@ -226,6 +226,11 @@ class CircleBubbleMenu(
                     addView(ring, FrameLayout.LayoutParams(ringPx, ringPx, Gravity.CENTER))
                     smsRing = ring
                 }
+                if (i == 0) {
+                    // Disconnected open-lock is optically right-heavy
+                    // (shackle gap): nudge 2dp left like the HTML mockup.
+                    iv.translationX = if (proxyConnected) 0f else -2 * density
+                }
                 isClickable = true
                 isFocusable = true
                 // Touch equivalent of the mockup's whileHover scale 1.1,
@@ -517,6 +522,10 @@ class CircleBubbleMenu(
                             ring.layoutParams = rlp
                         }
                     }
+                }
+                if (i == 0) {
+                    (btn.getChildAt(0) as? ImageView)?.translationX =
+                        if (lastProxyConnected) 0f else -2 * density
                 }
                 val lx = (centers[i].first - minX - itemSize / 2).toFloat()
                 val ly = (centers[i].second - minY - itemSize / 2).toFloat()
