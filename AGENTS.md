@@ -212,6 +212,10 @@ Notes on the merged notification/dot pass:
 | `SocksTester.kt` | SOCKS5 liveness/health probe |
 | `ServiceRebind.kt` | Shared AIDL rebind backoff ladder (200/1000/3000ms by attempt) |
 | `SplitTunnel.kt` | Split-tunnel list parse/format + include-empty guard (single home for UI + engine guards) |
+| `sheet/SheetModels.kt` | Sheet local-first models: presets/columns, file/row/style/wallet types, auto-naming, archive days-left |
+| `sheet/SheetDb.kt` | Sheet SQLite store (source of truth, app-private): files/rows/styles/hidden/journal/snapshots/wallet/outbox; uninstall wipes it, SAF export survives |
+| `sheet/SheetCsv.kt` | Sheet CSV/TSV builders for SAF export and clipboard copy-all |
+| `sheet/SheetStore.kt` | Sheet working state over SheetDb: flows, undo/redo, create/rename/archive/restore/purge, cell edits with dup guard, compact/delete-dead, snapshot restore, offline check, wallet withdraw |
 | `SmsGateway.kt` | Go SMS gateway client (`sms core/`): feed/meta/numbers/otp over HTTPS with `BuildConfig` URL + global app key (stdlib + org.json, no new deps) |
 | `SmsWatcher.kt` | App-scoped SMS state (my/expired numbers, feed, countries, 1s ticker, 7-min expiry sweep, SSE push stream with 5s-OTP-poll fallback, 60s feed refresh); fires OTP notifications, outlives the SMS tab |
 | `SmsNotify.kt` | OTP arrival notifications (code in title + Copy action); plain ASCII |
