@@ -201,14 +201,20 @@ class SheetStore private constructor(context: Context) {
     }
 
     // In-file duplicates are blocked, never marked: there is no yellow
-    // indicator because a duplicate value can never be saved. Returns the
-    // exact message to show when the value must be rejected, null when OK.
-    // (Locked rows are messaged by the caller, so they pass here.)
+    // indicator because a duplicate value can never be saved. The uid is
+    // derived, not typed: with a cookie present any uid edit (paste, type
+    // or clear) is rejected, and the cookie always overwrites it.
+    // Returns the exact message to show when the value must be rejected,
+    // null when OK. (Locked rows are messaged by the caller, so they pass
+    // here.)
     fun rejectReason(rowIdx: Int, colKey: String, value: String): String? {
         val rows = openRows.value
         val cur = rows.getOrNull(rowIdx) ?: return "Couldn't save. Please try again."
         if (cur.locked) return null
         if (cur.cell(colKey) == value) return null
+        if (colKey == "uid" && cur.cookies.isNotEmpty()) {
+            return "UID comes from the cookie."
+        }
         if (colKey == "twofakey" && value.isNotEmpty() && !isValidTwoFaKey(value)) {
             return "Invalid 2fa key."
         }
@@ -219,6 +225,14 @@ class SheetStore private constructor(context: Context) {
                 "cookies" -> "cookie."
                 "twofakey" -> "2fa."
                 else -> "uid."
+            }
+        }
+        // Same account under a different cookie string: its c_user already
+        // lives as another row's uid, so the cookie is refused as well.
+        if (colKey == "cookies" && value.isNotEmpty()) {
+            val extracted = extractCUser(value)
+            if (extracted != null && rows.any { it.rowIdx != rowIdx && it.uid == extracted }) {
+                return "Duplicate uid."
             }
         }
         return null
@@ -232,23 +246,20 @@ class SheetStore private constructor(context: Context) {
         if (cur.locked) return false
         if (cur.cell(colKey) == value) return true
         if (rejectReason(rowIdx, colKey, value) != null) return false
-        // Website parity (fbcookie.ts onCellChange): pasting/typing a cookie
-        // auto-fills the uid cell from c_user when the uid is still empty.
+        // UID comes from the cookie, never from typing: committing a cookie
+        // overwrites the uid with its c_user (or blanks it when the cookie
+        // carries none), and clearing the cookie clears the uid with it.
         // Centralized here so every entry point (formula bar, double-tap
-        // paste, quick paste button) gets it.
-        if (colKey == "cookies" && cur.uid.isEmpty()) {
-            val extracted = extractCUser(value)
-            if (!extracted.isNullOrEmpty()) {
-                // The cookie itself is new, but its c_user may already be
-                // another row's uid: then fill nothing rather than create a
-                // duplicate uid (duplicates can never be saved).
-                if (rows.none { it.rowIdx != rowIdx && it.uid == extracted }) {
-                    pushUndo()
-                    rows[rowIdx] = cur.withCell(colKey, value).withCell("uid", extracted)
-                    persistRows(topUp(rows, f.preset), "edit")
-                    return true
-                }
+        // paste, quick paste button) behaves the same.
+        if (colKey == "cookies") {
+            pushUndo()
+            rows[rowIdx] = if (value.isEmpty()) {
+                cur.withCell(colKey, value).withCell("uid", "")
+            } else {
+                cur.withCell(colKey, value).withCell("uid", extractCUser(value) ?: "")
             }
+            persistRows(topUp(rows, f.preset), "edit")
+            return true
         }
         pushUndo()
         rows[rowIdx] = cur.withCell(colKey, value)
@@ -285,8 +296,12 @@ class SheetStore private constructor(context: Context) {
         var touched = false
         for ((ri, ck) in cells) {
             if (ri !in rows.indices || rows[ri].locked) continue
+            // UID is derived: it can only go away with its cookie, never
+            // alone — and clearing a cookie takes its uid with it.
+            if (ck == "uid" && rows[ri].cookies.isNotEmpty()) continue
             if (rows[ri].cell(ck).isNotEmpty()) {
                 rows[ri] = rows[ri].withCell(ck, "")
+                if (ck == "cookies") rows[ri] = rows[ri].withCell("uid", "")
                 touched = true
             }
         }

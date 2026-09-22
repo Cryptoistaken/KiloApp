@@ -240,23 +240,11 @@ fun SheetDetailScreen(
         }
         val value = draft
         if (row.cell(ck) == value) return
-        // Blocked, never marked: duplicates and bad 2fa keys are rejected
-        // up front with the exact reason, so no indicator is needed.
+        // Blocked, never marked: duplicates, bad 2fa keys and any uid edit
+        // while a cookie is present are rejected up front with the exact
+        // reason. No mismatch warning is needed: setCell overwrites the uid
+        // from the cookie's c_user, so a lie can never be stored.
         store.rejectReason(ri, ck, value)?.let { toast(appCtx, it); return }
-        // Website parity (fbcookie.ts onCellChange): warn when the uid does
-        // not match the cookie's c_user instead of silently storing a lie.
-        if (ck == "cookies" && row.uid.isNotEmpty()) {
-            val extracted = extractCUser(value)
-            if (extracted != null && extracted != row.uid.trim()) {
-                toast(appCtx, "UID does not match the cookie.")
-            }
-        }
-        if (ck == "uid" && row.cookies.isNotEmpty()) {
-            val extracted = extractCUser(row.cookies)
-            if (extracted != null && extracted != value.trim()) {
-                toast(appCtx, "UID does not match the cookie.")
-            }
-        }
         scope.launch {
             val ok = withContext(Dispatchers.IO) { store.setCell(ri, ck, value) }
             if (!ok) {
