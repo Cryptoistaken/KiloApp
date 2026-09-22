@@ -67,7 +67,7 @@ import kotlinx.coroutines.withContext
 import net.typeblog.socks.R
 import net.typeblog.socks.util.sheet.CellStyle
 import net.typeblog.socks.util.sheet.MAX_GRID_ROWS
-import net.typeblog.socks.util.sheet.SheetCsv
+import net.typeblog.socks.util.sheet.SheetXlsx
 import net.typeblog.socks.util.sheet.SheetPreset
 import net.typeblog.socks.util.sheet.SheetStore
 import net.typeblog.socks.util.sheet.extractCUser
@@ -329,7 +329,7 @@ fun SheetDetailScreen(
     }
 
     val downloadLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/csv")
+        ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     ) { uri: Uri? ->
         val name = downloadName
         downloadName = ""
@@ -344,9 +344,9 @@ fun SheetDetailScreen(
                             return@withContext "Add content first."
                         }
                         appCtx.contentResolver.openOutputStream(uri)?.use { out ->
-                            out.write(SheetCsv.build(cols, data).toByteArray(Charsets.UTF_8))
+                            out.write(SheetXlsx.build(cols, data))
                         } ?: return@withContext "Download failed."
-                        "Downloaded $name.csv"
+                        "Downloaded $name.xlsx"
                     } catch (e: Exception) {
                         "Download failed."
                     }
@@ -631,7 +631,7 @@ fun SheetDetailScreen(
                                 }
                                 val nm = sanitizeFileName(f.name)
                                 downloadName = nm
-                                downloadLauncher.launch("$nm.csv")
+                                downloadLauncher.launch("$nm.xlsx")
                             }
                         )
                         OverflowRow(

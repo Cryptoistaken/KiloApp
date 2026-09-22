@@ -4,9 +4,9 @@ import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-// Minimal dependency-free xlsx writer for the "Send a copy" share sheet.
-// Same content as [SheetCsv.build] (header labels + data rows in column
-// order); cells use inline strings so no shared-strings table is needed.
+// Minimal dependency-free xlsx writer for downloads and the "Send a copy"
+// share sheet. Header labels + data rows in column order; cells use inline
+// strings so no shared-strings table is needed.
 // The output opens in Excel, Sheets and WPS. Kept dependency-free on
 // purpose: a POI dependency would bloat the APK and slow the fast lane.
 object SheetXlsx {
