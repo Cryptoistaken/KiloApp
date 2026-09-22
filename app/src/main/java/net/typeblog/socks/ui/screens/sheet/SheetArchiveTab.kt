@@ -306,9 +306,6 @@ fun SheetArchiveTab(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
-@Composable
-
 @Composable
 private fun ArchiveViewSwitch(selected: Boolean, icon: Int, label: String, onClick: () -> Unit) {
     Box(
