@@ -267,6 +267,138 @@ class SheetStore private constructor(context: Context) {
         return true
     }
 
+    // Internal grid clipboard: set by Copy, read by Paste, survives file
+    // switches (open/close never clear it).
+    val copiedGrid = MutableStateFlow<CopiedGrid?>(null)
+
+    fun copyGrid(grid: CopiedGrid) {
+        copiedGrid.value = grid
+    }
+
+    // Google-Sheets-style paste. The clipboard tiles from the anchor to fill
+    // a bigger selection and overflows past a smaller one (or no selection).
+    // Same preset pastes positionally; across presets values map by column
+    // key and unknown keys skip. Cookies drag their c_user along (uid
+    // derivation); every other cell goes through the same entry rules as
+    // typing (duplicates, 2fa, locked rows skip). Single undo, single
+    // persist. Returns Triple(pasted, skipped, cookiesWritten).
+    fun pasteGrid(
+        grid: CopiedGrid,
+        anchor: Pair<Int, String>,
+        area: Set<Pair<Int, String>>?,
+        order: List<String>
+    ): Triple<Int, Int, Boolean> {
+        val f = openFile.value ?: return Triple(0, 0, false)
+        if (grid.cells.isEmpty() || grid.columns.isEmpty() || order.isEmpty()) return Triple(0, 0, false)
+        val rows = openRows.value
+        if (rows.isEmpty()) return Triple(0, 0, false)
+        val samePreset = grid.preset == f.preset.name
+        val selRows: List<Int>
+        val selCols: List<String>
+        if (!area.isNullOrEmpty()) {
+            selRows = area.map { it.first }.distinct().sorted()
+            selCols = order.filter { k -> area.any { it.second == k } }
+        } else {
+            selRows = emptyList()
+            selCols = emptyList()
+        }
+        val aRow = if (selRows.isNotEmpty()) selRows.first() else anchor.first
+        val aKey = if (selCols.isNotEmpty()) selCols.first() else anchor.second
+        val aCol = order.indexOf(aKey).let { if (it < 0) 0 else it }
+        val rCount = grid.cells.size
+        val cCount = grid.columns.size
+        data class Write(val ri: Int, val ck: String, val value: String)
+        val pass1 = mutableListOf<Write>() // everything except uid
+        val pass2 = mutableListOf<Write>() // uid last, sees dragged cookies
+        var skipped = 0
+        for (i in 0 until maxOf(selRows.size, rCount)) {
+            val ri = aRow + i
+            if (ri !in rows.indices) {
+                skipped += maxOf(selCols.size, cCount)
+                continue
+            }
+            for (j in 0 until maxOf(selCols.size, cCount)) {
+                val targetKey = if (j < selCols.size) selCols[j]
+                else order.getOrNull(aCol + j)
+                if (targetKey == null) {
+                    skipped++
+                    continue
+                }
+                val srcRow = grid.cells[i % rCount]
+                val value = if (samePreset) {
+                    srcRow.getOrNull(j % cCount)?.second
+                } else {
+                    srcRow.firstOrNull { it.first == targetKey }?.second
+                }
+                if (value == null) {
+                    skipped++
+                    continue
+                }
+                (if (targetKey == "uid") pass2 else pass1).add(Write(ri, targetKey, value))
+            }
+        }
+        val w = rows.toMutableList()
+        var pasted = 0
+        var cookiesWritten = false
+        var dirty = false
+        for (t in pass1) {
+            val cur = w.getOrNull(t.ri) ?: run { skipped++; continue }
+            if (cur.locked) {
+                skipped++
+                continue
+            }
+            if (cur.cell(t.ck) == t.value) {
+                pasted++
+                continue
+            }
+            if (t.ck == "twofakey" && t.value.isNotEmpty() && !isValidTwoFaKey(t.value)) {
+                skipped++
+                continue
+            }
+            if ((t.ck == "cookies" || t.ck == "twofakey") && t.value.isNotEmpty() &&
+                w.any { it.rowIdx != t.ri && it.cell(t.ck) == t.value }
+            ) {
+                skipped++
+                continue
+            }
+            w[t.ri] = if (t.ck == "cookies") {
+                cookiesWritten = true
+                cur.withCell(t.ck, t.value).withCell("uid", extractCUser(t.value) ?: "")
+            } else {
+                cur.withCell(t.ck, t.value)
+            }
+            dirty = true
+            pasted++
+        }
+        for (t in pass2) {
+            val cur = w.getOrNull(t.ri) ?: run { skipped++; continue }
+            if (cur.locked) {
+                skipped++
+                continue
+            }
+            if (cur.cookies.isNotEmpty()) {
+                // Derived: only the cookie's own c_user may stand.
+                if (cur.uid == t.value) pasted++ else skipped++
+                continue
+            }
+            if (cur.uid == t.value) {
+                pasted++
+                continue
+            }
+            if (t.value.isNotEmpty() && w.any { it.rowIdx != t.ri && it.uid == t.value }) {
+                skipped++
+                continue
+            }
+            w[t.ri] = cur.withCell("uid", t.value)
+            dirty = true
+            pasted++
+        }
+        if (!dirty) return Triple(pasted, skipped, false)
+        pushUndo()
+        persistRows(topUp(w, f.preset), "paste")
+        return Triple(pasted, skipped, cookiesWritten)
+    }
+
     fun addRow(): Boolean {
         val f = openFile.value ?: return false
         if (openRows.value.size >= MAX_GRID_ROWS) return false

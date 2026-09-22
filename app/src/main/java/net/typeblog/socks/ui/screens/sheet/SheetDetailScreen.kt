@@ -144,6 +144,7 @@ fun SheetDetailScreen(
     val visibleCols = remember(columns, hidden) { columns.filter { !hidden.contains(it.key) } }
 
     val crossDups by store.openCrossDups.collectAsState()
+    val gridClip by store.copiedGrid.collectAsState()
 
     var selectedCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var draft by remember { mutableStateOf("") }
@@ -266,13 +267,61 @@ fun SheetDetailScreen(
         if (selectedItems.isEmpty()) return
         val order = visibleCols.map { it.key }
         val byRow = selectedItems.groupBy { it.first }.toSortedMap()
+        fun sortedKeys(cells: Set<Pair<Int, String>>): List<String> =
+            cells.map { it.second }.sortedBy { order.indexOf(it).let { i -> if (i < 0) 999 else i } }
+        val gridRows = byRow.entries.map { (ri, cells) ->
+            val r = rows.getOrNull(ri)
+            sortedKeys(cells.toSet()).map { k -> Pair(k, r?.cell(k) ?: "") }
+        }
+        val keyOrder = sortedKeys(selectedItems)
+        // Internal grid clipboard (cross-file paste) alongside the system
+        // TSV text; ragged rows stay ragged so unselected cells are skipped,
+        // never cleared, on paste.
+        store.copyGrid(
+            CopiedGrid(
+                preset = openFile?.preset?.name ?: "",
+                columns = keyOrder,
+                cells = gridRows
+            )
+        )
         val lines = byRow.entries.map { (ri, cells) ->
-            val keys = cells.map { it.second }.sortedBy { order.indexOf(it).let { i -> if (i < 0) 999 else i } }
+            val keys = sortedKeys(cells.toSet())
             val r = rows.getOrNull(ri)
             keys.map { k -> r?.cell(k) ?: "" }.joinToString("\t")
         }
         clipboard.setText(AnnotatedString(lines.joinToString("\n")))
         toast(appCtx, "Copied.")
+    }
+
+    // Sheets-standard paste entry: single undo/persist in the store, result
+    // toast here, auto-check when cookies land, exit selection on success.
+    fun doPasteGrid(grid: CopiedGrid, anchor: Pair<Int, String>, area: Set<Pair<Int, String>>?) {
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                store.pasteGrid(grid, anchor, area, visibleCols.map { it.key })
+            }
+            val (pasted, skipped, cookies) = res
+            if (pasted == 0 && skipped == 0) {
+                toast(appCtx, "Nothing to paste.")
+                return@launch
+            }
+            toast(
+                appCtx,
+                if (skipped > 0) "Pasted $pasted · skipped $skipped."
+                else "Pasted $pasted."
+            )
+            if (pasted > 0) {
+                if (cookies) maybeAutoCheck("cookies")
+                if (selectionMode) {
+                    selectedItems = emptySet()
+                    selectionMode = false
+                }
+                if (area == null) {
+                    selectedCell = anchor
+                    draft = store.openRows.value.getOrNull(anchor.first)?.cell(anchor.second) ?: ""
+                }
+            }
+        }
     }
 
     // Website parity (SheetGrid enterSelectionMode/toggleSelection): header
@@ -403,6 +452,33 @@ fun SheetDetailScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
+        // Selection mode replaces the whole top bar (back, name, undo,
+        // check, menu) with Select all | count | Cancel.
+        val allCellSet = remember(rows, visibleCols) {
+            buildSet {
+                for (r in rows) {
+                    for (c in visibleCols) add(Pair(r.rowIdx, c.key))
+                }
+            }
+        }
+        if (selectionMode) {
+            SelectHeader(
+                count = selectedItems.size,
+                total = allCellSet.size,
+                onToggleAll = {
+                    if (selectedItems.isNotEmpty() && allCellSet.all { selectedItems.contains(it) }) {
+                        selectedItems = emptySet()
+                        selectionMode = false
+                    } else {
+                        selectedItems = allCellSet
+                    }
+                },
+                onCancel = {
+                    selectedItems = emptySet()
+                    selectionMode = false
+                }
+            )
+        } else {
         // Top row.
         Row(
             modifier = Modifier
@@ -705,6 +781,7 @@ fun SheetDetailScreen(
                 }
             }
         }
+        }
 
         if (readOnly) {
             Box(
@@ -935,22 +1012,29 @@ fun SheetDetailScreen(
                                                     selectedCell = selKey
                                                     draft = v
                                                 } else {
-                                                    val pasted = clipboard.getText()?.text ?: ""
-                                                    if (pasted.isEmpty()) {
-                                                        toast(appCtx, "Clipboard is empty.")
+                                                    // Grid clipboard first (cross-file copy/paste),
+                                                    // system text as fallback.
+                                                    val clip = gridClip
+                                                    if (clip != null) {
+                                                        doPasteGrid(clip, selKey, null)
                                                     } else {
-                                                        val reason = store.rejectReason(selKey.first, selKey.second, pasted)
-                                                        if (reason != null) {
-                                                            toast(appCtx, reason)
+                                                        val pasted = clipboard.getText()?.text ?: ""
+                                                        if (pasted.isEmpty()) {
+                                                            toast(appCtx, "Clipboard is empty.")
                                                         } else {
-                                                            selectedCell = selKey
-                                                            draft = pasted
-                                                            scope.launch {
-                                                                val ok = withContext(Dispatchers.IO) { store.setCell(selKey.first, selKey.second, pasted) }
-                                                                if (!ok) {
-                                                                    toast(appCtx, "Couldn't save. Please try again.")
-                                                                } else if (selKey.second == "cookies") {
-                                                                    maybeAutoCheck(selKey.second)
+                                                            val reason = store.rejectReason(selKey.first, selKey.second, pasted)
+                                                            if (reason != null) {
+                                                                toast(appCtx, reason)
+                                                            } else {
+                                                                selectedCell = selKey
+                                                                draft = pasted
+                                                                scope.launch {
+                                                                    val ok = withContext(Dispatchers.IO) { store.setCell(selKey.first, selKey.second, pasted) }
+                                                                    if (!ok) {
+                                                                        toast(appCtx, "Couldn't save. Please try again.")
+                                                                    } else if (selKey.second == "cookies") {
+                                                                        maybeAutoCheck(selKey.second)
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -1056,32 +1140,9 @@ fun SheetDetailScreen(
             }
         }
 
-        // Selection mode — same style as multi-file select: header row
-        // [Select all | N selected | Cancel] + icon-above-label action card.
+        // Selection mode bottom bar: Copy + Paste + Clear floating card.
+        // (The Select all | count | Cancel header lives at the top.)
         if (selectionMode && selectedItems.isNotEmpty()) {
-            val allCells = remember(rows, visibleCols) {
-                buildSet {
-                    for (r in rows) {
-                        for (c in visibleCols) add(Pair(r.rowIdx, c.key))
-                    }
-                }
-            }
-            SelectHeader(
-                count = selectedItems.size,
-                total = allCells.size,
-                onToggleAll = {
-                    if (selectedItems.isNotEmpty() && allCells.all { selectedItems.contains(it) }) {
-                        selectedItems = emptySet()
-                        selectionMode = false
-                    } else {
-                        selectedItems = allCells
-                    }
-                },
-                onCancel = {
-                    selectedItems = emptySet()
-                    selectionMode = false
-                }
-            )
             val cellActions = buildList {
                 add(
                     SelectAction(
@@ -1090,6 +1151,16 @@ fun SheetDetailScreen(
                         onClick = { copySelection() }
                     )
                 )
+                val clip = gridClip
+                if (clip != null && !readOnly) {
+                    add(
+                        SelectAction(
+                            icon = R.drawable.ic_ss_paste,
+                            label = "Paste",
+                            onClick = { doPasteGrid(clip, Pair(-1, ""), selectedItems) }
+                        )
+                    )
+                }
                 if (!readOnly) {
                     add(
                         SelectAction(
@@ -1120,6 +1191,23 @@ fun SheetDetailScreen(
                                 value = draft,
                                 onValueChange = { draft = it },
                                 placeholder = { Text("Enter value", fontSize = 16.sp) },
+                                // Professional clear affordance: X sits inside
+                                // the input's right edge, only while typing.
+                                trailingIcon = {
+                                    if (draft.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = { draft = "" },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                painter = painterResource(R.drawable.ic_ss_clear_text),
+                                                contentDescription = "Clear text",
+                                                modifier = Modifier.size(15.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                },
                                 singleLine = true,
                                 textStyle = androidx.compose.ui.text.TextStyle(
                                     fontSize = 16.sp,

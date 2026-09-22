@@ -88,6 +88,15 @@ data class SheetRow(
 
 data class CellStyle(val bg: String? = null, val color: String? = null, val bold: Boolean = false)
 
+// Internal grid clipboard for Google-Sheets-style cross-file copy/paste
+// (lives in memory, survives file switches): rows of (colKey, value) in
+// source visible order, plus that order for positional tiling.
+data class CopiedGrid(
+    val preset: String,
+    val columns: List<String>,
+    val cells: List<List<Pair<String, String>>>
+)
+
 data class WalletTx(
     val id: String,
     val createdAt: Long,
