@@ -442,7 +442,7 @@ private fun PasswordOptionRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            PasswordBadge(password = password)
+            PasswordBadge(password = password, sizeDp = 18)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = password,

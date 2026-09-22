@@ -81,7 +81,7 @@ fun PresetIcon(preset: SheetPreset, sizeDp: Int = 14, modifier: Modifier = Modif
 }
 
 @Composable
-fun PasswordBadge(password: String, modifier: Modifier = Modifier) {
+fun PasswordBadge(password: String, modifier: Modifier = Modifier, sizeDp: Int = 12) {
     val res = when (password) {
         "dgddigital" -> R.drawable.ic_ss_pw_dgd
         "Love@12345", "L0VE@12345" -> R.drawable.ic_ss_pw_love
@@ -91,7 +91,7 @@ fun PasswordBadge(password: String, modifier: Modifier = Modifier) {
         Image(
             painter = painterResource(res),
             contentDescription = null,
-            modifier = modifier.size(12.dp)
+            modifier = modifier.size(sizeDp.dp)
         )
     } else {
         Text(
