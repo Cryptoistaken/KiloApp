@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -68,6 +67,17 @@ private val PAY_METHODS = listOf(
 )
 
 private fun payKey(method: String): String = "sheet_pay_" + method
+
+// Website WalletView ACCOUNT_RE: payout account must match the method format.
+private val ACCOUNT_RE = mapOf(
+    "bKash" to Regex("^(\\+?880|0)?1[3-9]\\d{8}$"),
+    "Nagad" to Regex("^(\\+?880|0)?1[3-9]\\d{8}$"),
+    "USDT" to Regex("^0x[a-fA-F0-9]{40}$"),
+    "Binance" to Regex("^\\d{9,10}$")
+)
+
+private fun validAccount(method: String, account: String): Boolean =
+    ACCOUNT_RE[method]?.matches(account.trim()) == true
 
 private fun fmtBdt(balance: Double): String {
     val v = Math.round(balance * BDT_RATE)
@@ -135,6 +145,7 @@ fun SheetWalletTab(modifier: Modifier = Modifier) {
     var filter by rememberSaveable { mutableStateOf("ALL") }
     var detail by remember { mutableStateOf<WalletTx?>(null) }
     var sending by remember { mutableStateOf(false) }
+    var slideKey by remember { mutableStateOf(0) }
 
     LaunchedEffect(method) {
         val saved = prefs.getString(payKey(method), null)
@@ -148,16 +159,11 @@ fun SheetWalletTab(modifier: Modifier = Modifier) {
     fun submit() {
         if (sending) return
         val value = amount.toDoubleOrNull()
-        if (value == null || value <= 0) {
-            toast("Enter a valid amount.")
-            return
-        }
-        if (value > balance) {
-            toast("Amount exceeds balance.")
-            return
-        }
-        if (account.trim().isEmpty()) {
-            toast("Enter a payout account.")
+        if (value == null || value <= 0 || value > balance || !validAccount(method, account)) {
+            toast(
+                if (value != null && value > balance) "Amount exceeds your available balance."
+                else "Please check the amount and account details."
+            )
             return
         }
         sending = true
@@ -168,6 +174,7 @@ fun SheetWalletTab(modifier: Modifier = Modifier) {
                 store.requestWithdraw(value, m, acct)
             }
             sending = false
+            slideKey++
             if (ok) {
                 if (saveAccount) {
                     prefs.edit().putString(payKey(m), acct).apply()
@@ -364,13 +371,15 @@ fun SheetWalletTab(modifier: Modifier = Modifier) {
                             )
                         }
                         Spacer(modifier = Modifier.size(12.dp))
-                        Button(
-                            onClick = { submit() },
-                            enabled = !sending,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(if (sending) "Submitting..." else "Confirm withdrawal")
-                        }
+                        val amountValue = amount.toDoubleOrNull()
+                        val amountOk = amountValue != null && amountValue > 0 && amountValue <= balance
+                        val accountOk = validAccount(method, account)
+                        SlideToConfirmButton(
+                            label = "Slide to withdraw",
+                            disabled = sending || !amountOk || !accountOk,
+                            resetKey = slideKey,
+                            onConfirm = { submit() }
+                        )
                     }
                 }
             }
