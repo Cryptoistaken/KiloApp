@@ -1,6 +1,5 @@
 package net.typeblog.socks.ui.screens.sheet
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,6 +39,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 // Shared modal matching the website .modal-overlay/.modal-box:
 // dimmed scrim (click-outside + back dismisses), centered box (surface,
@@ -52,7 +53,10 @@ fun SheetModal(
     miniTitle: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    BackHandler(onBack = onDismiss)
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -81,6 +85,7 @@ fun SheetModal(
                 content()
             }
         }
+    }
     }
 }
 
@@ -157,7 +162,10 @@ fun SheetConfirm(
     actionText: String,
     onConfirm: () -> Unit
 ) {
-    BackHandler(onBack = onDismiss)
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -186,6 +194,7 @@ fun SheetConfirm(
                 }
             }
         }
+    }
     }
 }
 
