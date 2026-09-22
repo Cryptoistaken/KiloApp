@@ -1,12 +1,13 @@
-// Command monitor-build polls a GitHub Actions run until it finishes,
-// then exits 0 on success or 1 on any other conclusion.
+// Command monitor-build follows a GitHub Actions run until it finishes:
+// live-tails the running job logs, prints a job table on change, dumps
+// the failed logs at the end, and exits 0 on success / 1 on failure.
 //
 // Usage:
 //
-//	go run monitor-build.go [run-id] [-timeout 25m] [-interval 20s]
+//	go run monitor-build.go [run-id] [-timeout 25m] [-interval 5s] [-tail 60]
 //
 // With no run-id it follows the latest run on the current branch.
-// Replaces fixed sleeps when waiting on CI.
+// -jobs=false disables the job table, -log=false disables live log tailing.
 package main
 
 import (
@@ -20,24 +21,32 @@ import (
 	"time"
 )
 
+type job struct {
+	ID         uint64 `json:"databaseId"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+}
+
 type runInfo struct {
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	URL        string `json:"url"`
+	Jobs       []job  `json:"jobs"`
 }
 
-func ghJSON(args ...string) ([]byte, error) {
-	cmd := exec.Command("gh", args...)
+func gh(outArgs ...string) ([]byte, error) {
+	cmd := exec.Command("gh", outArgs...)
 	cmd.Stderr = os.Stderr
 	return cmd.Output()
 }
 
 func latestRunID() (string, error) {
-	out, err := ghJSON("run", "list", "--limit", "1", "--json", "databaseId", "--jq", ".[0].databaseId")
+	raw, err := gh("run", "list", "--limit", "1", "--json", "databaseId", "--jq", ".[0].databaseId")
 	if err != nil {
 		return "", fmt.Errorf("cannot list runs: %w", err)
 	}
-	id := strings.TrimSpace(string(out))
+	id := strings.TrimSpace(string(raw))
 	if id == "" || id == "null" {
 		return "", fmt.Errorf("no runs found")
 	}
@@ -46,19 +55,47 @@ func latestRunID() (string, error) {
 
 func pollRun(id string) (runInfo, error) {
 	var info runInfo
-	out, err := ghJSON("run", "view", id, "--json", "status,conclusion,url")
+	raw, err := gh("run", "view", id, "--json", "status,conclusion,url,jobs")
 	if err != nil {
 		return info, fmt.Errorf("cannot view run %s: %w", id, err)
 	}
-	if err := json.Unmarshal(out, &info); err != nil {
+	if err := json.Unmarshal(raw, &info); err != nil {
 		return info, fmt.Errorf("cannot parse run JSON: %w", err)
 	}
 	return info, nil
 }
 
+// jobLogs returns the full log lines of one job (best effort).
+func jobLogs(jobID uint64) []string {
+	raw, err := gh("run", "view", "--job", strconv.FormatUint(jobID, 10), "--log")
+	if err != nil {
+		return nil
+	}
+	text := strings.TrimRight(string(raw), "\n")
+	if text == "" {
+		return nil
+	}
+	return strings.Split(text, "\n")
+}
+
+func jobTable(info runInfo) string {
+	var b strings.Builder
+	for _, j := range info.Jobs {
+		state := j.Status
+		if j.Status == "completed" {
+			state = j.Conclusion
+		}
+		fmt.Fprintf(&b, "    %-28s %s\n", j.Name, state)
+	}
+	return b.String()
+}
+
 func main() {
 	timeout := flag.Duration("timeout", 25*time.Minute, "give up after this long")
 	interval := flag.Duration("interval", 5*time.Second, "poll interval")
+	tailN := flag.Int("tail", 60, "failed-log lines to dump at the end")
+	showJobs := flag.Bool("jobs", true, "print the job table when it changes")
+	tailLogs := flag.Bool("log", true, "live-tail running job logs")
 	flag.Parse()
 
 	id := ""
@@ -79,7 +116,10 @@ func main() {
 
 	start := time.Now()
 	deadline := start.Add(*timeout)
-	fmt.Printf("following run %s (timeout %s, every %s)\n", id, timeout, interval)
+	printed := map[uint64]int{} // jobID -> log lines already shown
+	lastTable := ""
+	fmt.Printf("following run %s (timeout %s, every %s)\n", id, *timeout, *interval)
+
 	for {
 		info, err := pollRun(id)
 		if err != nil {
@@ -87,19 +127,49 @@ func main() {
 			os.Exit(2)
 		}
 		elapsed := time.Since(start).Round(time.Second)
+		if *showJobs {
+			if tbl := jobTable(info); tbl != lastTable {
+				fmt.Printf("[%s] jobs:\n%s", elapsed, tbl)
+				lastTable = tbl
+			}
+		}
+		if *tailLogs {
+			for _, j := range info.Jobs {
+				if j.Status == "completed" {
+					continue
+				}
+				lines := jobLogs(j.ID)
+				if fresh := lines[printed[j.ID]:]; len(fresh) > 0 {
+					if len(fresh) > 150 {
+						fmt.Printf("    ... (%d log lines skipped)\n", len(fresh)-60)
+						fresh = fresh[len(fresh)-60:]
+					}
+					for _, l := range fresh {
+						fmt.Printf("    | %s\n", l)
+					}
+				}
+				printed[j.ID] = len(lines)
+			}
+		}
 		if info.Status == "completed" {
 			fmt.Printf("[%s] completed: %s %s\n", elapsed, info.Conclusion, info.URL)
 			if info.Conclusion == "success" {
 				os.Exit(0)
 			}
-			// Best-effort human summary of what failed.
-			cmd := exec.Command("gh", "run", "view", id)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			_ = cmd.Run()
+			if raw, err := gh("run", "view", id, "--log-failed"); err == nil {
+				lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+				if len(lines) > *tailN {
+					lines = lines[len(lines)-*tailN:]
+				}
+				fmt.Printf("---- last %d lines of failed logs ----\n%s\n", len(lines), strings.Join(lines, "\n"))
+			} else {
+				cmd := exec.Command("gh", "run", "view", id)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				_ = cmd.Run()
+			}
 			os.Exit(1)
 		}
-		fmt.Printf("[%s] %s ...\n", elapsed, info.Status)
 		if time.Now().Add(*interval).After(deadline) {
 			fmt.Fprintln(os.Stderr, "error: timed out waiting for run", id)
 			os.Exit(2)

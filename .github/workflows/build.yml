@@ -1,5 +1,11 @@
 name: Build APK
 
+# Rapid pushes supersede each other: cancel the older run instead of
+# building the same branch twice (its release would be stale anyway).
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [ "master" ]
@@ -38,9 +44,29 @@ jobs:
           echo "$CMDLINE" >> "$GITHUB_PATH"
           echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
           yes | "$CMDLINE/sdkmanager" --licenses --sdk_root="$ANDROID_SDK_ROOT" > /dev/null || true
-          "$CMDLINE/sdkmanager" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" --sdk_root="$ANDROID_SDK_ROOT"
+          # Platform + build-tools survive on the runner image — only install
+          # what is actually missing instead of re-installing every run.
+          NEED=""
+          [ -d "$ANDROID_SDK_ROOT/platforms/android-36" ] || NEED="$NEED platforms;android-36"
+          [ -d "$ANDROID_SDK_ROOT/build-tools/36.0.0" ] || NEED="$NEED build-tools;36.0.0"
+          [ -d "$ANDROID_SDK_ROOT/platform-tools" ] || NEED="$NEED platform-tools"
+          if [ -n "$NEED" ]; then
+            # shellcheck disable=SC2086
+            "$CMDLINE/sdkmanager" --install $NEED --sdk_root="$ANDROID_SDK_ROOT"
+          else
+            echo "SDK packages already present, skipping install"
+          fi
           echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+      # The NDK download (~75s) dominates setup: cache the extracted tree and
+      # only hit the network on a version bump (key change).
+      - name: Cache NDK
+        id: ndk-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.0.12077973
+          key: ndk-27.0.12077973
 
       # --- Install NDK only if not already pre-installed on runner ---
       - name: Install NDK (skip if present)
@@ -64,6 +90,20 @@ jobs:
             mkdir -p "$RUNNER_TEMP/ks"
             echo "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ks/kiloapp-release.jks"
           fi
+
+      # Native code (badvpn/pdnsd x 4 ABIs) is the slow half of the build.
+      # Cache its intermediates AND the copied jniLibs output keyed on the
+      # jni sources: Kotlin-only pushes then skip the C compile entirely,
+      # while any jni/ change busts the key and rebuilds from scratch.
+      # (jniLibs/ is gitignored build output, so it must ride along —
+      # an up-to-date native task skips its doLast copy step.)
+      - name: Cache native build outputs
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            app/build/intermediates/cxx
+            app/src/main/jniLibs
+          key: native-ndk27-${{ hashFiles('app/src/main/jni/**') }}
 
       # --- Build: all ABIs + universal (universal contains all 4 .so sets; OS picks best at runtime) ---
       - name: Build Release APK
