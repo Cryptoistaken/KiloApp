@@ -182,7 +182,7 @@ codebase stays clean without future cleanups:
 | Path | Purpose |
 |---|---|
 | `AGENTS.md` | This file — agent rules, build/install flow, snapshots, filesystem map |
-| `monitor-build.go` | CI waiter (stdlib only): `go run ./monitor-build.go [run-id]` polls the Actions run every 5s, exits 0 on success / 1 on failure. Always use this after pushing; never fixed sleeps. |
+| `monitor-build.go` | CI waiter (stdlib only): `go run ./monitor-build.go [run-id]` polls the Actions run every 5s with a live job table + log tail, dumps failed logs at the end, exits 0 on success / 1 on failure. Always use this after pushing; never fixed sleeps. **Keep it updated:** when CI-wait requirements change, update the script AND this row in the same commit. |
 | `task.md` | VPN Accelerator task (experimental connect-time goal, SOCKS5-client scope) |
 | `checker/` | Own exit-IP checker (Cloudflare Worker source; deploys via wrangler, outside the APK build) |
 | `cli/` | On-device Go test harness (stdlib only) for the portable engine half: `probe` (SocksTester parity), `check` (Utility.checkWith parity), `bench` (repeat connect-time stats + CSV), `sweep` (bulk proxy list), `speed` (throughput via proxy/direct), `dns` (IPv4-preferred resolve timing). Build: `go build -o kiloproxy .` in `cli/` (binary gitignored). Cannot drive TUN/tun2socks/pdnsd (Android-only). |

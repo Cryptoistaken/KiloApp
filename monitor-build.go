@@ -66,8 +66,11 @@ func pollRun(id string) (runInfo, error) {
 }
 
 // jobLogs returns the full log lines of one job (best effort).
+// gh prints "still in progress" chatter to stderr while the job runs —
+// swallowed, the caller only cares about stdout lines.
 func jobLogs(jobID uint64) []string {
-	raw, err := gh("run", "view", "--job", strconv.FormatUint(jobID, 10), "--log")
+	cmd := exec.Command("gh", "run", "view", "--job", strconv.FormatUint(jobID, 10), "--log")
+	raw, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
