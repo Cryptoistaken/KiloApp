@@ -148,7 +148,6 @@ fun SheetDetailScreen(
     var selectedItems by remember { mutableStateOf(setOf<Pair<Int, String>>()) }
     var lastTapCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var lastTapTime by remember { mutableStateOf(0L) }
-    var pendingTapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     var checkMenu by remember { mutableStateOf(false) }
     var overflowMenu by remember { mutableStateOf(false) }
@@ -842,8 +841,9 @@ fun SheetDetailScreen(
                                             }
                                             val now = System.currentTimeMillis()
                                             if (lastTapCell == selKey && now - lastTapTime < 400) {
-                                                pendingTapJob?.cancel()
-                                                pendingTapJob = null
+                                                // Double-tap: copy the value, or paste into
+                                                // an empty cell. Selection already live
+                                                // from the first tap — no delay needed.
                                                 lastTapCell = null
                                                 val v = row.cell(col.key)
                                                 if (v.isNotEmpty()) {
@@ -869,17 +869,12 @@ fun SheetDetailScreen(
                                             if (selectedCell != null && selectedCell != selKey) {
                                                 commitDraft()
                                             }
+                                            // Select instantly like the website — no
+                                            // 400ms wait; double-tap is detected above.
                                             lastTapCell = selKey
                                             lastTapTime = now
-                                            pendingTapJob?.cancel()
-                                            val targetRow = row.rowIdx
-                                            val targetCol = col.key
-                                            val targetVal = row.cell(col.key)
-                                            pendingTapJob = scope.launch {
-                                                kotlinx.coroutines.delay(400)
-                                                selectedCell = Pair(targetRow, targetCol)
-                                                draft = targetVal
-                                            }
+                                            selectedCell = selKey
+                                            draft = row.cell(col.key)
                                         },
                                         onLongClick = {
                                             if (!readOnly && row.locked) {
@@ -889,9 +884,6 @@ fun SheetDetailScreen(
                                                 )
                                                 return@combinedClickable
                                             }
-                                            pendingTapJob?.cancel()
-                                            pendingTapJob = null
-                                            lastTapCell = null
                                             haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                             selectionMode = true
                                             selectedCell = null
