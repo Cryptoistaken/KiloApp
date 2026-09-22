@@ -9,8 +9,8 @@ tags: [process, cicd, github-actions, automation, android, apk, release]
 
 ## Workflow Overview
 
-**Purpose**: Build, sign, and publish versioned release APKs (all ABIs + universal) on every master push.
-**Trigger Events**: push to master, push of `v*` tags, pull requests to master, manual dispatch.
+**Purpose**: Build, sign, and publish versioned APKs. Fast lane (arm64 debug) is the push default during sheet/feature dev; full release lane (all ABIs + universal) is manual-only until that work lands.
+**Trigger Events**: fast = push to master + manual dispatch; release = manual dispatch (+ PRs).
 **Target Environments**: GitHub-hosted Linux runners; artifacts consumed by Android devices (arm64 primary).
 
 ## Execution Flow Diagram

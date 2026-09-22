@@ -7,11 +7,11 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  push:
-    branches: [ "master" ]
-    tags: [ "v*" ]
   pull_request:
     branches: [ "master" ]
+  # Manual only for now: fast lane is the push default while sheet/features
+  # are under heavy dev. (push/tags removed — fast publishes v* tags and
+  # must not trigger full builds.)
   workflow_dispatch:
 
 jobs:
@@ -173,10 +173,11 @@ jobs:
           echo "Changelog:"
           cat changelog.md
 
-      # Publish only on real branch pushes (not PRs, not tag-triggered runs —
-      # tag pushes would create a new tag each run and loop releases).
+      # Publish on branch runs (push or manual dispatch) — not on PRs and not
+      # on tag-triggered runs (a tag push would create a new tag each run
+      # and loop releases).
       - name: Publish GitHub Release (v${{ steps.vc.outputs.code }})
-        if: github.ref_type == 'branch' && github.event_name == 'push'
+        if: github.ref_type == 'branch' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: v${{ steps.vc.outputs.code }}
