@@ -155,7 +155,7 @@ github_release: tag   # Description: v<version_code> with APKs + changelog
 |--------|------------------|---------------|------------------|
 | GitHub Releases | Publish | APKs + changelog markdown | Per-push availability |
 | Actions cache | Build acceleration | NDK tree, native intermediates | Best-effort (miss = slower build) |
-| In-app updater | Consume | Parses release tags for version checks | Monotonic versions required: both lanes use max(run+100, latest+1) for APK code AND tag |
+| In-app updater | Consume | Parses release tags for version checks | Monotonic versions required: both lanes use max(run+100, latest+1) for APK code AND tag. Overlapping publishes can share one tag (self-heals: next code tops latest) |
 
 ### Dependent Workflows
 
