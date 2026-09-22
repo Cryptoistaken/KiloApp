@@ -14,7 +14,7 @@ jobs:
   fast:
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write # publishing the fast v<code> release
 
     steps:
       - name: Set git init default branch to master
