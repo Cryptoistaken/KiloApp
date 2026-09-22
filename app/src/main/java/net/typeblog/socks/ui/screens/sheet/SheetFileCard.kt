@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.IconButton
@@ -46,10 +45,13 @@ fun SheetFileCard(
     selectionMode: Boolean,
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
-    onDownload: () -> Unit,
-    onRename: () -> Unit,
-    onArchive: () -> Unit,
-    list: Boolean = false
+    onDownload: () -> Unit = {},
+    onRename: () -> Unit = {},
+    onArchive: () -> Unit = {},
+    list: Boolean = false,
+    daysLeft: Int? = null,
+    onRestore: (() -> Unit)? = null,
+    onDeleteForever: (() -> Unit)? = null
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Card(
@@ -163,11 +165,28 @@ fun SheetFileCard(
                     }
                     androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         SheetMenuItem(icon = R.drawable.ic_ss_square, label = if (selected) "Deselect" else "Select", onClick = { menuOpen = false; onToggleSelect() })
-                        SheetMenuItem(icon = R.drawable.ic_ss_download, label = "Download", onClick = { menuOpen = false; onDownload() })
-                        SheetMenuItem(icon = R.drawable.ic_ss_pencil, label = "Rename", onClick = { menuOpen = false; onRename() })
-                        SheetMenuItem(icon = R.drawable.ic_ss_trash, label = "Move to archive", danger = true, onClick = { menuOpen = false; onArchive() })
+                        if (onRestore != null) {
+                            SheetMenuItem(icon = R.drawable.ic_ss_restore, label = "Restore", onClick = { menuOpen = false; onRestore() })
+                        }
+                        if (onDeleteForever != null) {
+                            SheetMenuItem(icon = R.drawable.ic_ss_trash, label = "Delete forever", danger = true, onClick = { menuOpen = false; onDeleteForever() })
+                        }
+                        if (onRestore == null && onDeleteForever == null) {
+                            SheetMenuItem(icon = R.drawable.ic_ss_download, label = "Download", onClick = { menuOpen = false; onDownload() })
+                            SheetMenuItem(icon = R.drawable.ic_ss_pencil, label = "Rename", onClick = { menuOpen = false; onRename() })
+                            SheetMenuItem(icon = R.drawable.ic_ss_trash, label = "Move to archive", danger = true, onClick = { menuOpen = false; onArchive() })
+                        }
                     }
                 }
+            }
+            if (daysLeft != null) {
+                Text(
+                    text = daysLeft.toString() + "d left",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 5.dp)
+                )
             }
         }
     }
