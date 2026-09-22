@@ -16,12 +16,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -161,47 +160,37 @@ fun TypePickDialog(
     onDismiss: () -> Unit,
     onPick: (SheetPreset) -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Choose file type") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                TypeOptionRow(
-                    title = "Cookie",
-                    desc = "cookies and uid",
-                    preset = SheetPreset.COOKIE,
-                    detected = !draft.has2fa,
-                    disabled = draft.has2fa,
-                    disabledReason = "File has 2FA data - pick 2fa or Page",
-                    onClick = { onPick(SheetPreset.COOKIE) }
-                )
-                TypeOptionRow(
-                    title = "2fa",
-                    desc = "cookies and 2fa and uid",
-                    preset = SheetPreset.COMBO,
-                    detected = draft.has2fa,
-                    disabled = false,
-                    disabledReason = null,
-                    onClick = { onPick(SheetPreset.COMBO) }
-                )
-                TypeOptionRow(
-                    title = "Page",
-                    desc = "full columns",
-                    preset = SheetPreset.PAGE,
-                    detected = draft.pageHint,
-                    disabled = false,
-                    disabledReason = null,
-                    onClick = { onPick(SheetPreset.PAGE) }
-                )
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+    SheetModal(onDismiss = onDismiss, widthDp = 300, title = "Choose file type") {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            TypeOptionRow(
+                title = "Cookie",
+                desc = "cookies and uid",
+                preset = SheetPreset.COOKIE,
+                detected = !draft.has2fa,
+                disabled = draft.has2fa,
+                disabledReason = "File has 2FA data - pick 2fa or Page",
+                onClick = { onPick(SheetPreset.COOKIE) }
+            )
+            TypeOptionRow(
+                title = "2fa",
+                desc = "cookies and 2fa and uid",
+                preset = SheetPreset.COMBO,
+                detected = draft.has2fa,
+                disabled = false,
+                disabledReason = null,
+                onClick = { onPick(SheetPreset.COMBO) }
+            )
+            TypeOptionRow(
+                title = "Page",
+                desc = "full columns",
+                preset = SheetPreset.PAGE,
+                detected = draft.pageHint,
+                disabled = false,
+                disabledReason = null,
+                onClick = { onPick(SheetPreset.PAGE) }
+            )
         }
-    )
+    }
 }
 
 @Composable
@@ -210,36 +199,26 @@ fun PasswordPickDialog(
     onDismiss: () -> Unit,
     onPick: (String) -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Pick a password") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "Files under these passwords are shared by default.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.size(12.dp))
-                PasswordOptionRow(
-                    password = DGD_PASSWORD,
-                    detected = upload != null && upload.loveHint == false,
-                    onClick = { onPick(DGD_PASSWORD) }
-                )
-                PasswordOptionRow(
-                    password = LOVE_PASSWORD,
-                    detected = upload != null && upload.loveHint == true,
-                    onClick = { onPick(LOVE_PASSWORD) }
-                )
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+    SheetModal(onDismiss = onDismiss, widthDp = 340, title = "Pick a password") {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "Files under these passwords are shared by default.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.size(12.dp))
+            PasswordOptionRow(
+                password = DGD_PASSWORD,
+                detected = upload != null && upload.loveHint == false,
+                onClick = { onPick(DGD_PASSWORD) }
+            )
+            PasswordOptionRow(
+                password = LOVE_PASSWORD,
+                detected = upload != null && upload.loveHint == true,
+                onClick = { onPick(LOVE_PASSWORD) }
+            )
         }
-    )
+    }
 }
 
 @Composable
@@ -249,29 +228,13 @@ fun RenameFileDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Rename file") },
-        text = {
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                label = { Text("File name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text("Rename")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+    SheetModal(onDismiss = onDismiss, widthDp = 320, title = "Rename file") {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            SheetNameInput(value = value, onValueChange = onValueChange, onDone = onConfirm)
+            Spacer(modifier = Modifier.size(12.dp))
+            SheetModalFooter(onCancel = onDismiss, onConfirm = onConfirm, confirmText = "Rename")
         }
-    )
+    }
 }
 
 @Composable
@@ -279,19 +242,11 @@ fun ArchiveSingleDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Move this file to archive?") },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text("Archive", color = MaterialTheme.colorScheme.error)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
+    SheetConfirm(
+        onDismiss = onDismiss,
+        message = "Move this file to archive?",
+        actionText = "Archive",
+        onConfirm = onConfirm
     )
 }
 
@@ -301,21 +256,11 @@ fun ArchiveBulkDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text("Move " + count + " file" + (if (count > 1) "s" else "") + " to archive?")
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text("Archive", color = MaterialTheme.colorScheme.error)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
+    SheetConfirm(
+        onDismiss = onDismiss,
+        message = "Move " + count + " file" + (if (count > 1) "s" else "") + " to archive?",
+        actionText = "Archive",
+        onConfirm = onConfirm
     )
 }
 
@@ -434,9 +379,14 @@ private fun PasswordOptionRow(
     detected: Boolean,
     onClick: () -> Unit
 ) {
-    TextButton(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 56.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),

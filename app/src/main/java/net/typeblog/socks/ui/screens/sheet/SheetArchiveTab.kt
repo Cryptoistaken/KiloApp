@@ -23,7 +23,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.IconButton
@@ -86,7 +85,8 @@ fun SheetArchiveTab(
 
     val sorted = remember(archive) { archive.sortedByDescending { it.deletedAt } }
 
-    Column(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize()) {
         if (selectionMode) {
             Row(
                 modifier = Modifier
@@ -201,106 +201,69 @@ fun SheetArchiveTab(
             }
         }
         if (!selectionMode) {
-            Box(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                contentAlignment = Alignment.BottomStart
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(16.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier
-                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    ArchiveViewSwitch(selected = !isList, icon = R.drawable.ic_ss_view_grid, label = "Grid view", onClick = { isList = false })
-                    ArchiveViewSwitch(selected = isList, icon = R.drawable.ic_ss_view_list, label = "List view", onClick = { isList = true })
-                }
+                ArchiveViewSwitch(selected = !isList, icon = R.drawable.ic_ss_view_grid, label = "Grid view", onClick = { isList = false })
+                ArchiveViewSwitch(selected = isList, icon = R.drawable.ic_ss_view_list, label = "List view", onClick = { isList = true })
             }
         }
     }
 
     val dt = deleteTarget
     if (dt != null) {
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("Delete forever? Cannot undo.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        deleteTarget = null
-                        selectedIds = selectedIds - dt.id
-                        io { store.deleteForever(dt.id) }
-                        toast(appCtx, "File deleted forever.")
-                    }
-                ) {
-                    Text("Delete forever", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) {
-                    Text("Cancel")
-                }
+        SheetConfirm(
+            onDismiss = { deleteTarget = null },
+            message = "Permanently delete this file? This cannot be undone.",
+            actionText = "Delete forever",
+            onConfirm = {
+                deleteTarget = null
+                selectedIds = selectedIds - dt.id
+                io { store.deleteForever(dt.id) }
+                toast(appCtx, "File deleted forever.")
             }
         )
     }
 
     if (restoreBulk) {
         val n = selectedIds.size
-        AlertDialog(
-            onDismissRequest = { restoreBulk = false },
-            title = {
-                Text("Restore " + n + " file" + (if (n != 1) "s" else "") + "?")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val ids = selectedIds.toList()
-                        restoreBulk = false
-                        selectedIds = emptySet()
-                        io {
-                            for (id in ids) store.archiveFile(id, false)
-                        }
-                        toast(appCtx, ids.size.toString() + " file" + (if (ids.size != 1) "s" else "") + " restored.")
-                    }
-                ) {
-                    Text("Restore")
+        SheetConfirm(
+            onDismiss = { restoreBulk = false },
+            message = "Restore " + n + " file" + (if (n != 1) "s" else "") + "?",
+            actionText = "Restore",
+            onConfirm = {
+                val ids = selectedIds.toList()
+                restoreBulk = false
+                selectedIds = emptySet()
+                io {
+                    for (id in ids) store.archiveFile(id, false)
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { restoreBulk = false }) {
-                    Text("Cancel")
-                }
+                toast(appCtx, ids.size.toString() + " file" + (if (ids.size != 1) "s" else "") + " restored.")
             }
         )
     }
 
     if (deleteBulk) {
         val n = selectedIds.size
-        AlertDialog(
-            onDismissRequest = { deleteBulk = false },
-            title = {
-                Text("Delete " + n + " file" + (if (n != 1) "s" else "") + " forever? Cannot undo.")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val ids = selectedIds.toList()
-                        deleteBulk = false
-                        selectedIds = emptySet()
-                        io {
-                            for (id in ids) store.deleteForever(id)
-                        }
-                        toast(appCtx, ids.size.toString() + " file" + (if (ids.size != 1) "s" else "") + " deleted forever.")
-                    }
-                ) {
-                    Text("Delete forever", color = MaterialTheme.colorScheme.error)
+        SheetConfirm(
+            onDismiss = { deleteBulk = false },
+            message = "Permanently delete " + n + " file" + (if (n != 1) "s" else "") + "? This cannot be undone.",
+            actionText = "Delete forever",
+            onConfirm = {
+                val ids = selectedIds.toList()
+                deleteBulk = false
+                selectedIds = emptySet()
+                io {
+                    for (id in ids) store.deleteForever(id)
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteBulk = false }) {
-                    Text("Cancel")
-                }
+                toast(appCtx, ids.size.toString() + " file" + (if (ids.size != 1) "s" else "") + " deleted forever.")
             }
         )
     }

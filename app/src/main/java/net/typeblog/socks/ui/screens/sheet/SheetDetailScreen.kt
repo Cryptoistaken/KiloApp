@@ -26,7 +26,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -1174,138 +1173,105 @@ fun SheetDetailScreen(
     }
 
     if (renameOpen && !readOnly) {
-        AlertDialog(
-            onDismissRequest = {
+        fun commitRename() {
+            val name = renameText.trim()
+            if (name.isEmpty()) {
+                toast(appCtx, "Enter a file name.")
+                return
+            }
+            val id = openFile?.id ?: fileId
+            renameOpen = false
+            renameText = ""
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) { store.renameFile(id, name) }
+                toast(appCtx, if (ok) "File renamed." else "Unable to rename. Please try again.")
+            }
+        }
+        SheetModal(
+            onDismiss = {
                 renameOpen = false
                 renameText = ""
             },
-            title = { Text("Rename file") },
-            text = {
-                OutlinedTextField(
-                    value = renameText,
-                    onValueChange = { renameText = it },
-                    label = { Text("File name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+            widthDp = 320,
+            title = "Rename file"
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                SheetNameInput(value = renameText, onValueChange = { renameText = it }, onDone = { commitRename() })
+                Spacer(modifier = Modifier.size(12.dp))
+                SheetModalFooter(
+                    onCancel = {
+                        renameOpen = false
+                        renameText = ""
+                    },
+                    onConfirm = { commitRename() },
+                    confirmText = "Rename"
                 )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val name = renameText.trim()
-                        if (name.isEmpty()) {
-                            toast(appCtx, "Enter a file name.")
-                            return@TextButton
-                        }
-                        val id = openFile?.id ?: fileId
-                        renameOpen = false
-                        renameText = ""
-                        scope.launch {
-                            val ok = withContext(Dispatchers.IO) { store.renameFile(id, name) }
-                            toast(appCtx, if (ok) "File renamed." else "Unable to rename. Please try again.")
-                        }
-                    }
-                ) { Text("Rename") }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        renameOpen = false
-                        renameText = ""
-                    }
-                ) { Text("Cancel") }
             }
-        )
+        }
     }
 
     if (confirmClearSelection) {
-        AlertDialog(
-            onDismissRequest = { confirmClearSelection = false },
-            title = { Text("Clear selected cells?") },
-            text = { Text("This can be undone.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val items = selectedItems
-                        confirmClearSelection = false
-                        io { store.clearCells(items) }
-                        val sel = selectedCell
-                        if (sel != null && items.contains(sel)) draft = ""
-                    }
-                ) { Text("Clear", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClearSelection = false }) { Text("Cancel") }
+        SheetConfirm(
+            onDismiss = { confirmClearSelection = false },
+            message = "Clear selected cells? This can be undone.",
+            actionText = "Clear",
+            onConfirm = {
+                val items = selectedItems
+                confirmClearSelection = false
+                io { store.clearCells(items) }
+                val sel = selectedCell
+                if (sel != null && items.contains(sel)) draft = ""
             }
         )
     }
 
     if (confirmDeleteDead) {
         val n = rows.count { it.status == "bad" || it.dead }
-        AlertDialog(
-            onDismissRequest = { confirmDeleteDead = false },
-            title = { Text("Delete $n inactive row" + if (n == 1) "?" else "s?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmDeleteDead = false
-                        scope.launch {
-                            val removed = withContext(Dispatchers.IO) { store.deleteDeadRows() }
-                            toast(
-                                appCtx,
-                                if (removed > 0) "Deleted $removed inactive row" + if (removed == 1) "." else "s."
-                                else "No inactive rows to delete."
-                            )
-                        }
-                    }
-                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDeleteDead = false }) { Text("Cancel") }
+        SheetConfirm(
+            onDismiss = { confirmDeleteDead = false },
+            message = "Delete $n inactive row" + if (n == 1) "?" else "s?",
+            actionText = "Delete",
+            onConfirm = {
+                confirmDeleteDead = false
+                scope.launch {
+                    val removed = withContext(Dispatchers.IO) { store.deleteDeadRows() }
+                    toast(
+                        appCtx,
+                        if (removed > 0) "Deleted $removed inactive row" + if (removed == 1) "." else "s."
+                        else "No inactive rows to delete."
+                    )
+                }
             }
         )
     }
 
     if (confirmRestore) {
-        AlertDialog(
-            onDismissRequest = { confirmRestore = false },
-            title = { Text("Restore the last saved version?") },
-            text = { Text("Replaces unsaved changes. Current state stays in Undo.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmRestore = false
-                        scope.launch {
-                            val ok = withContext(Dispatchers.IO) { store.restoreSnapshot() }
-                            toast(
-                                appCtx,
-                                if (ok) "Restored. Changes kept in Undo."
-                                else "No earlier save to restore yet."
-                            )
-                        }
-                    }
-                ) { Text("Restore") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmRestore = false }) { Text("Cancel") }
+        SheetConfirm(
+            onDismiss = { confirmRestore = false },
+            message = "Restore the last saved version? Unsaved changes will be replaced. Your current state will remain in Undo.",
+            actionText = "Restore",
+            onConfirm = {
+                confirmRestore = false
+                scope.launch {
+                    val ok = withContext(Dispatchers.IO) { store.restoreSnapshot() }
+                    toast(
+                        appCtx,
+                        if (ok) "Previous version restored. Your changes remain in Undo."
+                        else "No earlier save to restore yet."
+                    )
+                }
             }
         )
     }
 
     if (confirmCompact) {
-        AlertDialog(
-            onDismissRequest = { confirmCompact = false },
-            title = { Text("Remove empty rows between used rows to compact the sheet?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmCompact = false
-                        io { store.compactRows() }
-                    }
-                ) { Text("Compact", fontSize = 13.sp, fontWeight = FontWeight.Medium) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmCompact = false }) { Text("Cancel") }
+        SheetConfirm(
+            onDismiss = { confirmCompact = false },
+            message = "Remove empty rows between used rows to compact the sheet?",
+            actionText = "Compact",
+            onConfirm = {
+                confirmCompact = false
+                io { store.compactRows() }
             }
         )
     }
@@ -1314,64 +1280,54 @@ fun SheetDetailScreen(
     val selPick = selectedCell
     if (pick != null && selPick != null) {
         val cur = styles[styleKey(selPick.first, selPick.second)]
-        AlertDialog(
-            onDismissRequest = { picker = null },
-            title = {
-                Text(
-                    text = if (pick == "text") "TEXT COLOR" else "CELL FILL",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    if (pick == "fill") {
-                        TextButton(
-                            onClick = {
-                                val next = (cur ?: CellStyle()).copy(bg = null)
-                                val clean = if (next.bg == null && next.color == null && !next.bold) null else next
-                                io { store.setStyle(selPick.first, selPick.second, clean) }
-                                picker = null
-                            }
-                        ) { Text("No fill") }
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-                    ) {
-                        for (hex in PALETTE) {
-                            val c = parseHexColor(hex) ?: Color.Black
-                            val active = if (pick == "text") cur?.color == hex else cur?.bg == hex
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(32.dp)
-                                    .background(c)
-                                    .border(
-                                        width = if (active) 2.dp else 0.dp,
-                                        color = if (active) MaterialTheme.colorScheme.onSurface else Color.Transparent
-                                    )
-                                    .combinedClickable(
-                                        onClick = {
-                                            val base = cur ?: CellStyle()
-                                            val next = if (pick == "text") base.copy(color = hex) else base.copy(bg = hex)
-                                            io { store.setStyle(selPick.first, selPick.second, next) }
-                                            picker = null
-                                        }
-                                    )
-                            )
+        SheetModal(
+            onDismiss = { picker = null },
+            widthDp = 320,
+            title = if (pick == "text") "TEXT COLOR" else "CELL FILL",
+            miniTitle = true
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (pick == "fill") {
+                    TextButton(
+                        onClick = {
+                            val next = (cur ?: CellStyle()).copy(bg = null)
+                            val clean = if (next.bg == null && next.color == null && !next.bold) null else next
+                            io { store.setStyle(selPick.first, selPick.second, clean) }
+                            picker = null
                         }
+                    ) { Text("No fill") }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                ) {
+                    for (hex in PALETTE) {
+                        val c = parseHexColor(hex) ?: Color.Black
+                        val active = if (pick == "text") cur?.color == hex else cur?.bg == hex
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(32.dp)
+                                .background(c)
+                                .border(
+                                    width = if (active) 2.dp else 0.dp,
+                                    color = if (active) MaterialTheme.colorScheme.onSurface else Color.Transparent
+                                )
+                                .combinedClickable(
+                                    onClick = {
+                                        val base = cur ?: CellStyle()
+                                        val next = if (pick == "text") base.copy(color = hex) else base.copy(bg = hex)
+                                        io { store.setStyle(selPick.first, selPick.second, next) }
+                                        picker = null
+                                    }
+                                )
+                        )
                     }
                 }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { picker = null }) { Text("Close") }
             }
-        )
+        }
     }
 }
 
