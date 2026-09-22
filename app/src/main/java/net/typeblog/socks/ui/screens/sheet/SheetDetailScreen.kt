@@ -143,7 +143,7 @@ fun SheetDetailScreen(
     val columns = openFile?.preset?.columns ?: emptyList()
     val visibleCols = remember(columns, hidden) { columns.filter { !hidden.contains(it.key) } }
 
-    val dupRows = remember(rows) { store.dupRows() }
+    val crossDups by store.openCrossDups.collectAsState()
 
     var selectedCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var draft by remember { mutableStateOf("") }
@@ -185,10 +185,8 @@ fun SheetDetailScreen(
 
     fun doCheck() {
         if (checking) return
-        if (!readOnly && dupRows.isNotEmpty()) {
-            toast(appCtx, "Remove duplicates first.")
-            return
-        }
+        // Cross-file duplicates flag yellow but never block the check
+        // (in-file duplicates can never exist — they are blocked at entry).
         // Website parity (fbcookie checkAccounts throws "No UIDs found."):
         // the Check button is disabled with no checkable row, this is the
         // double-tap / keyboard-path guard for the same state.
@@ -223,13 +221,9 @@ fun SheetDetailScreen(
         }
         val value = draft
         if (row.cell(ck) == value) return
-        if ((ck == "uid" || ck == "cookies") && value.isNotEmpty()) {
-            val dup = rows.any { it.rowIdx != ri && it.cell(ck) == value }
-            if (dup) {
-                toast(appCtx, "Duplicate. Use a unique value.")
-                return
-            }
-        }
+        // Blocked, never marked: duplicates and bad 2fa keys are rejected
+        // up front with the exact reason, so no indicator is needed.
+        store.rejectReason(ri, ck, value)?.let { toast(appCtx, it); return }
         // Website parity (fbcookie.ts onCellChange): warn when the uid does
         // not match the cookie's c_user instead of silently storing a lie.
         if (ck == "cookies" && row.uid.isNotEmpty()) {
@@ -246,7 +240,37 @@ fun SheetDetailScreen(
         }
         scope.launch {
             val ok = withContext(Dispatchers.IO) { store.setCell(ri, ck, value) }
-            if (!ok) toast(appCtx, "Duplicate value. Please use a unique value.")
+            if (!ok) {
+                toast(appCtx, "Couldn't save. Please try again.")
+            } else if (ck == "cookies") {
+                maybeAutoCheck(ck)
+            }
+        }
+    }
+
+    // Website parity (sheetStore maybeAutoCheck): committing a cookie with
+    // the UID toggle on runs the whole-file UID check, chaining after a
+    // running check instead of overlapping it.
+    var pendingAutoCheck by remember { mutableStateOf(false) }
+
+    fun autoCheckArmed(): Boolean =
+        !readOnly &&
+            (autoCheck || (openFile?.preset == SheetPreset.PAGE && (simpleCheck || advancedCheck)))
+
+    fun maybeAutoCheck(colKey: String) {
+        if (colKey != "cookies") return
+        if (checking) {
+            if (autoCheckArmed()) pendingAutoCheck = true
+            return
+        }
+        if (!autoCheckArmed()) return
+        doCheck()
+    }
+
+    LaunchedEffect(checking) {
+        if (!checking && pendingAutoCheck) {
+            pendingAutoCheck = false
+            if (autoCheckArmed()) doCheck()
         }
     }
 
@@ -471,7 +495,7 @@ fun SheetDetailScreen(
                         (r.uid.isNotEmpty() || extractCUser(r.cookies) != null)
                 }
             }
-            val checkEnabled = !checking && (readOnly || dupRows.isEmpty()) && hasUidToCheck
+            val checkEnabled = !checking && hasUidToCheck
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -815,10 +839,13 @@ fun SheetDetailScreen(
                     }
                 }
                 items(rows, key = { it.rowIdx }) { row ->
-                    val isDup = dupRows.contains(row.rowIdx)
+                    // Cross-file dup is per cell now: a row may flag only its
+                    // cookie, only its 2fa, or everything. Dots stay on the
+                    // account status and never change for duplicates.
+                    val rowHasDup = crossDups.any { it.first == row.rowIdx }
                     val statusColor: Color? = when {
                         row.dead || row.status == "bad" -> DeadRed
-                        isDup -> StatusYellow
+                        rowHasDup -> StatusYellow
                         row.status == "eligible" -> PageBlue
                         row.status == "good" || row.status == "done" -> AliveGreen
                         else -> null
@@ -855,6 +882,7 @@ fun SheetDetailScreen(
                             val selKey = Pair(row.rowIdx, col.key)
                             val isActive = selectedCell == selKey && !selectionMode
                             val isMulti = selectedItems.contains(selKey)
+                            val isDup = crossDups.contains(selKey)
                             val customBg = parseHexColor(st?.bg)
                             val fg = parseHexColor(st?.color)
                             val cellBg: Color = when {
@@ -862,13 +890,13 @@ fun SheetDetailScreen(
                                 isMulti -> MaterialTheme.colorScheme.surfaceVariant
                                 row.hold && statusColor != null -> statusColor
                                 row.approved && statusColor != null -> statusColor
-                                isDup && (col.key == "uid" || col.key == "cookies") -> StatusYellow.copy(alpha = 0.15f)
+                                isDup -> StatusYellow.copy(alpha = 0.15f)
                                 else -> Color.Transparent
                             }
                             val cellBorder: Color = when {
                                 isActive -> MaterialTheme.colorScheme.onSurface
                                 isMulti -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                                isDup && (col.key == "uid" || col.key == "cookies") -> StatusYellow
+                                isDup -> StatusYellow
                                 else -> MaterialTheme.colorScheme.outlineVariant
                             }
                             Box(
@@ -923,11 +951,20 @@ fun SheetDetailScreen(
                                                     if (pasted.isEmpty()) {
                                                         toast(appCtx, "Clipboard is empty.")
                                                     } else {
-                                                        selectedCell = selKey
-                                                        draft = pasted
-                                                        scope.launch {
-                                                            val ok = withContext(Dispatchers.IO) { store.setCell(selKey.first, selKey.second, pasted) }
-                                                            if (!ok) toast(appCtx, "Duplicate value. Please use a unique value.")
+                                                        val reason = store.rejectReason(selKey.first, selKey.second, pasted)
+                                                        if (reason != null) {
+                                                            toast(appCtx, reason)
+                                                        } else {
+                                                            selectedCell = selKey
+                                                            draft = pasted
+                                                            scope.launch {
+                                                                val ok = withContext(Dispatchers.IO) { store.setCell(selKey.first, selKey.second, pasted) }
+                                                                if (!ok) {
+                                                                    toast(appCtx, "Couldn't save. Please try again.")
+                                                                } else if (selKey.second == "cookies") {
+                                                                    maybeAutoCheck(selKey.second)
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -987,7 +1024,7 @@ fun SheetDetailScreen(
                             StatusDot(
                                 status = row.status,
                                 dead = row.dead,
-                                isDup = isDup
+                                isDup = false
                             )
                         }
                     }
@@ -1220,9 +1257,21 @@ fun SheetDetailScreen(
                                         if (pasted.isEmpty()) {
                                             toast(appCtx, "Clipboard is empty.")
                                         } else {
-                                            draft = pasted
-                                            val ok = withContext(Dispatchers.IO) { store.setCell(sel.first, sel.second, pasted) }
-                                            if (!ok) toast(appCtx, "Duplicate value. Please use a unique value.")
+                                            // Skip the auto-check when the paste changes
+                                            // nothing — same-value writes need no re-check.
+                                            val changed = rows.getOrNull(sel.first)?.cell(sel.second) != pasted
+                                            val reason = if (changed) store.rejectReason(sel.first, sel.second, pasted) else null
+                                            if (reason != null) {
+                                                toast(appCtx, reason)
+                                            } else {
+                                                draft = pasted
+                                                val ok = withContext(Dispatchers.IO) { store.setCell(sel.first, sel.second, pasted) }
+                                                if (!ok) {
+                                                    toast(appCtx, "Couldn't save. Please try again.")
+                                                } else if (changed && sel.second == "cookies") {
+                                                    maybeAutoCheck(sel.second)
+                                                }
+                                            }
                                         }
                                     }
                                 },

@@ -27,6 +27,10 @@ class SheetStore private constructor(context: Context) {
     val openRows = MutableStateFlow<List<SheetRow>>(emptyList())
     val openStyles = MutableStateFlow<Map<String, CellStyle>>(emptyMap())
     val openHidden = MutableStateFlow<Set<String>>(emptySet())
+    // Cross-file duplicate marks for the open file ((rowIdx, colKey) cells).
+    // Same-file repeats are blocked at entry — only collisions with OTHER
+    // files flag, per cell.
+    val openCrossDups = MutableStateFlow<Set<Pair<Int, String>>>(emptySet())
     val checking = MutableStateFlow(false)
 
     private val undoStack = ArrayDeque<List<SheetRow>>()
@@ -137,6 +141,7 @@ class SheetStore private constructor(context: Context) {
         openRows.value = topUp(db.loadRows(id).ifEmpty { emptyPad(f.preset) }, f.preset)
         openStyles.value = db.loadStyles(id)
         openHidden.value = db.loadHidden(id)
+        refreshCrossDups()
         return true
     }
 
@@ -145,6 +150,7 @@ class SheetStore private constructor(context: Context) {
         openRows.value = emptyList()
         openStyles.value = emptyMap()
         openHidden.value = emptySet()
+        openCrossDups.value = emptySet()
         undoStack.clear()
         redoStack.clear()
         canUndo.value = false
@@ -176,7 +182,46 @@ class SheetStore private constructor(context: Context) {
         }
         openFile.value = db.getFile(f.id)
         openRows.value = rows
+        refreshCrossDups(rows)
         refresh()
+    }
+
+    // Recomputes cross-file dup marks. Callers already run on Dispatchers.IO
+    // (open/persist paths), so the cross-file scan stays off the main thread.
+    private fun refreshCrossDups(rows: List<SheetRow> = openRows.value) {
+        val f = openFile.value ?: run {
+            openCrossDups.value = emptySet()
+            return
+        }
+        openCrossDups.value = try {
+            db.crossDupCells(f.id, rows)
+        } catch (e: Exception) {
+            emptySet()
+        }
+    }
+
+    // In-file duplicates are blocked, never marked: there is no yellow
+    // indicator because a duplicate value can never be saved. Returns the
+    // exact message to show when the value must be rejected, null when OK.
+    // (Locked rows are messaged by the caller, so they pass here.)
+    fun rejectReason(rowIdx: Int, colKey: String, value: String): String? {
+        val rows = openRows.value
+        val cur = rows.getOrNull(rowIdx) ?: return "Couldn't save. Please try again."
+        if (cur.locked) return null
+        if (cur.cell(colKey) == value) return null
+        if (colKey == "twofakey" && value.isNotEmpty() && !isValidTwoFaKey(value)) {
+            return "Invalid 2fa key."
+        }
+        if ((colKey == "uid" || colKey == "cookies" || colKey == "twofakey") && value.isNotEmpty() &&
+            rows.any { it.rowIdx != rowIdx && it.cell(colKey) == value }
+        ) {
+            return "Duplicate " + when (colKey) {
+                "cookies" -> "cookie."
+                "twofakey" -> "2fa."
+                else -> "uid."
+            }
+        }
+        return null
     }
 
     fun setCell(rowIdx: Int, colKey: String, value: String): Boolean {
@@ -186,21 +231,18 @@ class SheetStore private constructor(context: Context) {
         val cur = rows[rowIdx]
         if (cur.locked) return false
         if (cur.cell(colKey) == value) return true
-        // Same-file duplicate guard on identity cells.
-        if ((colKey == "uid" || colKey == "cookies") && value.isNotEmpty()) {
-            val dup = rows.any { it.rowIdx != rowIdx && it.cell(colKey) == value }
-            if (dup) return false
-        }
+        if (rejectReason(rowIdx, colKey, value) != null) return false
         // Website parity (fbcookie.ts onCellChange): pasting/typing a cookie
         // auto-fills the uid cell from c_user when the uid is still empty.
         // Centralized here so every entry point (formula bar, double-tap
-        // paste, quick paste button) gets it. Skips the fill when it would
-        // create a duplicate uid instead of blocking the cookie write.
+        // paste, quick paste button) gets it.
         if (colKey == "cookies" && cur.uid.isEmpty()) {
             val extracted = extractCUser(value)
             if (!extracted.isNullOrEmpty()) {
-                val uidDup = rows.any { it.rowIdx != rowIdx && it.uid == extracted }
-                if (!uidDup) {
+                // The cookie itself is new, but its c_user may already be
+                // another row's uid: then fill nothing rather than create a
+                // duplicate uid (duplicates can never be saved).
+                if (rows.none { it.rowIdx != rowIdx && it.uid == extracted }) {
                     pushUndo()
                     rows[rowIdx] = cur.withCell(colKey, value).withCell("uid", extracted)
                     persistRows(topUp(rows, f.preset), "edit")
@@ -342,17 +384,21 @@ class SheetStore private constructor(context: Context) {
                     if (!r.isData(cols) || r.locked) {
                         r
                     } else if (r.cookies.isNotEmpty() && effUid(r).isNotEmpty()) {
+                        // Dead wins over everything: a dead UID overwrites
+                        // even "eligible" — never alive, never page, just dead.
+                        // A live UID never downgrades "eligible" back to
+                        // "good" (eligible rows are never page-checked again).
                         if (verdict == null) {
                             if (isValidUid(effUid(r))) {
                                 valid++
-                                r.copy(status = "good", dead = false)
+                                r.copy(status = if (r.status == "eligible") "eligible" else "good", dead = false)
                             } else {
                                 dead++
                                 r.copy(status = "bad", dead = true)
                             }
                         } else if (!verdict.contains(effUid(r))) {
                             valid++
-                            r.copy(status = "good", dead = false)
+                            r.copy(status = if (r.status == "eligible") "eligible" else "good", dead = false)
                         } else {
                             dead++
                             r.copy(status = "bad", dead = true)
@@ -367,10 +413,18 @@ class SheetStore private constructor(context: Context) {
             }
             // 2. Page sweeps: direct per-row scrapes, sequential like the
             // worker (first 25 candidates per run to avoid rate limits).
+            // Eligible rows are never swept again — once eligible, only a
+            // dead UID verdict (above) can move them. With the UID check
+            // off, fresh unchecked rows are swept directly so a new cookie
+            // is still page-checked.
             if (isPageFile && (simpleOn || advancedOn)) {
+                fun effUid(r: SheetRow): String = r.uid.ifEmpty {
+                    Regex("c_user=(\\d+)").find(r.cookies)?.groupValues?.get(1) ?: ""
+                }
                 val cands = rows.filter { r ->
-                    r.isData(cols) && !r.locked && r.status == "good" &&
-                        "c_user=" in r.cookies && !r.approved && !r.hold && !r.dead
+                    r.isData(cols) && !r.locked && !r.approved && !r.hold && !r.dead &&
+                        "c_user=" in r.cookies && effUid(r).isNotEmpty() &&
+                        (r.status == "good" || (!uidOn && (r.status.isEmpty() || r.status == "pending")))
                 }.take(25)
                 var updated = rows
                 for (r in cands) {
@@ -400,23 +454,6 @@ class SheetStore private constructor(context: Context) {
             checking.value = false
             done(valid, dead)
         }
-    }
-
-    fun dupRows(): Set<Int> {
-        val seen = mutableMapOf<String, Int>()
-        val dups = mutableSetOf<Int>()
-        for (r in openRows.value) {
-            for (key in listOf("uid", "cookies")) {
-                val v = r.cell(key)
-                if (v.isEmpty()) continue
-                val first = seen.putIfAbsent("$key:$v", r.rowIdx)
-                if (first != null) {
-                    dups.add(first)
-                    dups.add(r.rowIdx)
-                }
-            }
-        }
-        return dups
     }
 
     fun requestWithdraw(amount: Double, method: String, account: String): Boolean {

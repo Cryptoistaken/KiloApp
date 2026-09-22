@@ -161,6 +161,44 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 1)
         }
     }
 
+    // Cross-file duplicates: open-file (rowIdx, colKey) cells whose uid,
+    // cookies or 2fa key also occur in any OTHER file. Same-file repeats
+    // are blocked at entry, so only cross-file collisions flag yellow —
+    // per cell, so a row may flag only its cookie, only its 2fa, or all.
+    fun crossDupCells(excludeFileId: String, rows: List<SheetRow>): Set<Pair<Int, String>> {
+        val byCol = mapOf(
+            "uid" to rows.mapNotNull { it.uid.ifEmpty { null } }.toSet(),
+            "cookies" to rows.mapNotNull { it.cookies.ifEmpty { null } }.toSet(),
+            "twofakey" to rows.mapNotNull { it.twofakey.ifEmpty { null } }.toSet()
+        )
+        if (byCol.values.all { it.isEmpty() }) return emptySet()
+        val hits = mutableMapOf<String, MutableSet<String>>()
+        for ((col, values) in byCol) {
+            if (values.isEmpty()) continue
+            val out = hits.getOrPut(col) { mutableSetOf() }
+            // SQLite bind-variable limit: chunk the IN lists.
+            for (chunk in values.chunked(400)) {
+                val q = chunk.joinToString(",") { "?" }
+                readableDatabase.rawQuery(
+                    "SELECT DISTINCT $col FROM rows WHERE fileId != ? AND $col IN ($q)",
+                    arrayOf(excludeFileId) + chunk.toTypedArray()
+                ).use { c ->
+                    while (c.moveToNext()) {
+                        c.getString(0)?.let { out.add(it) }
+                    }
+                }
+            }
+        }
+        if (hits.values.all { it.isEmpty() }) return emptySet()
+        return buildSet {
+            for (r in rows) {
+                if (r.uid in (hits["uid"] ?: emptySet())) add(Pair(r.rowIdx, "uid"))
+                if (r.cookies in (hits["cookies"] ?: emptySet())) add(Pair(r.rowIdx, "cookies"))
+                if (r.twofakey in (hits["twofakey"] ?: emptySet())) add(Pair(r.rowIdx, "twofakey"))
+            }
+        }
+    }
+
     fun loadStyles(fileId: String): Map<String, CellStyle> {
         val out = mutableMapOf<String, CellStyle>()
         readableDatabase.rawQuery(

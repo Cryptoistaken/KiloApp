@@ -118,3 +118,12 @@ fun isValidUid(uid: String): Boolean = uid.trim().matches(Regex("\\d{4,}"))
 
 fun extractCUser(cookies: String): String? =
     Regex("c_user=(\\d+)").find(cookies)?.groupValues?.get(1)
+
+// Website parity (filetypes/validation.ts): a 2FA key is base32 —
+// A-Z and 2-7 only, spaces/dashes ignored, at least 10 chars. The
+// example shape T6XCY37NZMGVTFWHQ2546MGRXOTCSBDQ (32 chars) is just one
+// length; shorter or longer keys are fine as long as they decode.
+fun isValidTwoFaKey(raw: String): Boolean {
+    val s = raw.replace(" ", "").replace("-", "").uppercase()
+    return s.length >= 10 && s.matches(Regex("[A-Z2-7]+"))
+}
