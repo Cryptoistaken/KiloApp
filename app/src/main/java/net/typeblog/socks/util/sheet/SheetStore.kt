@@ -204,6 +204,17 @@ class SheetStore private constructor(context: Context) {
         persistRows(rows, "add-row")
     }
 
+    // Infinite scroll: append empty rows when the user nears the end.
+    fun growRows(count: Int) {
+        val f = openFile.value ?: return
+        if (count <= 0) return
+        pushUndo()
+        val rows = openRows.value + (openRows.value.size until openRows.value.size + count).map {
+            SheetRow(rowIdx = it)
+        }
+        persistRows(rows, "grow")
+    }
+
     fun clearCells(cells: Set<Pair<Int, String>>) {
         val f = openFile.value ?: return
         val rows = openRows.value.toMutableList()

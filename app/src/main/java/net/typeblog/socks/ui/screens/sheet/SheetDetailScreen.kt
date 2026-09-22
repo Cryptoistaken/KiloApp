@@ -9,7 +9,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -93,13 +94,6 @@ private fun parseHexColor(hex: String?): Color? {
 }
 
 private fun styleKey(rowIdx: Int, colKey: String): String = "$rowIdx:$colKey"
-
-private fun colWidthDp(colKey: String): androidx.compose.ui.unit.Dp = when (colKey) {
-    "cookies" -> 180.dp
-    "twofakey" -> 140.dp
-    "uid" -> 100.dp
-    else -> 140.dp
-}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -169,6 +163,23 @@ fun SheetDetailScreen(
 
     fun io(block: suspend () -> Unit) {
         scope.launch { withContext(Dispatchers.IO) { block() } }
+    }
+
+    // Row count + auto-grow: when the user scrolls within 6 rows of the end,
+    // append 10 more (scroll-gated so idle rest adds nothing).
+    val gridState = rememberLazyListState()
+    LaunchedEffect(fileId, readOnly) {
+        snapshotFlow {
+            gridState.isScrollInProgress to
+                (gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1)
+        }.collect { (scrolling, lastIdx) ->
+            if (readOnly || !scrolling || lastIdx < 0) return@collect
+            val total = store.openRows.value.size
+            if (lastIdx >= total - 6) io { store.growRows(10) }
+        }
+    }
+    val dataCount = remember(rows, columns) {
+        if (columns.isEmpty()) 0 else rows.count { it.isData(columns) }
     }
 
     fun doCheck() {
@@ -333,7 +344,14 @@ fun SheetDetailScreen(
                 .padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = onBack) { Text("Back") }
+            IconButton(onClick = onBack) {
+                Icon(
+                    painter = painterResource(R.drawable.lucide_arrow_left),
+                    contentDescription = "Back",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
             val fname = openFile?.name ?: "Sheet"
             if (readOnly) {
                 Text(
@@ -687,12 +705,16 @@ fun SheetDetailScreen(
                 )
             }
         } else {
-            LazyColumn(
+            androidx.compose.foundation.layout.BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
             ) {
+                val fitW = (maxWidth - 72.dp) / visibleCols.size.coerceAtLeast(1)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    state = gridState
+                ) {
                 stickyHeader {
                     Row(
                         modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
@@ -708,7 +730,7 @@ fun SheetDetailScreen(
                         for (col in visibleCols) {
                             Box(
                                 modifier = Modifier
-                                    .width(colWidthDp(col.key))
+                                    .width(fitW)
                                     .height(36.dp)
                                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                     .padding(horizontal = 8.dp),
@@ -785,7 +807,7 @@ fun SheetDetailScreen(
                             }
                             Box(
                                 modifier = Modifier
-                                    .width(colWidthDp(col.key))
+                                    .width(fitW)
                                     .height(36.dp)
                                     .border(1.dp, cellBorder)
                                     .background(cellBg)
@@ -922,13 +944,14 @@ fun SheetDetailScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Add row",
+                                text = "Add row" + if (dataCount > 0) " · $dataCount rows" else "",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
+                }
                 }
             }
         }
