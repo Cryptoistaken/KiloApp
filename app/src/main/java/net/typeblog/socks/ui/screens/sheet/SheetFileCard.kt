@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.IconButton
@@ -46,7 +48,8 @@ fun SheetFileCard(
     onToggleSelect: () -> Unit,
     onDownload: () -> Unit,
     onRename: () -> Unit,
-    onArchive: () -> Unit
+    onArchive: () -> Unit,
+    list: Boolean = false
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Card(
@@ -66,132 +69,104 @@ fun SheetFileCard(
         shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .combinedClickable(
                     onClick = { if (selectionMode) onToggleSelect() else onOpen() },
                     onLongClick = { onToggleSelect() }
                 )
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(14.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                FileIconTile(preset = file.preset)
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 8.dp)
+            if (list) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(end = 28.dp)
                 ) {
-                    Text(
-                        text = file.name,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    val ts = fmtDate(if (file.updatedAt > 0) file.updatedAt else file.createdAt)
-                    if (ts.isNotEmpty()) {
+                    FileIconTile(preset = file.preset, tileDp = 36)
+                    Column(modifier = Modifier.widthIn(min = 80.dp).weight(1f)) {
                         Text(
-                            text = ts,
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = file.name,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        val ts = fmtDate(if (file.updatedAt > 0) file.updatedAt else file.createdAt)
+                        if (ts.isNotEmpty()) {
+                            Text(text = ts, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        FileIndicators(file)
+                    }
+                    TypeBadgePill({
+                        Image(painter = painterResource(R.drawable.ic_ss_facebook), contentDescription = null, modifier = Modifier.size(10.dp))
+                    })
+                    TypeBadgePill({ PasswordBadge(password = file.password) })
                 }
-                if (selected) {
-                    Image(
-                        painter = painterResource(R.drawable.ic_ss_check),
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                }
-                TypeBadgePill({
-                    Image(
-                        painter = painterResource(R.drawable.ic_ss_facebook),
-                        contentDescription = null,
-                        modifier = Modifier.size(10.dp)
-                    )
-                })
-                Spacer(modifier = Modifier.width(4.dp))
-                TypeBadgePill({ PasswordBadge(password = file.password) })
-                if (!selectionMode) {
-                    Box {
-                        IconButton(
-                            onClick = { menuOpen = true },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Image(
-                                painter = painterResource(R.drawable.ic_ss_more),
-                                contentDescription = "More actions",
-                                modifier = Modifier.size(14.dp),
-                                colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(end = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FileIconTile(preset = file.preset)
+                    Row(verticalAlignment = Alignment.Top) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = file.name,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
+                            val ts = fmtDate(if (file.updatedAt > 0) file.updatedAt else file.createdAt)
+                            if (ts.isNotEmpty()) {
+                                Text(text = ts, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
-                        androidx.compose.material3.DropdownMenu(
-                            expanded = menuOpen,
-                            onDismissRequest = { menuOpen = false }
-                        ) {
-                            SheetMenuItem(
-                                icon = R.drawable.ic_ss_square,
-                                label = if (selected) "Deselect" else "Select",
-                                onClick = {
-                                    menuOpen = false
-                                    onToggleSelect()
-                                }
-                            )
-                            SheetMenuItem(
-                                icon = R.drawable.ic_ss_download,
-                                label = "Download",
-                                onClick = {
-                                    menuOpen = false
-                                    onDownload()
-                                }
-                            )
-                            SheetMenuItem(
-                                icon = R.drawable.ic_ss_pencil,
-                                label = "Rename",
-                                onClick = {
-                                    menuOpen = false
-                                    onRename()
-                                }
-                            )
-                            SheetMenuItem(
-                                icon = R.drawable.ic_ss_trash,
-                                label = "Move to archive",
-                                danger = true,
-                                onClick = {
-                                    menuOpen = false
-                                    onArchive()
-                                }
-                            )
-                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        TypeBadgePill({
+                            Image(painter = painterResource(R.drawable.ic_ss_facebook), contentDescription = null, modifier = Modifier.size(10.dp))
+                        })
+                        Spacer(modifier = Modifier.width(4.dp))
+                        TypeBadgePill({ PasswordBadge(password = file.password) })
+                    }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        FileIndicators(file)
                     }
                 }
             }
-            Spacer(modifier = Modifier.size(8.dp))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                IndicatorCell(
-                    color = rowsIndicatorColor(),
-                    label = file.rowCount.toString()
+            if (selected) {
+                Image(
+                    painter = painterResource(R.drawable.ic_ss_check),
+                    contentDescription = null,
+                    modifier = Modifier.align(Alignment.TopStart).size(14.dp)
                 )
-                if (file.liveCount + file.deadCount > 0) {
-                    IndicatorCell(color = AliveGreen, label = file.liveCount.toString())
-                }
-                if (file.preset == SheetPreset.PAGE && file.pageCount > 0) {
-                    IndicatorCell(color = PageBlue, label = file.pageCount.toString())
-                }
-                if (file.liveCount + file.deadCount > 0) {
-                    IndicatorCell(color = DeadRed, label = file.deadCount.toString())
-                }
-                if (file.dupCount > 0) {
-                    IndicatorCell(color = DupYellow, label = file.dupCount.toString())
+            }
+            if (!selectionMode) {
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(24.dp)) {
+                        Image(
+                            painter = painterResource(R.drawable.ic_ss_more),
+                            contentDescription = "More actions",
+                            modifier = Modifier.size(14.dp),
+                            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(MaterialTheme.colorScheme.onSurfaceVariant)
+                        )
+                    }
+                    androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        SheetMenuItem(icon = R.drawable.ic_ss_square, label = if (selected) "Deselect" else "Select", onClick = { menuOpen = false; onToggleSelect() })
+                        SheetMenuItem(icon = R.drawable.ic_ss_download, label = "Download", onClick = { menuOpen = false; onDownload() })
+                        SheetMenuItem(icon = R.drawable.ic_ss_pencil, label = "Rename", onClick = { menuOpen = false; onRename() })
+                        SheetMenuItem(icon = R.drawable.ic_ss_trash, label = "Move to archive", danger = true, onClick = { menuOpen = false; onArchive() })
+                    }
                 }
             }
         }

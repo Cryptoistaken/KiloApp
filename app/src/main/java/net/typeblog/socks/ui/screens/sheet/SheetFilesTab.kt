@@ -241,7 +241,8 @@ fun SheetFilesTab(
                                 renameTarget = f
                                 renameText = f.name
                             },
-                            onArchive = { archiveTarget = f }
+                            onArchive = { archiveTarget = f },
+                            list = true
                         )
                     }
                 }

@@ -136,7 +136,7 @@ fun EmptySheetState(icon: Int, title: String, sub: String, modifier: Modifier = 
 
 fun fmtDate(ts: Long): String {
     if (ts <= 0) return ""
-    val f = java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.US)
+    val f = java.text.SimpleDateFormat("MMM d hh:mm a", java.util.Locale.US)
     return f.format(java.util.Date(ts))
 }
 
@@ -151,10 +151,10 @@ fun rowsIndicatorColor(): Color {
 }
 
 @Composable
-fun FileIconTile(preset: SheetPreset, modifier: Modifier = Modifier) {
+fun FileIconTile(preset: SheetPreset, modifier: Modifier = Modifier, tileDp: Int = 32) {
     Box(
         modifier = modifier
-            .size(32.dp)
+            .size(tileDp.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center

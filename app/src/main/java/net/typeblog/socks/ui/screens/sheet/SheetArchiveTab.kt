@@ -271,7 +271,7 @@ private fun SheetArchiveCard(
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (selected) {
-                MaterialTheme.colorScheme.surfaceVariant
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
             } else {
                 MaterialTheme.colorScheme.surface
             }
@@ -282,6 +282,7 @@ private fun SheetArchiveCard(
             else MaterialTheme.colorScheme.outlineVariant
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -302,7 +303,7 @@ private fun SheetArchiveCard(
                 ) {
                     Text(
                         text = file.name,
-                        style = MaterialTheme.typography.titleSmall,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -382,34 +383,37 @@ private fun SheetArchiveCard(
                 }
             }
             Spacer(modifier = Modifier.size(8.dp))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                ArchiveIndicatorCell(
-                    color = rowsIndicatorColor(),
-                    label = file.rowCount.toString()
+            Box(modifier = Modifier.fillMaxWidth()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(end = 52.dp)
+                ) {
+                    ArchiveIndicatorCell(
+                        color = rowsIndicatorColor(),
+                        label = file.rowCount.toString()
+                    )
+                    if (file.liveCount + file.deadCount > 0) {
+                        ArchiveIndicatorCell(color = AliveGreen, label = file.liveCount.toString())
+                    }
+                    if (file.preset == SheetPreset.PAGE && file.pageCount > 0) {
+                        ArchiveIndicatorCell(color = PageBlue, label = file.pageCount.toString())
+                    }
+                    if (file.liveCount + file.deadCount > 0) {
+                        ArchiveIndicatorCell(color = DeadRed, label = file.deadCount.toString())
+                    }
+                    if (file.dupCount > 0) {
+                        ArchiveIndicatorCell(color = DupYellow, label = file.dupCount.toString())
+                    }
+                }
+                Text(
+                    text = daysLeft(file.deletedAt).toString() + "d left",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 5.dp)
                 )
-                if (file.liveCount + file.deadCount > 0) {
-                    ArchiveIndicatorCell(color = AliveGreen, label = file.liveCount.toString())
-                }
-                if (file.preset == SheetPreset.PAGE && file.pageCount > 0) {
-                    ArchiveIndicatorCell(color = PageBlue, label = file.pageCount.toString())
-                }
-                if (file.liveCount + file.deadCount > 0) {
-                    ArchiveIndicatorCell(color = DeadRed, label = file.deadCount.toString())
-                }
-                if (file.dupCount > 0) {
-                    ArchiveIndicatorCell(color = DupYellow, label = file.dupCount.toString())
-                }
             }
-            Spacer(modifier = Modifier.size(6.dp))
-            Text(
-                text = daysLeft(file.deletedAt).toString() + "d left",
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
