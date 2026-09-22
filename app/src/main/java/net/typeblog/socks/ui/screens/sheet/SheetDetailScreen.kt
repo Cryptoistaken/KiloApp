@@ -211,6 +211,25 @@ fun SheetDetailScreen(
         }
     }
 
+    // Website parity (sheetStore maybeAutoCheck): committing a cookie with
+    // the UID toggle on runs the whole-file UID check, chaining after a
+    // running check instead of overlapping it.
+    var pendingAutoCheck by remember { mutableStateOf(false) }
+
+    fun autoCheckArmed(): Boolean =
+        !readOnly &&
+            (autoCheck || (openFile?.preset == SheetPreset.PAGE && (simpleCheck || advancedCheck)))
+
+    fun maybeAutoCheck(colKey: String) {
+        if (colKey != "cookies") return
+        if (checking) {
+            if (autoCheckArmed()) pendingAutoCheck = true
+            return
+        }
+        if (!autoCheckArmed()) return
+        doCheck()
+    }
+
     fun commitDraft() {
         val sel = selectedCell ?: return
         val (ri, ck) = sel
@@ -246,25 +265,6 @@ fun SheetDetailScreen(
                 maybeAutoCheck(ck)
             }
         }
-    }
-
-    // Website parity (sheetStore maybeAutoCheck): committing a cookie with
-    // the UID toggle on runs the whole-file UID check, chaining after a
-    // running check instead of overlapping it.
-    var pendingAutoCheck by remember { mutableStateOf(false) }
-
-    fun autoCheckArmed(): Boolean =
-        !readOnly &&
-            (autoCheck || (openFile?.preset == SheetPreset.PAGE && (simpleCheck || advancedCheck)))
-
-    fun maybeAutoCheck(colKey: String) {
-        if (colKey != "cookies") return
-        if (checking) {
-            if (autoCheckArmed()) pendingAutoCheck = true
-            return
-        }
-        if (!autoCheckArmed()) return
-        doCheck()
     }
 
     LaunchedEffect(checking) {
