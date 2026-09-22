@@ -1423,6 +1423,7 @@ private fun ColToggleBox(checked: Boolean) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SelBtn(label: String, onClick: () -> Unit) {
     Box(
