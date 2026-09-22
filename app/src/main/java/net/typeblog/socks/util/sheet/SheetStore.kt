@@ -151,14 +151,14 @@ class SheetStore private constructor(context: Context) {
         canRedo.value = false
     }
 
-    private fun emptyPad(preset: SheetPreset, n: Int = 20): List<SheetRow> {
+    private fun emptyPad(preset: SheetPreset, n: Int = 100): List<SheetRow> {
         val cols = preset.columns
         return List(n) { i -> SheetRow(rowIdx = i).let { r -> if (cols.isEmpty()) r else r } }
     }
 
     private fun topUp(rows: List<SheetRow>, preset: SheetPreset): List<SheetRow> {
         val lastData = rows.indexOfLast { it.isData(preset.columns) }
-        val want = (lastData + 11).coerceAtLeast(20)
+        val want = (lastData + 51).coerceAtLeast(100)
         if (rows.size >= want) return rows
         return rows + (rows.size until want).map { SheetRow(rowIdx = it) }
     }
@@ -197,22 +197,27 @@ class SheetStore private constructor(context: Context) {
         return true
     }
 
-    fun addRow() {
-        val f = openFile.value ?: return
+    fun addRow(): Boolean {
+        val f = openFile.value ?: return false
+        if (openRows.value.size >= MAX_GRID_ROWS) return false
         pushUndo()
         val rows = openRows.value + SheetRow(rowIdx = openRows.value.size)
         persistRows(rows, "add-row")
+        return true
     }
 
     // Infinite scroll: append empty rows when the user nears the end.
-    fun growRows(count: Int) {
-        val f = openFile.value ?: return
-        if (count <= 0) return
+    fun growRows(count: Int): Boolean {
+        val f = openFile.value ?: return false
+        val room = MAX_GRID_ROWS - openRows.value.size
+        if (room <= 0 || count <= 0) return false
         pushUndo()
-        val rows = openRows.value + (openRows.value.size until openRows.value.size + count).map {
+        val n = minOf(count, room)
+        val rows = openRows.value + (openRows.value.size until openRows.value.size + n).map {
             SheetRow(rowIdx = it)
         }
         persistRows(rows, "grow")
+        return true
     }
 
     fun clearCells(cells: Set<Pair<Int, String>>) {

@@ -939,7 +939,12 @@ fun SheetDetailScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .combinedClickable(onClick = { io { store.addRow() } })
+                                .combinedClickable(onClick = {
+                                    scope.launch {
+                                        val ok = withContext(Dispatchers.IO) { store.addRow() }
+                                        if (!ok) toast(appCtx, "Row limit reached. Maximum 500 rows allowed.")
+                                    }
+                                })
                                 .padding(vertical = 14.dp),
                             contentAlignment = Alignment.Center
                         ) {
