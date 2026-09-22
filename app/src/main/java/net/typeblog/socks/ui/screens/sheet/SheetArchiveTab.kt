@@ -200,8 +200,9 @@ fun SheetArchiveTab(
                 }
             }
         }
-        if (!selectionMode) {
-            Row(
+    }
+    if (!selectionMode) {
+        Row(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(16.dp)
