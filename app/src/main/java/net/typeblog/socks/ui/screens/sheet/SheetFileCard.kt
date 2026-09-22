@@ -117,7 +117,10 @@ fun SheetFileCard(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FileIconTile(preset = file.preset)
-                    Row(verticalAlignment = Alignment.Top) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
+                    ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = file.name,

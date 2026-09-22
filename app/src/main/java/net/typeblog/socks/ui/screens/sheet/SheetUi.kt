@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -99,7 +100,9 @@ fun PasswordBadge(password: String, modifier: Modifier = Modifier, sizeDp: Int =
             style = MaterialTheme.typography.labelSmall,
             fontSize = 10.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = modifier.widthIn(max = 60.dp)
         )
     }
 }
