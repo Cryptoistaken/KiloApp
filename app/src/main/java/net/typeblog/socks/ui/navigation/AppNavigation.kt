@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
@@ -84,6 +85,14 @@ fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+    // Persist the last bottom tab so background-kill (Navigation never
+    // restores its back stack after process death) returns to the same tab.
+    // Plain remember: survives rotation (no double restore) but resets on
+    // process death (restore runs exactly when needed).
+    val context = LocalContext.current
+    val appCtx = remember(context) { context.applicationContext }
+    val navPrefs = remember(appCtx) { androidx.preference.PreferenceManager.getDefaultSharedPreferences(appCtx) }
+    var tabRestored by remember { mutableStateOf(false) }
     val vpnViewModel: VpnViewModel = viewModel()
     var profilePickMode by rememberSaveable { mutableStateOf(false) }
     var countryPickMode by rememberSaveable { mutableStateOf(false) }
@@ -115,6 +124,25 @@ fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0) {
             }
             launchSingleTop = true
             restoreState = true
+        }
+    }
+
+    // Restore the last bottom tab once per process (see above).
+    LaunchedEffect(Unit) {
+        if (!tabRestored) {
+            tabRestored = true
+            val last = navPrefs.getString("last_tab_route", null)
+            if (last != null && last != Screen.Connect.route && bottomNavRoutes.contains(last)) {
+                navigateToTab(last)
+            }
+        }
+    }
+
+    // Remember the current bottom tab for the next cold start.
+    LaunchedEffect(currentDestination?.route) {
+        val r = currentDestination?.route
+        if (r != null && bottomNavRoutes.contains(r)) {
+            navPrefs.edit().putString("last_tab_route", r).apply()
         }
     }
 

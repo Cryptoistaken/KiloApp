@@ -35,8 +35,6 @@ import net.typeblog.socks.ui.screens.sheet.SheetWalletTab
 
 private enum class SheetTab { FILES, WALLET, ARCHIVE }
 
-private data class OpenSheet(val id: String, val archived: Boolean)
-
 /**
  * Sheet tab: My Files / Wallet / Archive for regular users (admins in the
  * app get the same user-only views). Matches the SheetSubmit website home
@@ -45,20 +43,24 @@ private data class OpenSheet(val id: String, val archived: Boolean)
 @Composable
 fun SheetScreen(modifier: Modifier = Modifier) {
     var tab by rememberSaveable { mutableStateOf(SheetTab.FILES) }
-    var open by rememberSaveable { mutableStateOf<OpenSheet?>(null) }
+    // Open file as saveable primitives: a custom data class in
+    // rememberSaveable crashes state save on backgrounding, which is why
+    // the app used to drop back to Home.
+    var openId by rememberSaveable { mutableStateOf<String?>(null) }
+    var openArchived by rememberSaveable { mutableStateOf(false) }
     var selecting by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = open != null) {
-        open = null
+    BackHandler(enabled = openId != null) {
+        openId = null
     }
 
-    val opened = open
-    if (opened != null) {
+    val openedId = openId
+    if (openedId != null) {
         SheetDetailScreen(
-            fileId = opened.id,
-            archived = opened.archived,
-            onBack = { open = null },
-            onRestoreArchived = { open = OpenSheet(it, false) },
+            fileId = openedId,
+            archived = openArchived,
+            onBack = { openId = null },
+            onRestoreArchived = { openId = it; openArchived = false },
             modifier = modifier.fillMaxSize()
         )
         return
@@ -103,13 +105,13 @@ fun SheetScreen(modifier: Modifier = Modifier) {
         }
         when (tab) {
             SheetTab.FILES -> SheetFilesTab(
-                onOpenFile = { open = OpenSheet(it, false) },
+                onOpenFile = { openId = it; openArchived = false },
                 onSelectionModeChange = { selecting = it },
                 modifier = Modifier.weight(1f)
             )
             SheetTab.WALLET -> SheetWalletTab(modifier = Modifier.weight(1f))
             SheetTab.ARCHIVE -> SheetArchiveTab(
-                onOpenArchived = { open = OpenSheet(it, true) },
+                onOpenArchived = { openId = it; openArchived = true },
                 onSelectionModeChange = { selecting = it },
                 modifier = Modifier.weight(1f)
             )
