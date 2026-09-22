@@ -270,6 +270,11 @@ Notes on the merged notification/dot pass:
 - `drawable/ic_sheet_test.xml`, `ic_sheet_edit.xml`, `ic_sheet_duplicate.xml`, `ic_sheet_delete.xml` (filled icons for the profile detail sheet rows)
 - `drawable/ic_notification_transparent.xml` (required invisible notification small icon)
 - `drawable/ic_copy.xml`, `ic_paste.xml` (fill icons for Copy/Paste, tinted to text color; no green)
+- `drawable/ic_ss_cursor.xml`, `ic_ss_rename.xml`, `ic_ss_download_file.xml`, `ic_ss_send.xml` (file-card menu icons: select cursor, rename pen, doc-download, share arrow)
+
+### Icon sourcing (applies to every new icon in this project)
+- Source priority: https://keylineicons.com (fill style) first, https://allsvgicons.com second. Never add an icon library/font dependency for single icons.
+- Convert the 24px `currentColor` SVG to `res/drawable/ic_ss_*.xml`: 24dp viewport, `#000000` fills/strokes, tinted at the use site (same pattern as the existing set).
 
 ### `sheetsubmit/` — admin-only website copy (no separate git history)
 - Copy of the SheetSubmit web project (Pages + backend + worker, minus

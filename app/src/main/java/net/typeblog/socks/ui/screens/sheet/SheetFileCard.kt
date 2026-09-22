@@ -46,6 +46,7 @@ fun SheetFileCard(
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onDownload: () -> Unit = {},
+    onSendCopy: () -> Unit = {},
     onRename: () -> Unit = {},
     onArchive: () -> Unit = {},
     list: Boolean = false,
@@ -166,7 +167,7 @@ fun SheetFileCard(
                         )
                     }
                     androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        SheetMenuItem(icon = R.drawable.ic_ss_square, label = if (selected) "Deselect" else "Select", onClick = { menuOpen = false; onToggleSelect() })
+                        SheetMenuItem(icon = R.drawable.ic_ss_cursor, label = if (selected) "Deselect" else "Select", onClick = { menuOpen = false; onToggleSelect() })
                         if (onRestore != null) {
                             SheetMenuItem(icon = R.drawable.ic_ss_restore, label = "Restore", onClick = { menuOpen = false; onRestore() })
                         }
@@ -174,9 +175,10 @@ fun SheetFileCard(
                             SheetMenuItem(icon = R.drawable.ic_ss_trash, label = "Delete forever", danger = true, onClick = { menuOpen = false; onDeleteForever() })
                         }
                         if (onRestore == null && onDeleteForever == null) {
-                            SheetMenuItem(icon = R.drawable.ic_ss_download, label = "Download", onClick = { menuOpen = false; onDownload() })
-                            SheetMenuItem(icon = R.drawable.ic_ss_pencil, label = "Rename", onClick = { menuOpen = false; onRename() })
-                            SheetMenuItem(icon = R.drawable.ic_ss_trash, label = "Move to archive", danger = true, onClick = { menuOpen = false; onArchive() })
+                            SheetMenuItem(icon = R.drawable.ic_ss_download_file, label = "Download", onClick = { menuOpen = false; onDownload() })
+                            SheetMenuItem(icon = R.drawable.ic_ss_send, label = "Send a copy", onClick = { menuOpen = false; onSendCopy() })
+                            SheetMenuItem(icon = R.drawable.ic_ss_rename, label = "Rename", onClick = { menuOpen = false; onRename() })
+                            SheetMenuItem(icon = R.drawable.ic_ss_archive_sel, label = "Archive", onClick = { menuOpen = false; onArchive() })
                         }
                     }
                 }

@@ -1,9 +1,14 @@
 package net.typeblog.socks.ui.screens.sheet
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -13,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -186,25 +192,46 @@ fun SheetMenuItem(
     danger: Boolean = false,
     onClick: () -> Unit
 ) {
-    androidx.compose.material3.DropdownMenuItem(
-        text = {
-            Text(
-                label,
-                color = if (danger) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurface
-            )
-        },
-        leadingIcon = {
+    // Website parity (FileCard file menu): compact rows — 24dp icon tile +
+    // 12sp medium label — instead of the tall stock dropdown items.
+    val tint = if (danger) MaterialTheme.colorScheme.error
+    else MaterialTheme.colorScheme.onSurface
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(
+                    if (danger) MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+                    else MaterialTheme.colorScheme.surfaceVariant
+                ),
+            contentAlignment = Alignment.Center
+        ) {
             Image(
                 painter = painterResource(icon),
                 contentDescription = null,
-                modifier = Modifier.size(14.dp),
-                colorFilter = if (danger) androidx.compose.ui.graphics.ColorFilter.tint(MaterialTheme.colorScheme.error)
-                else androidx.compose.ui.graphics.ColorFilter.tint(MaterialTheme.colorScheme.onSurfaceVariant)
+                modifier = Modifier.size(13.dp),
+                colorFilter = ColorFilter.tint(
+                    if (danger) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             )
-        },
-        onClick = onClick
-    )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = tint
+        )
+    }
 }
 
 internal fun toast(ctx: Context, msg: String) {

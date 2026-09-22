@@ -44,6 +44,7 @@ import net.typeblog.socks.util.sheet.SheetCsv
 import net.typeblog.socks.util.sheet.SheetDb
 import net.typeblog.socks.util.sheet.SheetFile
 import net.typeblog.socks.util.sheet.SheetStore
+import net.typeblog.socks.util.sheet.SheetXlsx
 
 @Composable
 private fun ViewSwitchButton(
@@ -116,6 +117,53 @@ fun SheetFilesTab(
 
     fun io(block: suspend () -> Unit) {
         scope.launch { withContext(Dispatchers.IO) { block() } }
+    }
+
+    // "Send a copy": builds the xlsx in the background, drops it in cache
+    // and opens the system share sheet (Telegram, Drive, …). Same content
+    // as Download, release-signed builds share release-signed content —
+    // the file itself carries no signature either way.
+    fun shareXlsx(f: SheetFile) {
+        scope.launch {
+            var uri: Uri? = null
+            val err = withContext(Dispatchers.IO) {
+                try {
+                    val db = SheetDb(appCtx)
+                    val full = db.getFile(f.id) ?: return@withContext "File not found."
+                    val rows = db.loadRows(f.id)
+                    if (rows.none { it.isData(full.preset.columns) }) {
+                        return@withContext "Add content first."
+                    }
+                    appCtx.cacheDir.listFiles { file ->
+                        file.isFile && file.name.startsWith("share-") && file.name.endsWith(".xlsx")
+                    }?.forEach { try { it.delete() } catch (_: Exception) { } }
+                    val out = java.io.File(appCtx.cacheDir, "share-" + sanitizeFileName(full.name) + ".xlsx")
+                    out.writeBytes(SheetXlsx.build(full.preset.columns, rows))
+                    uri = androidx.core.content.FileProvider.getUriForFile(
+                        appCtx, "${appCtx.packageName}.provider", out
+                    )
+                    null
+                } catch (e: Exception) {
+                    "Couldn't share."
+                }
+            }
+            val u = uri
+            if (u != null) {
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    putExtra(android.content.Intent.EXTRA_STREAM, u)
+                    putExtra(android.content.Intent.EXTRA_SUBJECT, f.name)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(android.content.Intent.createChooser(intent, "Send a copy"))
+                } catch (e: Exception) {
+                    toast(appCtx, "No app can share this file.")
+                }
+            } else if (err != null) {
+                toast(appCtx, err)
+            }
+        }
     }
 
     val downloadLauncher = rememberLauncherForActivityResult(
@@ -223,6 +271,7 @@ fun SheetFilesTab(
                                 downloadTarget = f
                                 downloadLauncher.launch(sanitizeFileName(f.name) + ".csv")
                             },
+                            onSendCopy = { shareXlsx(f) },
                             onRename = {
                                 renameTarget = f
                                 renameText = f.name
@@ -260,6 +309,7 @@ fun SheetFilesTab(
                                 downloadTarget = f
                                 downloadLauncher.launch(sanitizeFileName(f.name) + ".csv")
                             },
+                            onSendCopy = { shareXlsx(f) },
                             onRename = {
                                 renameTarget = f
                                 renameText = f.name
