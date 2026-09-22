@@ -16,7 +16,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
 
@@ -63,7 +63,7 @@ jobs:
       # only hit the network on a version bump (key change).
       - name: Cache NDK
         id: ndk-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.0.12077973
           key: ndk-27.0.12077973
@@ -98,7 +98,7 @@ jobs:
       # (jniLibs/ is gitignored build output, so it must ride along —
       # an up-to-date native task skips its doLast copy step.)
       - name: Cache native build outputs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             app/build/intermediates/cxx

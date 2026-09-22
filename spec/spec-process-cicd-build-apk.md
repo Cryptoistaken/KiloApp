@@ -34,7 +34,7 @@ graph TD
 
 | Job Name | Purpose | Dependencies | Execution Context |
 |----------|---------|--------------|-------------------|
-| build | Full pipeline (setup, assemble, version, upload, release) | None (single job) | ubuntu-latest runner |
+| build | Full pipeline (setup, assemble, version, upload, release) | None (single job) | ubuntu-24.04 runner (pinned; latest migrates to 26) |
 
 ## Requirements Matrix
 
