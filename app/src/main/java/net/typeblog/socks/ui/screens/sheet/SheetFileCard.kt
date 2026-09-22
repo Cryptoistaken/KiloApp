@@ -113,27 +113,22 @@ fun SheetFileCard(
                 }
             } else {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(end = 28.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     FileIconTile(preset = file.preset)
+                    Spacer(modifier = Modifier.size(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.Top
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = file.name,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            val ts = fmtDate(if (file.updatedAt > 0) file.updatedAt else file.createdAt)
-                            if (ts.isNotEmpty()) {
-                                Text(text = ts, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false)
-                            }
-                        }
+                        Text(
+                            text = file.name,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
                         Spacer(modifier = Modifier.width(4.dp))
                         TypeBadgePill({
                             Image(painter = painterResource(R.drawable.ic_ss_facebook), contentDescription = null, modifier = Modifier.size(10.dp))
@@ -141,6 +136,11 @@ fun SheetFileCard(
                         Spacer(modifier = Modifier.width(4.dp))
                         TypeBadgePill({ PasswordBadge(password = file.password) })
                     }
+                    val ts = fmtDate(if (file.updatedAt > 0) file.updatedAt else file.createdAt)
+                    if (ts.isNotEmpty()) {
+                        Text(text = ts, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false, modifier = Modifier.padding(top = 1.dp))
+                    }
+                    Spacer(modifier = Modifier.size(8.dp))
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
