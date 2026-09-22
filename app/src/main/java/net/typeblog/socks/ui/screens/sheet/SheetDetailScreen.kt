@@ -874,7 +874,7 @@ fun SheetDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Archived file — view only. You can check UIDs and copy data.",
+                        text = "Archived (view only)",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -885,7 +885,18 @@ fun SheetDetailScreen(
                         modifier = Modifier
                             .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
                             .background(MaterialTheme.colorScheme.primary)
-                            .combinedClickable(onClick = { onRestoreArchived(fileId) })
+                            .combinedClickable(onClick = {
+                                // The old handler only flipped UI state while
+                                // the db row stayed archived, so readOnly never
+                                // cleared and nothing happened. Restore in the
+                                // store first, then leave archived view.
+                                io {
+                                    store.archiveFile(fileId, false)
+                                    store.open(fileId)
+                                }
+                                toast(appCtx, "File restored.")
+                                onRestoreArchived(fileId)
+                            })
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
