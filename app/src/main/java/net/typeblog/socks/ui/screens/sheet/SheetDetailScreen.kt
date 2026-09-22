@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -485,7 +486,8 @@ fun SheetDetailScreen(
                 }
                 DropdownMenu(
                     expanded = overflowMenu,
-                    onDismissRequest = { overflowMenu = false }
+                    onDismissRequest = { overflowMenu = false },
+                    modifier = Modifier.widthIn(min = 160.dp)
                 ) {
                     DropdownMenuItem(
                         text = { Text("Copy all data", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
@@ -607,6 +609,10 @@ fun SheetDetailScreen(
                             }
                         )
                     }
+                    androidx.compose.material3.HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
                     for (col in columns) {
                         val visible = !hidden.contains(col.key)
                         DropdownMenuItem(
@@ -640,7 +646,7 @@ fun SheetDetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Archived file - view only. You can check UIDs and copy data.",
+                        text = "Archived file — view only. You can check UIDs and copy data.",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -740,7 +746,7 @@ fun SheetDetailScreen(
                         Box(
                             modifier = Modifier
                                 .width(36.dp)
-                                .height(36.dp)
+                                .height(32.dp)
                                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                 .background(
                                     if (row.approved && statusColor != null) statusColor
@@ -752,7 +758,7 @@ fun SheetDetailScreen(
                                 text = (row.rowIdx + 1).toString(),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                             )
                         }
                         for (col in visibleCols) {
@@ -873,9 +879,11 @@ fun SheetDetailScreen(
                                     .padding(horizontal = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                val showDraft = isActive && !readOnly
+                                // Perf: grid cells always render the committed value.
+                                // Live typing lives only in the formula bar below, so
+                                // keystrokes no longer recompose the whole grid.
                                 Text(
-                                    text = if (showDraft) draft else row.cell(col.key),
+                                    text = row.cell(col.key),
                                     fontSize = 13.sp,
                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                     fontWeight = if (st?.bold == true) FontWeight.Bold else FontWeight.Normal,
@@ -1001,7 +1009,9 @@ fun SheetDetailScreen(
                                 shape = androidx.compose.foundation.shape.RoundedCornerShape(32.dp),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                 keyboardActions = KeyboardActions(onDone = { commitDraft() }),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
                             )
                         }
                         Spacer(modifier = Modifier.size(4.dp))
