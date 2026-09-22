@@ -23,9 +23,17 @@ android {
         gitCommitCount = out.toString().trim().toInteger()
     } catch (Exception ignored) {
     }
-    def baseVersionCode = (ghRunNumber != null && ghRunNumber.isInteger())
-            ? ghRunNumber.toInteger() + 100
-            : gitCommitCount + 100
+    def baseVersionCode
+    // CI passes the shared cross-lane counter (max of run+100 and latest
+    // release+1); without it fall back to run number, then commit count.
+    def envVersionCode = System.getenv('KILO_VERSION_CODE')
+    if (envVersionCode != null && envVersionCode.isInteger()) {
+        baseVersionCode = envVersionCode.toInteger()
+    } else if (ghRunNumber != null && ghRunNumber.isInteger()) {
+        baseVersionCode = ghRunNumber.toInteger() + 100
+    } else {
+        baseVersionCode = gitCommitCount + 100
+    }
 
     // -Pabi=<abi> restricts native compilation AND apk splits to one ABI
     // (fast single-ABI debug builds: CI fast lane + local dev). Release

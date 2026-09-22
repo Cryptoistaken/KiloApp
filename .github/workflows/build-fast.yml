@@ -94,6 +94,21 @@ jobs:
             app/src/main/jniLibs
           key: native-fast-ndk27-${{ hashFiles('app/src/main/jni/**') }}
 
+      # Shared monotonic counter (same rule as the release lane): run_number
+      # counts per workflow, so take max(run+100, latest release+1). Used for
+      # the APK internal code AND the release tag, so fast and release builds
+      # update across each other in either order.
+      - name: Compute version code
+        id: vc
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name' 2>/dev/null | sed 's/^v//')
+          case "$LATEST" in ''|*[!0-9]*) LATEST=0;; esac
+          CODE=$(( ${{ github.run_number }} + 100 ))
+          if [ "$LATEST" -ge "$CODE" ]; then CODE=$(( LATEST + 1 )); fi
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
       # Debug + single ABI: skips R8/shrinking and 3/4 of the native
       # compile. Signed with the release key (keystore step above), so the
       # APK installs over release builds via the in-app updater.
@@ -101,6 +116,7 @@ jobs:
         run: gradle :app:assembleDebug -Pabi=arm64-v8a --warning-mode all
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          KILO_VERSION_CODE: ${{ steps.vc.outputs.code }}
           KILO_KEYSTORE_FILE: ${{ runner.temp }}/ks/kiloapp-release.jks
           KILO_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KILO_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
@@ -108,15 +124,9 @@ jobs:
           SMS_API_KEY: ${{ secrets.SMS_API_KEY }}
           SMS_GATEWAY_URL: ${{ secrets.SMS_GATEWAY_URL }}
 
-      - name: Compute version code
-        id: vc
-        run: echo "code=$(( ${{ github.run_number }} + 100 ))" >> "$GITHUB_OUTPUT"
-
       # Publish as a real v<versionCode> release: the in-app updater reads
       # releases/latest and only accepts v<number> tags, picking the arm64
-      # asset. Same shared run-number counter as the release lane keeps
-      # versions monotonic, so release and fast builds update across each
-      # other in either order.
+      # asset.
       - name: Publish fast release (v${{ steps.vc.outputs.code }})
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:

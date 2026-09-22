@@ -105,6 +105,21 @@ jobs:
             app/src/main/jniLibs
           key: native-ndk27-${{ hashFiles('app/src/main/jni/**') }}
 
+      # Shared monotonic counter: run_number counts PER WORKFLOW (a new lane
+      # restarts at 1), so take max(run+100, latest release+1). Both lanes use
+      # it for the APK internal code AND the release tag, so fast and release
+      # builds update across each other in either order.
+      - name: Compute version code
+        id: vc
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name' 2>/dev/null | sed 's/^v//')
+          case "$LATEST" in ''|*[!0-9]*) LATEST=0;; esac
+          CODE=$(( ${{ github.run_number }} + 100 ))
+          if [ "$LATEST" -ge "$CODE" ]; then CODE=$(( LATEST + 1 )); fi
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
       # --- Build: all ABIs + universal (universal contains all 4 .so sets; OS picks best at runtime) ---
       - name: Build Release APK
         run: |
@@ -112,16 +127,13 @@ jobs:
           gradle assembleRelease --warning-mode all
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          KILO_VERSION_CODE: ${{ steps.vc.outputs.code }}
           KILO_KEYSTORE_FILE: ${{ runner.temp }}/ks/kiloapp-release.jks
           KILO_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KILO_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KILO_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           SMS_API_KEY: ${{ secrets.SMS_API_KEY }}
           SMS_GATEWAY_URL: ${{ secrets.SMS_GATEWAY_URL }}
-
-      - name: Compute version code
-        id: vc
-        run: echo "code=$(( ${{ github.run_number }} + 100 ))" >> "$GITHUB_OUTPUT"
 
       # Append the app version to the APK filenames (read from the built APK
       # itself so tag builds and branch builds always get the right name).
