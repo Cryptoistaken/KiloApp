@@ -66,6 +66,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.typeblog.socks.R
 import net.typeblog.socks.util.sheet.CellStyle
+import net.typeblog.socks.util.sheet.CopiedGrid
 import net.typeblog.socks.util.sheet.MAX_GRID_ROWS
 import net.typeblog.socks.util.sheet.SheetXlsx
 import net.typeblog.socks.util.sheet.SheetPreset
@@ -152,6 +153,8 @@ fun SheetDetailScreen(
     var selectedItems by remember { mutableStateOf(setOf<Pair<Int, String>>()) }
     var lastTapCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var lastTapTime by remember { mutableStateOf(0L) }
+    // Slow second tap on the same cell shows the Cut/Copy/Paste menu.
+    var menuCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
 
     var checkMenu by remember { mutableStateOf(false) }
     var overflowMenu by remember { mutableStateOf(false) }
@@ -320,6 +323,79 @@ fun SheetDetailScreen(
                     selectedCell = anchor
                     draft = store.openRows.value.getOrNull(anchor.first)?.cell(anchor.second) ?: ""
                 }
+            }
+        }
+    }
+
+    // Single-cell Cut/Copy/Paste for the tap-again menu (Sheets-style).
+    // Copy and Cut also feed the grid clipboard, so a cut/copied cell can
+    // be pasted cross-file like a multi-cell copy.
+    fun gridOf(ri: Int, ck: String, value: String): CopiedGrid =
+        CopiedGrid(
+            preset = openFile?.preset?.name ?: "",
+            columns = listOf(ck),
+            cells = listOf(listOf(Pair(ck, value)))
+        )
+
+    fun copyCell(ri: Int, ck: String) {
+        val v = rows.getOrNull(ri)?.cell(ck) ?: ""
+        if (v.isEmpty()) {
+            toast(appCtx, "Cell is empty.")
+            return
+        }
+        clipboard.setText(AnnotatedString(v))
+        store.copyGrid(gridOf(ri, ck, v))
+        selectedCell = Pair(ri, ck)
+        draft = v
+        toast(appCtx, "Copied.")
+    }
+
+    fun cutCell(ri: Int, ck: String) {
+        val row = rows.getOrNull(ri) ?: return
+        if (row.locked) {
+            toast(appCtx, if (row.hold) "On hold. Editing is locked." else "Approved.")
+            return
+        }
+        val v = row.cell(ck)
+        if (v.isEmpty()) {
+            toast(appCtx, "Cell is empty.")
+            return
+        }
+        store.rejectReason(ri, ck, "")?.let { toast(appCtx, it); return }
+        clipboard.setText(AnnotatedString(v))
+        store.copyGrid(gridOf(ri, ck, v))
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { store.setCell(ri, ck, "") }
+            if (ok) {
+                selectedCell = Pair(ri, ck)
+                draft = ""
+                toast(appCtx, "Cut.")
+            } else {
+                toast(appCtx, "Couldn't save. Please try again.")
+            }
+        }
+    }
+
+    fun pasteInto(ri: Int, ck: String) {
+        val clip = gridClip
+        if (clip != null) {
+            doPasteGrid(clip, Pair(ri, ck), null)
+            return
+        }
+        val pasted = clipboard.getText()?.text ?: ""
+        if (pasted.isEmpty()) {
+            toast(appCtx, "Clipboard is empty.")
+            return
+        }
+        store.rejectReason(ri, ck, pasted)?.let { toast(appCtx, it); return }
+        selectedCell = Pair(ri, ck)
+        draft = pasted
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { store.setCell(ri, ck, pasted) }
+            if (!ok) {
+                toast(appCtx, "Couldn't save. Please try again.")
+            } else if (ck == "cookies") {
+                maybeAutoCheck(ck)
             }
         }
     }
@@ -1005,41 +1081,17 @@ fun SheetDetailScreen(
                                                 // an empty cell. Selection already live
                                                 // from the first tap — no delay needed.
                                                 lastTapCell = null
+                                                menuCell = null
                                                 val v = row.cell(col.key)
-                                                if (v.isNotEmpty()) {
-                                                    clipboard.setText(AnnotatedString(v))
-                                                    toast(appCtx, "Copied.")
-                                                    selectedCell = selKey
-                                                    draft = v
-                                                } else {
-                                                    // Grid clipboard first (cross-file copy/paste),
-                                                    // system text as fallback.
-                                                    val clip = gridClip
-                                                    if (clip != null) {
-                                                        doPasteGrid(clip, selKey, null)
-                                                    } else {
-                                                        val pasted = clipboard.getText()?.text ?: ""
-                                                        if (pasted.isEmpty()) {
-                                                            toast(appCtx, "Clipboard is empty.")
-                                                        } else {
-                                                            val reason = store.rejectReason(selKey.first, selKey.second, pasted)
-                                                            if (reason != null) {
-                                                                toast(appCtx, reason)
-                                                            } else {
-                                                                selectedCell = selKey
-                                                                draft = pasted
-                                                                scope.launch {
-                                                                    val ok = withContext(Dispatchers.IO) { store.setCell(selKey.first, selKey.second, pasted) }
-                                                                    if (!ok) {
-                                                                        toast(appCtx, "Couldn't save. Please try again.")
-                                                                    } else if (selKey.second == "cookies") {
-                                                                        maybeAutoCheck(selKey.second)
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                                                if (v.isNotEmpty()) copyCell(selKey.first, selKey.second)
+                                                else pasteInto(selKey.first, selKey.second)
+                                                return@combinedClickable
+                                            }
+                                            if (lastTapCell == selKey) {
+                                                // Slow second tap on the same cell:
+                                                // Sheets-style Cut/Copy/Paste menu.
+                                                lastTapCell = null
+                                                menuCell = selKey
                                                 return@combinedClickable
                                             }
                                             if (selectedCell != null && selectedCell != selKey) {
@@ -1083,6 +1135,31 @@ fun SheetDetailScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )
+                                // Sheets-style tap-again menu on the selected cell.
+                                androidx.compose.material3.DropdownMenu(
+                                    expanded = menuCell == selKey,
+                                    onDismissRequest = { menuCell = null }
+                                ) {
+                                    if (!readOnly) {
+                                        SheetMenuItem(
+                                            icon = R.drawable.ic_ss_cut,
+                                            label = "Cut",
+                                            onClick = { menuCell = null; cutCell(selKey.first, selKey.second) }
+                                        )
+                                    }
+                                    SheetMenuItem(
+                                        icon = R.drawable.ic_ss_copy,
+                                        label = "Copy",
+                                        onClick = { menuCell = null; copyCell(selKey.first, selKey.second) }
+                                    )
+                                    if (!readOnly) {
+                                        SheetMenuItem(
+                                            icon = R.drawable.ic_ss_paste,
+                                            label = "Paste",
+                                            onClick = { menuCell = null; pasteInto(selKey.first, selKey.second) }
+                                        )
+                                    }
+                                }
                             }
                         }
                         Box(
