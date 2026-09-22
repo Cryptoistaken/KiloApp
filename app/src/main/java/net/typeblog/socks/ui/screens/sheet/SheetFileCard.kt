@@ -97,7 +97,7 @@ fun SheetFileCard(
                         )
                         val ts = fmtDate(if (file.updatedAt > 0) file.updatedAt else file.createdAt)
                         if (ts.isNotEmpty()) {
-                            Text(text = ts, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = ts, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false)
                         }
                     }
                     FlowRow(
@@ -128,7 +128,7 @@ fun SheetFileCard(
                             )
                             val ts = fmtDate(if (file.updatedAt > 0) file.updatedAt else file.createdAt)
                             if (ts.isNotEmpty()) {
-                                Text(text = ts, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(text = ts, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false)
                             }
                         }
                         Spacer(modifier = Modifier.width(4.dp))
