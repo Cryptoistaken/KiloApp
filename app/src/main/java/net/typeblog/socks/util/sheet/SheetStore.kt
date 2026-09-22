@@ -292,26 +292,89 @@ class SheetStore private constructor(context: Context) {
         return db.latestSnapshot(f.id) != null
     }
 
-    fun runCheck(done: (valid: Int, dead: Int) -> Unit) {
+    fun runCheck(
+        uidOn: Boolean = true,
+        simpleOn: Boolean = false,
+        advancedOn: Boolean = false,
+        isPageFile: Boolean = false,
+        done: (valid: Int, dead: Int) -> Unit
+    ) {
         val f = openFile.value ?: return
         if (checking.value) return
         checking.value = true
         scope.launch {
-            withContext(Dispatchers.IO) { Thread.sleep(900) }
             val cols = f.preset.columns
             var valid = 0
             var dead = 0
-            val rows = openRows.value.map { r ->
-                if (!r.isData(cols) || r.locked) return@map r
-                if (r.cookies.isNotEmpty() && r.uid.isNotEmpty() && isValidUid(r.uid)) {
-                    valid++
-                    r.copy(status = "good", dead = false)
-                } else if (r.uid.isNotEmpty() && !isValidUid(r.uid)) {
-                    dead++
-                    r.copy(status = "bad", dead = true)
-                } else {
-                    r.copy(status = if (r.status == "good" || r.status == "done") r.status else "pending")
+            var rows = openRows.value
+            // 1. UID liveness: one batched direct request (worker checkUids).
+            // Falls back to the local format heuristic when offline.
+            if (uidOn) {
+                fun effUid(r: SheetRow): String = r.uid.ifEmpty {
+                    Regex("c_user=(\\d+)").find(r.cookies)?.groupValues?.get(1) ?: ""
                 }
+                val verdict: Set<String>? = try {
+                    SheetChecker.checkUidsDead(
+                        rows.filter { r -> r.isData(cols) && !r.locked && effUid(r).isNotEmpty() }
+                            .map { effUid(it) }.distinct()
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+                rows = rows.map { r ->
+                    if (!r.isData(cols) || r.locked) {
+                        r
+                    } else if (r.cookies.isNotEmpty() && effUid(r).isNotEmpty()) {
+                        if (verdict == null) {
+                            if (isValidUid(effUid(r))) {
+                                valid++
+                                r.copy(status = "good", dead = false)
+                            } else {
+                                dead++
+                                r.copy(status = "bad", dead = true)
+                            }
+                        } else if (!verdict.contains(effUid(r))) {
+                            valid++
+                            r.copy(status = "good", dead = false)
+                        } else {
+                            dead++
+                            r.copy(status = "bad", dead = true)
+                        }
+                    } else if (r.uid.isNotEmpty() && !isValidUid(r.uid)) {
+                        dead++
+                        r.copy(status = "bad", dead = true)
+                    } else {
+                        r.copy(status = if (r.status == "good" || r.status == "done") r.status else "pending")
+                    }
+                }
+            }
+            // 2. Page sweeps: direct per-row scrapes, sequential like the
+            // worker (first 25 candidates per run to avoid rate limits).
+            if (isPageFile && (simpleOn || advancedOn)) {
+                val cands = rows.filter { r ->
+                    r.isData(cols) && !r.locked && r.status == "good" &&
+                        "c_user=" in r.cookies && !r.approved && !r.hold && !r.dead
+                }.take(25)
+                var updated = rows
+                for (r in cands) {
+                    try {
+                        val ok = if (simpleOn) {
+                            val res = SheetChecker.pageSimple(r.cookies)
+                            res.error == null && res.eligible
+                        } else {
+                            val res = SheetChecker.pageAdvanced(r.cookies)
+                            res.error == null && res.eligible
+                        }
+                        if (ok) {
+                            updated = updated.map {
+                                if (it.rowIdx == r.rowIdx) it.copy(status = "eligible") else it
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Challenges/rate limits: leave the row, try next.
+                    }
+                }
+                rows = updated
             }
             withContext(Dispatchers.IO) {
                 pushUndo()

@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -67,6 +68,7 @@ import kotlinx.coroutines.withContext
 import net.typeblog.socks.R
 import net.typeblog.socks.util.sheet.CellStyle
 import net.typeblog.socks.util.sheet.SheetCsv
+import net.typeblog.socks.util.sheet.SheetPreset
 import net.typeblog.socks.util.sheet.SheetStore
 
 private val PALETTE = listOf(
@@ -187,7 +189,13 @@ fun SheetDetailScreen(
             toast(appCtx, "Remove duplicates first.")
             return
         }
-        store.runCheck { valid, dead ->
+        // Archived view: UID check only, never simple/advanced (website parity).
+        store.runCheck(
+            autoCheck,
+            simpleCheck && !readOnly,
+            advancedCheck && !readOnly,
+            openFile?.preset == SheetPreset.PAGE
+        ) { valid, dead ->
             scope.launch {
                 toast(appCtx, "Check done: $valid valid, $dead dead.")
             }
