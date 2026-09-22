@@ -1,0 +1,101 @@
+name: Fast APK (arm64 debug)
+
+# Own lane, separate from the release build: both workflows run at the same
+# time without cancelling each other (a shared concurrency group would).
+# Re-dispatching while a fast build runs supersedes it.
+concurrency:
+  group: fast-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fast:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Set git init default branch to master
+        run: git config --global init.defaultBranch master
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          java-version: 17
+          distribution: 'temurin'
+
+      # Same minimal SDK bootstrap as the release lane (runner image already
+      # carries platform + build-tools; only install what is missing).
+      - name: Setup Android SDK
+        run: |
+          CMDLINE=$(ls -d "$ANDROID_SDK_ROOT"/cmdline-tools/*/bin 2>/dev/null | tail -n 1)
+          echo "$CMDLINE" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          yes | "$CMDLINE/sdkmanager" --licenses --sdk_root="$ANDROID_SDK_ROOT" > /dev/null || true
+          NEED=""
+          [ -d "$ANDROID_SDK_ROOT/platforms/android-36" ] || NEED="$NEED platforms;android-36"
+          [ -d "$ANDROID_SDK_ROOT/build-tools/36.0.0" ] || NEED="$NEED build-tools;36.0.0"
+          [ -d "$ANDROID_SDK_ROOT/platform-tools" ] || NEED="$NEED platform-tools"
+          if [ -n "$NEED" ]; then
+            # shellcheck disable=SC2086
+            "$CMDLINE/sdkmanager" --install $NEED --sdk_root="$ANDROID_SDK_ROOT"
+          else
+            echo "SDK packages already present, skipping install"
+          fi
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+      - name: Cache NDK
+        id: ndk-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.0.12077973
+          key: ndk-27.0.12077973
+
+      - name: Install NDK (skip if present)
+        run: |
+          NDK_DIR="$ANDROID_HOME/ndk/27.0.12077973"
+          if [ -d "$NDK_DIR" ]; then
+            echo "NDK 27.0.12077973 already present, skipping install"
+          else
+            echo "NDK not found, installing..."
+            sdkmanager "ndk;27.0.12077973" --sdk_root=$ANDROID_HOME
+          fi
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+
+      # Own cache key, never shared with the release lane: this lane compiles
+      # arm64 only, so it must neither read nor overwrite the full 4-ABI
+      # native outputs.
+      - name: Cache native build outputs (arm64 only)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            app/build/intermediates/cxx
+            app/src/main/jniLibs
+          key: native-fast-ndk27-${{ hashFiles('app/src/main/jni/**') }}
+
+      # Debug + single ABI: skips R8/shrinking, release signing and 3/4 of the
+      # native compile. Signed with the debug key (no keystore step), so this
+      # APK does NOT install over release-signed builds — uninstall first
+      # when switching between fast and release builds.
+      - name: Build arm64 debug APK
+        run: gradle :app:assembleDebug -Pabi=arm64-v8a --warning-mode all
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          SMS_API_KEY: ${{ secrets.SMS_API_KEY }}
+          SMS_GATEWAY_URL: ${{ secrets.SMS_GATEWAY_URL }}
+
+      - name: Upload APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: app-fast-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7

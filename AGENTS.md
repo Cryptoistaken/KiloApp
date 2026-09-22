@@ -1,7 +1,7 @@
 # KiloProxy — Agent Rules
 
 ## Build (mandatory)
-- Use ONLY the GitHub builder (`.github/workflows/build.yml`). Never build locally on this machine.
+- Use ONLY the GitHub builders (`.github/workflows/build.yml` = release on push, `.github/workflows/build-fast.yml` = manual arm64-debug). Never build locally on this machine.
 - After pushing code to `master`, follow the CI run with `go run ./monitor-build.go` (repo root; polls every 5s, exits 0 on success, 1 on failure). With no arg it follows the latest run on the current branch; pass an explicit run id to follow that one (`go run ./monitor-build.go <run-id>`). Do NOT use fixed `sleep` waits or manual re-polling.
 - On failure: read the failing step, fix the code, commit, and push again.
 - On success: proceed with download/install per below.
@@ -191,7 +191,7 @@ codebase stays clean without future cleanups:
 | `protonvpn-settings.html` | Settings mock reference (tracked; `design/` docs were deleted) |
 | `build.gradle` | Root Gradle build (plugins: android.application, Kotlin compose) |
 | `settings.gradle` / `gradle.properties` / `gradle/wrapper/gradle-wrapper.properties` | Gradle config (Gradle 9.4.1, AGP 9.2.1, Kotlin 2.2.10, Java 17) |
-| `.github/workflows/build.yml` | **ONLY** build entry point (CI GitHub Actions; never build locally) |
+| `.github/workflows/build.yml` + `build-fast.yml` | **ONLY** build entry points (CI GitHub Actions; never build locally). `build.yml` = full release (own concurrency lane); `build-fast.yml` = manual arm64-debug (separate lane, runs in parallel, own native cache key) |
 | `.keystore-backup/` | Local keystore backup — signing handled via GitHub secrets in CI |
 | `.gitignore` | Ignorable paths |
 

@@ -27,6 +27,11 @@ android {
             ? ghRunNumber.toInteger() + 100
             : gitCommitCount + 100
 
+    // -Pabi=<abi> restricts native compilation AND apk splits to one ABI
+    // (fast single-ABI debug builds: CI fast lane + local dev). Release
+    // never passes it, so all 4 ABIs still build there.
+    def requestedAbi = project.findProperty('abi')?.toString()
+
     defaultConfig {
         applicationId "com.kiloapp.app"
         // Per-app identity baked at build time: the self-updater reads this
@@ -51,7 +56,11 @@ android {
 
         externalNativeBuild {
             ndkBuild {
-                abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+                if (requestedAbi) {
+                    abiFilters requestedAbi
+                } else {
+                    abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+                }
             }
         }
     }
@@ -60,7 +69,6 @@ android {
         abi {
             // Single universal APK (all ABIs in one file, OS picks best .so at install).
             // -Pabi=<abi> still allowed for fast local single-ABI debug builds.
-            def requestedAbi = project.findProperty('abi')
             enable = requestedAbi != null
             reset()
             if (requestedAbi) {
