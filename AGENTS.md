@@ -191,7 +191,7 @@ codebase stays clean without future cleanups:
 | `protonvpn-settings.html` | Settings mock reference (tracked; `design/` docs were deleted) |
 | `build.gradle` | Root Gradle build (plugins: android.application, Kotlin compose) |
 | `settings.gradle` / `gradle.properties` / `gradle/wrapper/gradle-wrapper.properties` | Gradle config (Gradle 9.4.1, AGP 9.2.1, Kotlin 2.2.10, Java 17) |
-| `.github/workflows/build.yml` + `build-fast.yml` | **ONLY** build entry points (CI GitHub Actions; never build locally). `build.yml` = full release (own concurrency lane); `build-fast.yml` = manual arm64-debug (separate lane, runs in parallel, own native cache key) |
+| `.github/workflows/build.yml` + `build-fast.yml` | **ONLY** build entry points (CI GitHub Actions; never build locally). `build.yml` = full release (own concurrency lane); `build-fast.yml` = manual arm64-debug (separate lane, runs in parallel, own native cache key; release-signed + published as v<code> so the in-app updater picks it up) |
 | `.keystore-backup/` | Local keystore backup — signing handled via GitHub secrets in CI |
 | `.gitignore` | Ignorable paths |
 

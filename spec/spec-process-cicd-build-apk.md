@@ -35,7 +35,7 @@ graph TD
 | Job Name | Purpose | Dependencies | Execution Context |
 |----------|---------|--------------|-------------------|
 | build | Full pipeline (setup, assemble, version, upload, release) | None (single job) | ubuntu-24.04 runner (pinned; latest migrates to 26) |
-| fast | Manual arm64-only debug APK (no R8, no signing, own lane + cache key) | None (single job) | ubuntu-24.04 runner |
+| fast | Manual arm64-only debug APK, release-signed + published as v<code> so the in-app updater picks it up | None (single job) | ubuntu-24.04 runner |
 
 ## Requirements Matrix
 

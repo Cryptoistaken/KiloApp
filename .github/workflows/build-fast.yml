@@ -71,6 +71,18 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
+      # Release keystore: the fast APK is signed with the release key so it
+      # installs over release builds via the in-app updater (a debug-key APK
+      # would fail with a signature mismatch).
+      - name: Restore signing keystore
+        env:
+          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$RELEASE_KEYSTORE_B64" ]; then
+            mkdir -p "$RUNNER_TEMP/ks"
+            echo "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ks/kiloapp-release.jks"
+          fi
+
       # Own cache key, never shared with the release lane: this lane compiles
       # arm64 only, so it must neither read nor overwrite the full 4-ABI
       # native outputs.
@@ -82,16 +94,36 @@ jobs:
             app/src/main/jniLibs
           key: native-fast-ndk27-${{ hashFiles('app/src/main/jni/**') }}
 
-      # Debug + single ABI: skips R8/shrinking, release signing and 3/4 of the
-      # native compile. Signed with the debug key (no keystore step), so this
-      # APK does NOT install over release-signed builds — uninstall first
-      # when switching between fast and release builds.
+      # Debug + single ABI: skips R8/shrinking and 3/4 of the native
+      # compile. Signed with the release key (keystore step above), so the
+      # APK installs over release builds via the in-app updater.
       - name: Build arm64 debug APK
         run: gradle :app:assembleDebug -Pabi=arm64-v8a --warning-mode all
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          KILO_KEYSTORE_FILE: ${{ runner.temp }}/ks/kiloapp-release.jks
+          KILO_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KILO_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KILO_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           SMS_API_KEY: ${{ secrets.SMS_API_KEY }}
           SMS_GATEWAY_URL: ${{ secrets.SMS_GATEWAY_URL }}
+
+      - name: Compute version code
+        id: vc
+        run: echo "code=$(( ${{ github.run_number }} + 100 ))" >> "$GITHUB_OUTPUT"
+
+      # Publish as a real v<versionCode> release: the in-app updater reads
+      # releases/latest and only accepts v<number> tags, picking the arm64
+      # asset. Same shared run-number counter as the release lane keeps
+      # versions monotonic, so release and fast builds update across each
+      # other in either order.
+      - name: Publish fast release (v${{ steps.vc.outputs.code }})
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          tag_name: v${{ steps.vc.outputs.code }}
+          name: v${{ steps.vc.outputs.code }} (fast)
+          body: "Fast arm64-only debug build (no R8). Release-signed, installs over release builds."
+          files: app/build/outputs/apk/debug/*.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -109,6 +109,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Fast-lane CI signs debug with the release key so in-app
+            // updates install over release builds. Locally (no keystore
+            // env) this stays the default debug key.
+            signingConfig = usePersistentSigning ? signingConfigs.release : signingConfigs.debug
+        }
 
         release {
             minifyEnabled true
