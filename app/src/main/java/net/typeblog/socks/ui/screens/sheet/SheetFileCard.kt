@@ -174,6 +174,23 @@ fun SheetFileCard(
 }
 
 @Composable
+private fun FileIndicators(file: SheetFile) {
+    IndicatorCell(color = rowsIndicatorColor(), label = file.rowCount.toString())
+    if (file.liveCount + file.deadCount > 0) {
+        IndicatorCell(color = AliveGreen, label = file.liveCount.toString())
+    }
+    if (file.preset == SheetPreset.PAGE && file.pageCount > 0) {
+        IndicatorCell(color = PageBlue, label = file.pageCount.toString())
+    }
+    if (file.liveCount + file.deadCount > 0) {
+        IndicatorCell(color = DeadRed, label = file.deadCount.toString())
+    }
+    if (file.dupCount > 0) {
+        IndicatorCell(color = DupYellow, label = file.dupCount.toString())
+    }
+}
+
+@Composable
 private fun IndicatorCell(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         IndicatorSquare(color = color)
