@@ -46,6 +46,7 @@ private data class OpenSheet(val id: String, val archived: Boolean)
 fun SheetScreen(modifier: Modifier = Modifier) {
     var tab by rememberSaveable { mutableStateOf(SheetTab.FILES) }
     var open by rememberSaveable { mutableStateOf<OpenSheet?>(null) }
+    var selecting by remember { mutableStateOf(false) }
 
     BackHandler(enabled = open != null) {
         open = null
@@ -64,6 +65,7 @@ fun SheetScreen(modifier: Modifier = Modifier) {
     }
 
     Column(modifier = modifier.fillMaxSize()) {
+        if (!selecting) {
         Row(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
@@ -83,29 +85,32 @@ fun SheetScreen(modifier: Modifier = Modifier) {
                 selected = tab == SheetTab.FILES,
                 icon = if (tab == SheetTab.FILES) R.drawable.ic_ss_myfiles_sel else R.drawable.ic_ss_myfiles_idle,
                 label = "My Files",
-                onClick = { tab = SheetTab.FILES }
+                onClick = { tab = SheetTab.FILES; selecting = false }
             )
             SheetHomeTab(
                 selected = tab == SheetTab.ARCHIVE,
                 icon = if (tab == SheetTab.ARCHIVE) R.drawable.ic_ss_archive_sel else R.drawable.ic_ss_archive_idle,
                 label = "Archive",
-                onClick = { tab = SheetTab.ARCHIVE }
+                onClick = { tab = SheetTab.ARCHIVE; selecting = false }
             )
             SheetHomeTab(
                 selected = tab == SheetTab.WALLET,
                 icon = if (tab == SheetTab.WALLET) R.drawable.ic_ss_wallet_sel else R.drawable.ic_ss_wallet_idle,
                 label = "Wallet",
-                onClick = { tab = SheetTab.WALLET }
+                onClick = { tab = SheetTab.WALLET; selecting = false }
             )
+        }
         }
         when (tab) {
             SheetTab.FILES -> SheetFilesTab(
                 onOpenFile = { open = OpenSheet(it, false) },
+                onSelectionModeChange = { selecting = it },
                 modifier = Modifier.weight(1f)
             )
             SheetTab.WALLET -> SheetWalletTab(modifier = Modifier.weight(1f))
             SheetTab.ARCHIVE -> SheetArchiveTab(
                 onOpenArchived = { open = OpenSheet(it, true) },
+                onSelectionModeChange = { selecting = it },
                 modifier = Modifier.weight(1f)
             )
         }

@@ -1,6 +1,7 @@
 package net.typeblog.socks.ui.screens.sheet
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.combinedClickable
@@ -59,6 +60,7 @@ import net.typeblog.socks.util.sheet.daysLeft
 @Composable
 fun SheetArchiveTab(
     onOpenArchived: (String) -> Unit = {},
+    onSelectionModeChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -69,6 +71,11 @@ fun SheetArchiveTab(
 
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     val selectionMode = selectedIds.isNotEmpty()
+
+    androidx.compose.runtime.LaunchedEffect(selectionMode) {
+        onSelectionModeChange(selectionMode)
+    }
+    BackHandler(enabled = selectionMode) { selectedIds = emptySet() }
 
     var deleteTarget by remember { mutableStateOf<SheetFile?>(null) }
     var restoreBulk by remember { mutableStateOf(false) }
@@ -93,52 +100,19 @@ fun SheetArchiveTab(
     Box(modifier = modifier.fillMaxSize()) {
     Column(modifier = Modifier.fillMaxSize()) {
         if (selectionMode) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val allIds = sorted.map { it.id }.toSet()
-                val allSelected = selectedIds.isNotEmpty() && selectedIds.containsAll(allIds)
-                TextButton(
-                    onClick = {
-                        selectedIds = if (allSelected) emptySet() else allIds
+            SelectHeader(
+                count = selectedIds.size,
+                total = sorted.size,
+                onToggleAll = {
+                    val allIds = sorted.map { it.id }.toSet()
+                    selectedIds = if (selectedIds.isNotEmpty() && selectedIds.containsAll(allIds)) {
+                        emptySet()
+                    } else {
+                        allIds
                     }
-                ) {
-                    Text(if (allSelected) "Unselect all" else "Select all")
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                TextButton(
-                    onClick = { if (selectedIds.isNotEmpty()) restoreBulk = true }
-                ) {
-                    Text("Restore")
-                }
-                TextButton(
-                    onClick = { if (selectedIds.isNotEmpty()) deleteBulk = true }
-                ) {
-                    Text(
-                        "Delete forever",
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = selectedIds.size.toString() + " selected",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                TextButton(onClick = { selectedIds = emptySet() }) {
-                    Text("Clear")
-                }
-            }
+                },
+                onCancel = { selectedIds = emptySet() }
+            )
         } else {
             Spacer(modifier = Modifier.size(4.dp))
         }
@@ -157,7 +131,10 @@ fun SheetArchiveTab(
         } else if (isList) {
             androidx.compose.foundation.lazy.LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 12.dp, top = 12.dp, end = 12.dp,
+                    bottom = if (selectionMode) 96.dp else 12.dp
+                ),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(sorted, key = { it.id }) { f ->
@@ -182,7 +159,10 @@ fun SheetArchiveTab(
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 12.dp, top = 12.dp, end = 12.dp,
+                    bottom = if (selectionMode) 96.dp else 12.dp
+                ),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -205,6 +185,24 @@ fun SheetArchiveTab(
                 }
             }
         }
+    }
+    if (selectionMode) {
+        SelectBottomBar(
+            actions = listOf(
+                SelectAction(
+                    icon = R.drawable.ic_ss_restore,
+                    label = "Restore",
+                    onClick = { if (selectedIds.isNotEmpty()) restoreBulk = true }
+                ),
+                SelectAction(
+                    icon = R.drawable.ic_ss_trash,
+                    label = "Delete",
+                    danger = true,
+                    onClick = { if (selectedIds.isNotEmpty()) deleteBulk = true }
+                )
+            ),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
     }
     if (!selectionMode) {
         Row(

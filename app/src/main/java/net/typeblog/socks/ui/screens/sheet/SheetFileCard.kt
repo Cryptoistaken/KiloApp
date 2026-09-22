@@ -146,11 +146,10 @@ fun SheetFileCard(
                     }
                 }
             }
-            if (selected) {
-                Image(
-                    painter = painterResource(R.drawable.ic_ss_check),
-                    contentDescription = null,
-                    modifier = Modifier.align(Alignment.TopStart).size(14.dp)
+            if (selectionMode) {
+                SelectCheckBox(
+                    selected = selected,
+                    modifier = Modifier.align(Alignment.TopEnd)
                 )
             }
             if (!selectionMode) {
