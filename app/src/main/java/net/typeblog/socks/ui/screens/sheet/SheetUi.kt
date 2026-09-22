@@ -28,6 +28,7 @@ import androidx.compose.foundation.Image
 val AliveGreen = Color(0xFF229342)
 val DeadRed = Color(0xFFE33B2E)
 val DupYellow = Color(0xFFEAB308)
+val StatusYellow = Color(0xFFF5A623)
 val PageBlue = Color(0xFF2563EB)
 val CrossOrange = Color(0xFFF6821F)
 
@@ -40,17 +41,17 @@ fun StatusDot(
 ) {
     val color = when {
         dead || status == "bad" -> DeadRed
-        isDup -> DupYellow
+        isDup -> StatusYellow
         status == "eligible" -> PageBlue
         status == "good" || status == "done" -> AliveGreen
-        status == "pending" -> DupYellow
-        else -> Color.Transparent
+        status == "pending" -> StatusYellow
+        else -> null
     }
     Box(
         modifier = modifier
-            .size(10.dp)
-            .clip(RoundedCornerShape(5.dp))
-            .background(if (color == Color.Transparent) MaterialTheme.colorScheme.outline else color),
+            .size(8.dp)
+            .clip(RoundedCornerShape(2.5.dp))
+            .background(color ?: MaterialTheme.colorScheme.outlineVariant),
         contentAlignment = Alignment.Center
     ) {}
 }

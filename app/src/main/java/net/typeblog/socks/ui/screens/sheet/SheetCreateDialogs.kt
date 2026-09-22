@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import android.util.Xml
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -66,58 +68,44 @@ fun presetTitle(p: SheetPreset): String = when (p) {
 }
 
 @Composable
-fun CreateFileMenuDialog(
+fun FabMenuPopup(
     onDismiss: () -> Unit,
     onPickPreset: (SheetPreset) -> Unit,
     onPickUpload: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Create file") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.ic_ss_facebook),
-                        contentDescription = null,
-                        modifier = Modifier.size(13.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        "Facebook",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                for (p in SheetPreset.values()) {
-                    CreateOptionRow(
-                        title = presetTitle(p),
-                        desc = PRESET_DESC[p] ?: "",
-                        icon = {
-                            Box(
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                PresetIcon(preset = p, sizeDp = 15)
-                            }
-                        },
-                        onClick = { onPickPreset(p) }
-                    )
-                }
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant
+    androidx.compose.ui.window.Popup(
+        alignment = Alignment.BottomEnd,
+        onDismissRequest = onDismiss
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(min = 210.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                .padding(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.ic_ss_facebook),
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp)
                 )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    "Facebook",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            for (p in SheetPreset.values()) {
                 CreateOptionRow(
-                    title = "Upload xlsx",
-                    desc = "Import data from file",
+                    title = presetTitle(p),
+                    desc = PRESET_DESC[p] ?: "",
                     icon = {
                         Box(
                             modifier = Modifier
@@ -126,24 +114,47 @@ fun CreateFileMenuDialog(
                                 .background(MaterialTheme.colorScheme.surfaceVariant),
                             contentAlignment = Alignment.Center
                         ) {
-                            Image(
-                                painter = painterResource(R.drawable.ic_ss_upload),
-                                contentDescription = null,
-                                modifier = Modifier.size(15.dp)
-                            )
+                            PresetIcon(preset = p, sizeDp = 15)
                         }
                     },
-                    onClick = onPickUpload
+                    onClick = { onPickPreset(p) }
                 )
             }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+            CreateOptionRow(
+                title = "Upload xlsx",
+                desc = "Import data from file",
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(R.drawable.ic_ss_upload),
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                },
+                onClick = onPickUpload
+            )
         }
-    )
+    }
+}
+
+@Composable
+fun CreateFileMenuDialog(
+    onDismiss: () -> Unit,
+    onPickPreset: (SheetPreset) -> Unit,
+    onPickUpload: () -> Unit
+) {
+    FabMenuPopup(onDismiss = onDismiss, onPickPreset = onPickPreset, onPickUpload = onPickUpload)
 }
 
 @Composable

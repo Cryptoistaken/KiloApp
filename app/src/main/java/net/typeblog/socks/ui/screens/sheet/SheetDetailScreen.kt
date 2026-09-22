@@ -94,6 +94,13 @@ private fun parseHexColor(hex: String?): Color? {
 
 private fun styleKey(rowIdx: Int, colKey: String): String = "$rowIdx:$colKey"
 
+private fun colWidthDp(colKey: String): androidx.compose.ui.unit.Dp = when (colKey) {
+    "cookies" -> 180.dp
+    "twofakey" -> 140.dp
+    "uid" -> 100.dp
+    else -> 140.dp
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SheetDetailScreen(
@@ -371,26 +378,61 @@ fun SheetDetailScreen(
                 }
             }
             // Check split button.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(
-                    onClick = { doCheck() },
-                    enabled = !checking && (readOnly || dupRows.isEmpty())
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                    .background(
+                        if (!checking && (readOnly || dupRows.isEmpty())) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
+                    )
+            ) {
+                Box(
+                    modifier = Modifier
+                        .combinedClickable(
+                            enabled = !checking && (readOnly || dupRows.isEmpty()),
+                            onClick = { doCheck() }
+                        )
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     if (checking) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Checking")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Checking",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
                     } else {
-                        Text("Check")
+                        Text(
+                            text = "Check",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
                     }
                 }
                 if (!readOnly && !checking) {
                     Box {
-                        IconButton(onClick = { checkMenu = true }) {
+                        Box(
+                            modifier = Modifier
+                                .combinedClickable(onClick = { checkMenu = true })
+                                .padding(horizontal = 7.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Icon(
                                 painter = painterResource(R.drawable.ic_ss_check_arrow),
                                 contentDescription = "More check options",
-                                modifier = Modifier.size(12.dp)
+                                modifier = Modifier.size(10.dp),
+                                tint = MaterialTheme.colorScheme.onPrimary
                             )
                         }
                         DropdownMenu(
@@ -447,7 +489,7 @@ fun SheetDetailScreen(
                     onDismissRequest = { overflowMenu = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Copy all data") },
+                        text = { Text("Copy all data", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
                         leadingIcon = {
                             Icon(
                                 painter = painterResource(R.drawable.ic_ss_copy),
@@ -463,7 +505,7 @@ fun SheetDetailScreen(
                     )
                     if (!readOnly) {
                         DropdownMenuItem(
-                            text = { Text("Download xlsx") },
+                            text = { Text("Download xlsx", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
                             leadingIcon = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_download),
@@ -489,7 +531,7 @@ fun SheetDetailScreen(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Upload xlsx") },
+                            text = { Text("Upload xlsx", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
                             leadingIcon = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_upload),
@@ -505,7 +547,7 @@ fun SheetDetailScreen(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Merge") },
+                            text = { Text("Merge", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
                             leadingIcon = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_merge),
@@ -521,7 +563,7 @@ fun SheetDetailScreen(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Compact") },
+                            text = { Text("Compact", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
                             leadingIcon = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_compact),
@@ -536,7 +578,7 @@ fun SheetDetailScreen(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Delete inactive") },
+                            text = { Text("Delete inactive", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
                             leadingIcon = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_trash),
@@ -551,7 +593,7 @@ fun SheetDetailScreen(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Restore last save") },
+                            text = { Text("Restore last save", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
                             leadingIcon = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_restore),
@@ -569,7 +611,7 @@ fun SheetDetailScreen(
                     for (col in columns) {
                         val visible = !hidden.contains(col.key)
                         DropdownMenuItem(
-                            text = { Text(col.label) },
+                            text = { Text(col.label, fontSize = 12.sp, fontWeight = FontWeight.Medium) },
                             leadingIcon = {
                                 ColToggleBox(checked = visible)
                             },
@@ -585,24 +627,41 @@ fun SheetDetailScreen(
         }
 
         if (readOnly) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.fillMaxWidth()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = "Archived file - view only. You can check UIDs and copy data.",
-                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    TextButton(onClick = { onRestoreArchived(fileId) }) {
-                        Text("Restore")
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                            .combinedClickable(onClick = { onRestoreArchived(fileId) })
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Restore",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
                     }
                 }
             }
@@ -631,28 +690,30 @@ fun SheetDetailScreen(
             ) {
                 stickyHeader {
                     Row(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surface),
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .width(44.dp)
-                                .height(36.dp),
+                                .width(36.dp)
+                                .height(36.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             contentAlignment = Alignment.Center
                         ) {}
                         for (col in visibleCols) {
                             Box(
                                 modifier = Modifier
-                                    .width(140.dp)
+                                    .width(colWidthDp(col.key))
                                     .height(36.dp)
-                                    .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                     .padding(horizontal = 8.dp),
-                                contentAlignment = Alignment.CenterStart
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = col.label,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -661,24 +722,37 @@ fun SheetDetailScreen(
                         Box(
                             modifier = Modifier
                                 .width(36.dp)
-                                .height(36.dp),
+                                .height(36.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             contentAlignment = Alignment.Center
                         ) {}
                     }
                 }
                 items(rows, key = { it.rowIdx }) { row ->
                     val isDup = dupRows.contains(row.rowIdx)
+                    val statusColor: Color? = when {
+                        row.dead || row.status == "bad" -> DeadRed
+                        isDup -> StatusYellow
+                        row.status == "eligible" -> PageBlue
+                        row.status == "good" || row.status == "done" -> AliveGreen
+                        else -> null
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .width(44.dp)
-                                .height(44.dp)
-                                .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                                .width(36.dp)
+                                .height(36.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .background(
+                                    if (row.approved && statusColor != null) statusColor
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = (row.rowIdx + 1).toString(),
                                 fontSize = 11.sp,
+                                fontWeight = FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -688,21 +762,28 @@ fun SheetDetailScreen(
                             val selKey = Pair(row.rowIdx, col.key)
                             val isActive = selectedCell == selKey && !selectionMode
                             val isMulti = selectedItems.contains(selKey)
-                            val bg = parseHexColor(st?.bg)
+                            val customBg = parseHexColor(st?.bg)
                             val fg = parseHexColor(st?.color)
+                            val cellBg: Color = when {
+                                customBg != null -> customBg
+                                isMulti -> MaterialTheme.colorScheme.surfaceVariant
+                                row.hold && statusColor != null -> statusColor
+                                row.approved && statusColor != null -> statusColor
+                                isDup && (col.key == "uid" || col.key == "cookies") -> StatusYellow.copy(alpha = 0.15f)
+                                else -> Color.Transparent
+                            }
+                            val cellBorder: Color = when {
+                                isActive -> MaterialTheme.colorScheme.onSurface
+                                isMulti -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                isDup && (col.key == "uid" || col.key == "cookies") -> StatusYellow
+                                else -> MaterialTheme.colorScheme.outlineVariant
+                            }
                             Box(
                                 modifier = Modifier
-                                    .width(140.dp)
-                                    .height(44.dp)
-                                    .border(
-                                        width = if (isActive || isMulti) 2.dp else 0.5.dp,
-                                        color = if (isActive || isMulti) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.outlineVariant
-                                        }
-                                    )
-                                    .background(bg ?: Color.Transparent)
+                                    .width(colWidthDp(col.key))
+                                    .height(36.dp)
+                                    .border(1.dp, cellBorder)
+                                    .background(cellBg)
                                     .combinedClickable(
                                         onClick = {
                                             if (readOnly) {
@@ -791,23 +872,28 @@ fun SheetDetailScreen(
                                         }
                                     )
                                     .padding(horizontal = 8.dp),
-                                contentAlignment = Alignment.CenterStart
+                                contentAlignment = Alignment.Center
                             ) {
                                 val showDraft = isActive && !readOnly
                                 Text(
                                     text = if (showDraft) draft else row.cell(col.key),
-                                    fontSize = 12.sp,
+                                    fontSize = 13.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                     fontWeight = if (st?.bold == true) FontWeight.Bold else FontWeight.Normal,
                                     color = fg ?: MaterialTheme.colorScheme.onSurface,
+                                    textDecoration = if (row.approved) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )
                             }
                         }
                         Box(
                             modifier = Modifier
                                 .width(36.dp)
-                                .height(44.dp),
+                                .height(36.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .background(MaterialTheme.colorScheme.surface),
                             contentAlignment = Alignment.Center
                         ) {
                             StatusDot(
@@ -820,13 +906,20 @@ fun SheetDetailScreen(
                 }
                 item {
                     if (!readOnly) {
-                        TextButton(
-                            onClick = { io { store.addRow() } },
+                        Box(
                             modifier = Modifier
-                                .width(44.dp + 140.dp * visibleCols.size.coerceAtLeast(1) + 36.dp)
-                                .padding(vertical = 4.dp)
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .combinedClickable(onClick = { io { store.addRow() } })
+                                .padding(vertical = 14.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text("Add row")
+                            Text(
+                                text = "Add row",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
@@ -835,30 +928,31 @@ fun SheetDetailScreen(
 
         // Selection bar.
         if (selectionMode && selectedItems.isNotEmpty()) {
-            Surface(
-                tonalElevation = 2.dp,
-                modifier = Modifier.fillMaxWidth()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
             ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         text = selectedItems.size.toString() + " selected",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = { copySelection() }) { Text("Copy") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        SelBtn(label = "Copy", onClick = { copySelection() })
                         if (!readOnly) {
-                            TextButton(
-                                onClick = { confirmClearSelection = true }
-                            ) {
-                                Text("Clear", color = MaterialTheme.colorScheme.error)
-                            }
+                            SelBtn(label = "Clear", onClick = { confirmClearSelection = true })
                         }
-                        TextButton(
+                        SelBtn(
+                            label = "Select all",
                             onClick = {
                                 val all = mutableSetOf<Pair<Int, String>>()
                                 for (r in rows) {
@@ -866,13 +960,14 @@ fun SheetDetailScreen(
                                 }
                                 selectedItems = all
                             }
-                        ) { Text("Select all") }
-                        TextButton(
+                        )
+                        SelBtn(
+                            label = "Unselect all",
                             onClick = {
                                 selectedItems = emptySet()
                                 selectionMode = false
                             }
-                        ) { Text("Unselect all") }
+                        )
                     }
                 }
             }
@@ -890,7 +985,7 @@ fun SheetDetailScreen(
                     tonalElevation = 3.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(top = 6.dp, start = 12.dp, end = 12.dp, bottom = 10.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
@@ -898,8 +993,13 @@ fun SheetDetailScreen(
                             OutlinedTextField(
                                 value = draft,
                                 onValueChange = { draft = it },
-                                placeholder = { Text("Enter value") },
+                                placeholder = { Text("Enter value", fontSize = 16.sp) },
                                 singleLine = true,
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    fontSize = 16.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                ),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(32.dp),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                 keyboardActions = KeyboardActions(onDone = { commitDraft() }),
                                 modifier = Modifier.weight(1f)
@@ -1202,7 +1302,7 @@ fun SheetDetailScreen(
                         confirmCompact = false
                         io { store.compactRows() }
                     }
-                ) { Text("Compact") }
+                ) { Text("Compact", fontSize = 13.sp, fontWeight = FontWeight.Medium) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmCompact = false }) { Text("Cancel") }
@@ -1216,7 +1316,14 @@ fun SheetDetailScreen(
         val cur = styles[styleKey(selPick.first, selPick.second)]
         AlertDialog(
             onDismissRequest = { picker = null },
-            title = { Text(if (pick == "text") "Text color" else "Cell fill") },
+            title = {
+                Text(
+                    text = if (pick == "text") "TEXT COLOR" else "CELL FILL",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     if (pick == "fill") {
@@ -1229,34 +1336,34 @@ fun SheetDetailScreen(
                             }
                         ) { Text("No fill") }
                     }
-                    for (chunk in PALETTE.chunked(5)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            for (hex in chunk) {
-                                val c = parseHexColor(hex) ?: Color.Black
-                                val active = if (pick == "text") cur?.color == hex else cur?.bg == hex
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .background(c)
-                                        .border(
-                                            width = if (active) 3.dp else 1.dp,
-                                            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                                        )
-                                        .combinedClickable(
-                                            onClick = {
-                                                val base = cur ?: CellStyle()
-                                                val next = if (pick == "text") base.copy(color = hex) else base.copy(bg = hex)
-                                                io { store.setStyle(selPick.first, selPick.second, next) }
-                                                picker = null
-                                            }
-                                        )
-                                )
-                            }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                    ) {
+                        for (hex in PALETTE) {
+                            val c = parseHexColor(hex) ?: Color.Black
+                            val active = if (pick == "text") cur?.color == hex else cur?.bg == hex
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(32.dp)
+                                    .background(c)
+                                    .border(
+                                        width = if (active) 2.dp else 0.dp,
+                                        color = if (active) MaterialTheme.colorScheme.onSurface else Color.Transparent
+                                    )
+                                    .combinedClickable(
+                                        onClick = {
+                                            val base = cur ?: CellStyle()
+                                            val next = if (pick == "text") base.copy(color = hex) else base.copy(bg = hex)
+                                            io { store.setStyle(selPick.first, selPick.second, next) }
+                                            picker = null
+                                        }
+                                    )
+                            )
                         }
-                        Spacer(modifier = Modifier.size(8.dp))
                     }
                 }
             },
@@ -1313,5 +1420,25 @@ private fun ColToggleBox(checked: Boolean) {
                 tint = MaterialTheme.colorScheme.onPrimary
             )
         }
+    }
+}
+
+@Composable
+private fun SelBtn(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .combinedClickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }

@@ -304,41 +304,46 @@ fun SheetFilesTab(
                     onClick = { isList = true }
                 )
             }
-            Box(
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(16.dp)
-                    .size(48.dp)
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.onSurface)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { createMenu = true }
-                    ),
-                contentAlignment = Alignment.Center
+                    .padding(end = 24.dp, bottom = 28.dp),
+                horizontalAlignment = Alignment.End
             ) {
-                androidx.compose.foundation.Image(
-                    painter = painterResource(net.typeblog.socks.R.drawable.ic_ss_doc2x),
-                    contentDescription = "Create file",
-                    modifier = Modifier.size(24.dp)
-                )
+                if (createMenu) {
+                    FabMenuPopup(
+                        onDismiss = { createMenu = false },
+                        onPickPreset = { p ->
+                            createMenu = false
+                            pwAsk = PwAsk(preset = p, upload = null)
+                        },
+                        onPickUpload = {
+                            createMenu = false
+                            uploadLauncher.launch("*/*")
+                        }
+                    )
+                    Spacer(modifier = Modifier.size(8.dp))
+                }
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.onSurface)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { createMenu = !createMenu }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.foundation.Image(
+                        painter = painterResource(net.typeblog.socks.R.drawable.ic_ss_doc2x),
+                        contentDescription = "Create file",
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
-    }
-
-    if (createMenu) {
-        CreateFileMenuDialog(
-            onDismiss = { createMenu = false },
-            onPickPreset = { p ->
-                createMenu = false
-                pwAsk = PwAsk(preset = p, upload = null)
-            },
-            onPickUpload = {
-                createMenu = false
-                uploadLauncher.launch("*/*")
-            }
-        )
     }
 
     val tp = typePick

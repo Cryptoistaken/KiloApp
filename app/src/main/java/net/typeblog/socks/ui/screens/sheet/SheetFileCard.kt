@@ -52,7 +52,7 @@ fun SheetFileCard(
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (selected) {
-                MaterialTheme.colorScheme.surfaceVariant
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
             } else {
                 MaterialTheme.colorScheme.surface
             }
@@ -63,6 +63,7 @@ fun SheetFileCard(
             else MaterialTheme.colorScheme.outlineVariant
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -72,7 +73,8 @@ fun SheetFileCard(
                     onClick = { if (selectionMode) onToggleSelect() else onOpen() },
                     onLongClick = { onToggleSelect() }
                 )
-                .padding(14.dp)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FileIconTile(preset = file.preset)
@@ -83,7 +85,7 @@ fun SheetFileCard(
                 ) {
                     Text(
                         text = file.name,
-                        style = MaterialTheme.typography.titleSmall,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
