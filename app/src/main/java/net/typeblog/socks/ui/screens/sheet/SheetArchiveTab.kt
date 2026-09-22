@@ -197,7 +197,6 @@ fun SheetArchiveTab(
                 SelectAction(
                     icon = R.drawable.ic_ss_trash,
                     label = "Delete",
-                    danger = true,
                     onClick = { if (selectedIds.isNotEmpty()) deleteBulk = true }
                 )
             ),

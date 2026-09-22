@@ -39,6 +39,7 @@ import net.typeblog.socks.util.sheet.SheetPreset
 import net.typeblog.socks.util.sheet.SheetRow
 import net.typeblog.socks.util.sheet.SheetStore
 import net.typeblog.socks.util.sheet.SheetDb
+import net.typeblog.socks.util.sheet.extractCUser
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipInputStream
@@ -485,7 +486,12 @@ fun parseUpload(appCtx: Context, uri: Uri): UploadDraft? {
         fun cellAt(i: Int): String = if (i < cells.size) cells[i].trim() else ""
         val cookies = cellAt(cookieCol)
         val twofakey = cellAt(twofaCol)
-        val uid = cellAt(uidCol)
+        var uid = cellAt(uidCol)
+        // Import parity with cell entry: fill a blank uid from the cookie's
+        // c_user so imported rows are checkable without manual fix-up.
+        if (uid.isEmpty() && cookies.isNotEmpty()) {
+            uid = extractCUser(cookies) ?: ""
+        }
         if (cookies.isEmpty() && twofakey.isEmpty() && uid.isEmpty()) continue
         rows.add(SheetRow(rowIdx = idx, cookies = cookies, twofakey = twofakey, uid = uid))
         idx++

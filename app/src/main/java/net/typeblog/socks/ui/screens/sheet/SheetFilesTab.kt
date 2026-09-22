@@ -285,9 +285,8 @@ fun SheetFilesTab(
             SelectBottomBar(
                 actions = listOf(
                     SelectAction(
-                        icon = net.typeblog.socks.R.drawable.ic_ss_archive_idle,
+                        icon = net.typeblog.socks.R.drawable.ic_ss_archive_sel,
                         label = "Archive",
-                        danger = true,
                         onClick = { if (selectedIds.isNotEmpty()) archiveBulk = true }
                     )
                 ),

@@ -134,7 +134,7 @@ class SheetStore private constructor(context: Context) {
         canUndo.value = false
         canRedo.value = false
         openFile.value = f
-        openRows.value = db.loadRows(id).ifEmpty { emptyPad(f.preset) }
+        openRows.value = topUp(db.loadRows(id).ifEmpty { emptyPad(f.preset) }, f.preset)
         openStyles.value = db.loadStyles(id)
         openHidden.value = db.loadHidden(id)
         return true
@@ -151,14 +151,14 @@ class SheetStore private constructor(context: Context) {
         canRedo.value = false
     }
 
-    private fun emptyPad(preset: SheetPreset, n: Int = 100): List<SheetRow> {
+    private fun emptyPad(preset: SheetPreset, n: Int = MAX_GRID_ROWS): List<SheetRow> {
         val cols = preset.columns
         return List(n) { i -> SheetRow(rowIdx = i).let { r -> if (cols.isEmpty()) r else r } }
     }
 
     private fun topUp(rows: List<SheetRow>, preset: SheetPreset): List<SheetRow> {
         val lastData = rows.indexOfLast { it.isData(preset.columns) }
-        val want = (lastData + 51).coerceAtLeast(100)
+        val want = (lastData + 51).coerceAtLeast(MAX_GRID_ROWS)
         if (rows.size >= want) return rows
         return rows + (rows.size until want).map { SheetRow(rowIdx = it) }
     }
@@ -190,6 +190,23 @@ class SheetStore private constructor(context: Context) {
         if ((colKey == "uid" || colKey == "cookies") && value.isNotEmpty()) {
             val dup = rows.any { it.rowIdx != rowIdx && it.cell(colKey) == value }
             if (dup) return false
+        }
+        // Website parity (fbcookie.ts onCellChange): pasting/typing a cookie
+        // auto-fills the uid cell from c_user when the uid is still empty.
+        // Centralized here so every entry point (formula bar, double-tap
+        // paste, quick paste button) gets it. Skips the fill when it would
+        // create a duplicate uid instead of blocking the cookie write.
+        if (colKey == "cookies" && cur.uid.isEmpty()) {
+            val extracted = extractCUser(value)
+            if (!extracted.isNullOrEmpty()) {
+                val uidDup = rows.any { it.rowIdx != rowIdx && it.uid == extracted }
+                if (!uidDup) {
+                    pushUndo()
+                    rows[rowIdx] = cur.withCell(colKey, value).withCell("uid", extracted)
+                    persistRows(topUp(rows, f.preset), "edit")
+                    return true
+                }
+            }
         }
         pushUndo()
         rows[rowIdx] = cur.withCell(colKey, value)

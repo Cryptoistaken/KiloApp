@@ -30,7 +30,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -67,9 +66,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.typeblog.socks.R
 import net.typeblog.socks.util.sheet.CellStyle
+import net.typeblog.socks.util.sheet.MAX_GRID_ROWS
 import net.typeblog.socks.util.sheet.SheetCsv
 import net.typeblog.socks.util.sheet.SheetPreset
 import net.typeblog.socks.util.sheet.SheetStore
+import net.typeblog.socks.util.sheet.extractCUser
 
 private val PALETTE = listOf(
     "#000000", "#434343", "#666666", "#999999", "#B7B7B7",
@@ -158,7 +159,6 @@ fun SheetDetailScreen(
     var picker by remember { mutableStateOf<String?>(null) }
     var confirmClearSelection by remember { mutableStateOf(false) }
     var confirmDeleteDead by remember { mutableStateOf(false) }
-    var confirmRestore by remember { mutableStateOf(false) }
     var confirmCompact by remember { mutableStateOf(false) }
     var downloadName by remember { mutableStateOf("") }
 
@@ -189,6 +189,17 @@ fun SheetDetailScreen(
             toast(appCtx, "Remove duplicates first.")
             return
         }
+        // Website parity (fbcookie checkAccounts throws "No UIDs found."):
+        // the Check button is disabled with no checkable row, this is the
+        // double-tap / keyboard-path guard for the same state.
+        val checkable = rows.any { r ->
+            r.isData(columns) && !r.locked &&
+                (r.uid.isNotEmpty() || extractCUser(r.cookies) != null)
+        }
+        if (!checkable) {
+            toast(appCtx, "Add UID or cookie first.")
+            return
+        }
         // Archived view: UID check only, never simple/advanced (website parity).
         store.runCheck(
             autoCheck,
@@ -200,15 +211,6 @@ fun SheetDetailScreen(
                 toast(appCtx, "Check done: $valid valid, $dead dead.")
             }
         }
-    }
-
-    fun copyAllData() {
-        if (columns.isEmpty() || rows.none { it.isData(columns) }) {
-            toast(appCtx, "Add content first.")
-            return
-        }
-        clipboard.setText(AnnotatedString(SheetCsv.tsv(columns, rows)))
-        toast(appCtx, "Copied.")
     }
 
     fun commitDraft() {
@@ -226,6 +228,20 @@ fun SheetDetailScreen(
             if (dup) {
                 toast(appCtx, "Duplicate. Use a unique value.")
                 return
+            }
+        }
+        // Website parity (fbcookie.ts onCellChange): warn when the uid does
+        // not match the cookie's c_user instead of silently storing a lie.
+        if (ck == "cookies" && row.uid.isNotEmpty()) {
+            val extracted = extractCUser(value)
+            if (extracted != null && extracted != row.uid.trim()) {
+                toast(appCtx, "UID does not match the cookie.")
+            }
+        }
+        if (ck == "uid" && row.cookies.isNotEmpty()) {
+            val extracted = extractCUser(row.cookies)
+            if (extracted != null && extracted != value.trim()) {
+                toast(appCtx, "UID does not match the cookie.")
             }
         }
         scope.launch {
@@ -247,10 +263,41 @@ fun SheetDetailScreen(
         toast(appCtx, "Copied.")
     }
 
+    // Website parity (SheetGrid enterSelectionMode/toggleSelection): header
+    // taps select a whole row / column / everything; a long-press on a
+    // header re-selects just that row / column fresh.
+    fun allCells(): Set<Pair<Int, String>> = buildSet {
+        for (r in rows) {
+            for (c in visibleCols) add(Pair(r.rowIdx, c.key))
+        }
+    }
+
+    fun rowCells(ri: Int): Set<Pair<Int, String>> =
+        visibleCols.map { Pair(ri, it.key) }.toSet()
+
+    fun colCells(ck: String): Set<Pair<Int, String>> =
+        rows.map { Pair(it.rowIdx, ck) }.toSet()
+
+    fun enterMulti(items: Set<Pair<Int, String>>) {
+        selectedCell = null
+        selectedItems = items
+        if (items.isNotEmpty()) selectionMode = true
+    }
+
+    fun toggleMulti(items: Set<Pair<Int, String>>) {
+        if (items.isEmpty()) return
+        val next =
+            if (items.all { selectedItems.contains(it) }) selectedItems - items
+            else selectedItems + items
+        selectedCell = null
+        selectedItems = next
+        selectionMode = next.isNotEmpty()
+    }
+
     fun deleteDeadWithCount(): Int {
         val n = rows.count { it.status == "bad" || it.dead }
         if (n == 0) {
-            toast(appCtx, "No inactive rows.")
+            toast(appCtx, "No dead rows.")
             return 0
         }
         confirmDeleteDead = true
@@ -360,15 +407,23 @@ fun SheetDetailScreen(
                 )
             }
             val fname = openFile?.name ?: "Sheet"
+            val fpreset = openFile?.preset
             if (readOnly) {
-                Text(
-                    text = fname,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                )
+                Row(
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (fpreset != null) PresetIcon(preset = fpreset, sizeDp = 14)
+                    Text(
+                        text = fname,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             } else {
                 TextButton(
                     onClick = {
@@ -377,13 +432,19 @@ fun SheetDetailScreen(
                     },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(
-                        text = fname,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (fpreset != null) PresetIcon(preset = fpreset, sizeDp = 14)
+                        Text(
+                            text = fname,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
             if (!readOnly) {
@@ -402,20 +463,28 @@ fun SheetDetailScreen(
                     )
                 }
             }
-            // Check split button.
+            // Check split button. Disabled with no checkable uid/cookie
+            // (website checkAccounts throws "No UIDs found." in that state).
+            val hasUidToCheck = remember(rows, columns) {
+                rows.any { r ->
+                    r.isData(columns) && !r.locked &&
+                        (r.uid.isNotEmpty() || extractCUser(r.cookies) != null)
+                }
+            }
+            val checkEnabled = !checking && (readOnly || dupRows.isEmpty()) && hasUidToCheck
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
                     .background(
-                        if (!checking && (readOnly || dupRows.isEmpty())) MaterialTheme.colorScheme.primary
+                        if (checkEnabled) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
                     )
             ) {
                 Box(
                     modifier = Modifier
                         .combinedClickable(
-                            enabled = !checking && (readOnly || dupRows.isEmpty()),
+                            enabled = checkEnabled,
                             onClick = { doCheck() }
                         )
                         .padding(horizontal = 10.dp, vertical = 5.dp),
@@ -514,25 +583,10 @@ fun SheetDetailScreen(
                     onDismissRequest = { overflowMenu = false },
                     modifier = Modifier.widthIn(min = 160.dp)
                 ) {
-                    DropdownMenuItem(
-                        text = { Text("Copy all data", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                        leadingIcon = {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_ss_copy),
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        onClick = {
-                            overflowMenu = false
-                            copyAllData()
-                        }
-                    )
                     if (!readOnly) {
-                        DropdownMenuItem(
-                            text = { Text("Download xlsx", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = {
+                        OverflowRow(
+                            label = "Download xlsx",
+                            leading = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_download),
                                     contentDescription = null,
@@ -545,20 +599,20 @@ fun SheetDetailScreen(
                                 val f = openFile
                                 if (f == null) {
                                     toast(appCtx, "Add content first.")
-                                    return@DropdownMenuItem
+                                    return@OverflowRow
                                 }
                                 if (rows.none { it.isData(f.preset.columns) }) {
                                     toast(appCtx, "Add content first.")
-                                    return@DropdownMenuItem
+                                    return@OverflowRow
                                 }
                                 val nm = sanitizeFileName(f.name)
                                 downloadName = nm
                                 downloadLauncher.launch("$nm.csv")
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Upload xlsx", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = {
+                        OverflowRow(
+                            label = "Upload xlsx",
+                            leading = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_upload),
                                     contentDescription = null,
@@ -572,9 +626,9 @@ fun SheetDetailScreen(
                                 detailUploadLauncher.launch("*/*")
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Merge", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = {
+                        OverflowRow(
+                            label = "Merge",
+                            leading = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_merge),
                                     contentDescription = null,
@@ -588,9 +642,9 @@ fun SheetDetailScreen(
                                 detailUploadLauncher.launch("*/*")
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Compact", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = {
+                        OverflowRow(
+                            label = "Compact",
+                            leading = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_compact),
                                     contentDescription = null,
@@ -603,9 +657,9 @@ fun SheetDetailScreen(
                                 confirmCompact = true
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Delete inactive", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = {
+                        OverflowRow(
+                            label = "Delete Dead",
+                            leading = {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_trash),
                                     contentDescription = null,
@@ -618,21 +672,6 @@ fun SheetDetailScreen(
                                 deleteDeadWithCount()
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Restore last save", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_ss_restore),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                overflowMenu = false
-                                confirmRestore = true
-                            }
-                        )
                     }
                     androidx.compose.material3.HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant,
@@ -640,11 +679,10 @@ fun SheetDetailScreen(
                     )
                     for (col in columns) {
                         val visible = !hidden.contains(col.key)
-                        DropdownMenuItem(
-                            text = { Text(col.label, fontSize = 12.sp, fontWeight = FontWeight.Medium) },
-                            leadingIcon = {
-                                ColToggleBox(checked = visible)
-                            },
+                        OverflowRow(
+                            label = col.label,
+                            labelSize = 12.sp,
+                            leading = { ColToggleBox(checked = visible) },
                             onClick = {
                                 val next = hidden.toMutableSet()
                                 if (visible) next.add(col.key) else next.remove(col.key)
@@ -731,7 +769,14 @@ fun SheetDetailScreen(
                             modifier = Modifier
                                 .width(36.dp)
                                 .height(36.dp)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .combinedClickable(
+                                    onClick = { enterMulti(allCells()) },
+                                    onLongClick = {
+                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        enterMulti(allCells())
+                                    }
+                                ),
                             contentAlignment = Alignment.Center
                         ) {}
                         for (col in visibleCols) {
@@ -740,6 +785,13 @@ fun SheetDetailScreen(
                                     .width(fitW)
                                     .height(36.dp)
                                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    .combinedClickable(
+                                        onClick = { toggleMulti(colCells(col.key)) },
+                                        onLongClick = {
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            enterMulti(colCells(col.key))
+                                        }
+                                    )
                                     .padding(horizontal = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -775,11 +827,18 @@ fun SheetDetailScreen(
                         Box(
                             modifier = Modifier
                                 .width(36.dp)
-                                .height(32.dp)
+                                .height(36.dp)
                                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                 .background(
                                     if (row.approved && statusColor != null) statusColor
                                     else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                .combinedClickable(
+                                    onClick = { toggleMulti(rowCells(row.rowIdx)) },
+                                    onLongClick = {
+                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        enterMulti(rowCells(row.rowIdx))
+                                    }
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
@@ -935,21 +994,32 @@ fun SheetDetailScreen(
                 }
                 item {
                     if (!readOnly) {
+                        // The sheet always holds 500 rows up front, so the cap
+                        // is normally reached: then the footer is a static
+                        // count instead of a dead Add button.
+                        val atCap = rows.size >= MAX_GRID_ROWS
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .combinedClickable(onClick = {
-                                    scope.launch {
-                                        val ok = withContext(Dispatchers.IO) { store.addRow() }
-                                        if (!ok) toast(appCtx, "Row limit reached. Maximum 500 rows allowed.")
-                                    }
-                                })
+                                .then(
+                                    if (atCap) Modifier
+                                    else Modifier.combinedClickable(onClick = {
+                                        scope.launch {
+                                            val ok = withContext(Dispatchers.IO) { store.addRow() }
+                                            if (!ok) toast(appCtx, "Row limit reached. Maximum 500 rows allowed.")
+                                        }
+                                    })
+                                )
                                 .padding(vertical = 14.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Add row" + if (dataCount > 0) " · $dataCount rows" else "",
+                                text = if (atCap) {
+                                    if (dataCount > 0) "$dataCount rows" else "No rows yet"
+                                } else {
+                                    "Add row" + if (dataCount > 0) " · $dataCount rows" else ""
+                                },
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -961,51 +1031,51 @@ fun SheetDetailScreen(
             }
         }
 
-        // Selection bar.
+        // Selection mode — same style as multi-file select: header row
+        // [Select all | N selected | Cancel] + icon-above-label action card.
         if (selectionMode && selectedItems.isNotEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                    .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = selectedItems.size.toString() + " selected",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        SelBtn(label = "Copy", onClick = { copySelection() })
-                        if (!readOnly) {
-                            SelBtn(label = "Clear", onClick = { confirmClearSelection = true })
-                        }
-                        SelBtn(
-                            label = "Select all",
-                            onClick = {
-                                val all = mutableSetOf<Pair<Int, String>>()
-                                for (r in rows) {
-                                    for (c in visibleCols) all.add(Pair(r.rowIdx, c.key))
-                                }
-                                selectedItems = all
-                            }
-                        )
-                        SelBtn(
-                            label = "Unselect all",
-                            onClick = {
-                                selectedItems = emptySet()
-                                selectionMode = false
-                            }
-                        )
+            val allCells = remember(rows, visibleCols) {
+                buildSet {
+                    for (r in rows) {
+                        for (c in visibleCols) add(Pair(r.rowIdx, c.key))
                     }
                 }
             }
+            SelectHeader(
+                count = selectedItems.size,
+                total = allCells.size,
+                onToggleAll = {
+                    if (selectedItems.isNotEmpty() && allCells.all { selectedItems.contains(it) }) {
+                        selectedItems = emptySet()
+                        selectionMode = false
+                    } else {
+                        selectedItems = allCells
+                    }
+                },
+                onCancel = {
+                    selectedItems = emptySet()
+                    selectionMode = false
+                }
+            )
+            val cellActions = buildList {
+                add(
+                    SelectAction(
+                        icon = R.drawable.ic_ss_copy,
+                        label = "Copy",
+                        onClick = { copySelection() }
+                    )
+                )
+                if (!readOnly) {
+                    add(
+                        SelectAction(
+                            icon = R.drawable.ic_ss_eraser,
+                            label = "Clear",
+                            onClick = { confirmClearSelection = true }
+                        )
+                    )
+                }
+            }
+            SelectBottomBar(actions = cellActions)
         }
 
         // Quick edit bar.
@@ -1199,7 +1269,7 @@ fun SheetDetailScreen(
                             ) {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_ss_trash),
-                                    contentDescription = "Delete inactive",
+                                    contentDescription = "Delete Dead",
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -1267,7 +1337,7 @@ fun SheetDetailScreen(
         val n = rows.count { it.status == "bad" || it.dead }
         SheetConfirm(
             onDismiss = { confirmDeleteDead = false },
-            message = "Delete $n inactive row" + if (n == 1) "?" else "s?",
+            message = "Delete $n dead row" + if (n == 1) "?" else "s?",
             actionText = "Delete",
             onConfirm = {
                 confirmDeleteDead = false
@@ -1275,27 +1345,8 @@ fun SheetDetailScreen(
                     val removed = withContext(Dispatchers.IO) { store.deleteDeadRows() }
                     toast(
                         appCtx,
-                        if (removed > 0) "Deleted $removed inactive row" + if (removed == 1) "." else "s."
-                        else "No inactive rows to delete."
-                    )
-                }
-            }
-        )
-    }
-
-    if (confirmRestore) {
-        SheetConfirm(
-            onDismiss = { confirmRestore = false },
-            message = "Restore the last saved version? Unsaved changes will be replaced. Your current state will remain in Undo.",
-            actionText = "Restore",
-            onConfirm = {
-                confirmRestore = false
-                scope.launch {
-                    val ok = withContext(Dispatchers.IO) { store.restoreSnapshot() }
-                    toast(
-                        appCtx,
-                        if (ok) "Previous version restored. Your changes remain in Undo."
-                        else "No earlier save to restore yet."
+                        if (removed > 0) "Deleted $removed dead row" + if (removed == 1) "." else "s."
+                        else "No dead rows to delete."
                     )
                 }
             }
@@ -1454,23 +1505,32 @@ private fun ColToggleBox(checked: Boolean) {
     }
 }
 
+// Compact overflow-menu row (website .sheet-more-item: 8/12 padding,
+// 8dp gap, 13sp/500). Replaces DropdownMenuItem whose 48dp min height
+// left too much gap between options.
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SelBtn(label: String, onClick: () -> Unit) {
-    Box(
+private fun OverflowRow(
+    label: String,
+    labelSize: androidx.compose.ui.unit.TextUnit = 13.sp,
+    leading: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit
+) {
+    Row(
         modifier = Modifier
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
             .combinedClickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        if (leading != null) leading()
         Text(
             text = label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            fontSize = labelSize,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
 }

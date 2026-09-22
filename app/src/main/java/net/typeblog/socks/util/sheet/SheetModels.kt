@@ -115,3 +115,6 @@ fun daysLeft(deletedAt: Long, now: Long = System.currentTimeMillis()): Int {
 }
 
 fun isValidUid(uid: String): Boolean = uid.trim().matches(Regex("\\d{4,}"))
+
+fun extractCUser(cookies: String): String? =
+    Regex("c_user=(\\d+)").find(cookies)?.groupValues?.get(1)
