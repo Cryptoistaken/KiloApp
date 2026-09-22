@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,7 +35,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -1370,15 +1370,52 @@ private fun CheckSwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .toggleable(
+                value = checked,
+                role = androidx.compose.ui.semantics.Role.Switch,
+                onValueChange = { onToggle() }
+            )
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f)
         )
-        Switch(checked = checked, onCheckedChange = { onToggle() })
+        MiniSwitch(checked = checked)
+    }
+}
+
+@Composable
+private fun MiniSwitch(checked: Boolean, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(width = 36.dp, height = 20.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
+            .background(
+                if (checked) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.surfaceVariant
+            )
+            .border(
+                2.dp,
+                if (checked) androidx.compose.ui.graphics.Color.Transparent
+                else MaterialTheme.colorScheme.outlineVariant,
+                androidx.compose.foundation.shape.RoundedCornerShape(50)
+            )
+            .padding(2.dp),
+        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
+    ) {
+        Box(
+            modifier = Modifier
+                .size(12.dp)
+                .shadow(1.dp, androidx.compose.foundation.shape.RoundedCornerShape(50))
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.surface)
+        )
     }
 }
 
