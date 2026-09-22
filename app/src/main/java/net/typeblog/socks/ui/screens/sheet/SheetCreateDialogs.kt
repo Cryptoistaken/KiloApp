@@ -73,18 +73,14 @@ fun FabMenuPopup(
     onPickPreset: (SheetPreset) -> Unit,
     onPickUpload: () -> Unit
 ) {
-    androidx.compose.ui.window.Popup(
-        alignment = Alignment.BottomEnd,
-        onDismissRequest = onDismiss
+    Column(
+        modifier = Modifier
+            .width(240.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .padding(4.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .widthIn(min = 210.dp)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                .padding(4.dp)
-        ) {
             Row(
                 modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -145,7 +141,6 @@ fun FabMenuPopup(
                 onClick = onPickUpload
             )
         }
-    }
 }
 
 @Composable

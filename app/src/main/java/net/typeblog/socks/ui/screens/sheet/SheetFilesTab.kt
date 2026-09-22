@@ -280,6 +280,17 @@ fun SheetFilesTab(
                 }
             }
         }
+        if (createMenu) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { createMenu = false }
+                    )
+            )
+        }
         if (!selectionMode) {
             Row(
                 modifier = Modifier
