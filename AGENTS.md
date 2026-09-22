@@ -2,7 +2,7 @@
 
 ## Build (mandatory)
 - Use ONLY the GitHub builder (`.github/workflows/build.yml`). Never build locally on this machine.
-- After pushing code to `master`, check past successful build durations (`gh run list` — recent successful runs took ~4-5 min) and wait about that long in ONE `sleep`, then check the run status once. If still running, keep waiting in longer sleeps (~2-5 min, sized to the observed duration) — do NOT poll every 30 seconds.
+- After pushing code to `master`, follow the CI run with `go run ./monitor-build.go` (repo root; polls every 5s, exits 0 on success, 1 on failure). With no arg it follows the latest run on the current branch; pass an explicit run id to follow that one (`go run ./monitor-build.go <run-id>`). Do NOT use fixed `sleep` waits or manual re-polling.
 - On failure: read the failing step, fix the code, commit, and push again.
 - On success: proceed with download/install per below.
 
@@ -182,6 +182,7 @@ codebase stays clean without future cleanups:
 | Path | Purpose |
 |---|---|
 | `AGENTS.md` | This file — agent rules, build/install flow, snapshots, filesystem map |
+| `monitor-build.go` | CI waiter (stdlib only): `go run ./monitor-build.go [run-id]` polls the Actions run every 5s, exits 0 on success / 1 on failure. Always use this after pushing; never fixed sleeps. |
 | `task.md` | VPN Accelerator task (experimental connect-time goal, SOCKS5-client scope) |
 | `checker/` | Own exit-IP checker (Cloudflare Worker source; deploys via wrangler, outside the APK build) |
 | `cli/` | On-device Go test harness (stdlib only) for the portable engine half: `probe` (SocksTester parity), `check` (Utility.checkWith parity), `bench` (repeat connect-time stats + CSV), `sweep` (bulk proxy list), `speed` (throughput via proxy/direct), `dns` (IPv4-preferred resolve timing). Build: `go build -o kiloproxy .` in `cli/` (binary gitignored). Cannot drive TUN/tun2socks/pdnsd (Android-only). |

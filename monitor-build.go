@@ -58,7 +58,7 @@ func pollRun(id string) (runInfo, error) {
 
 func main() {
 	timeout := flag.Duration("timeout", 25*time.Minute, "give up after this long")
-	interval := flag.Duration("interval", 20*time.Second, "poll interval")
+	interval := flag.Duration("interval", 5*time.Second, "poll interval")
 	flag.Parse()
 
 	id := ""
