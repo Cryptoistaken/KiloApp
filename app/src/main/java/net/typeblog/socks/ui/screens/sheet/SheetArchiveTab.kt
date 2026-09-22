@@ -73,7 +73,12 @@ fun SheetArchiveTab(
     var deleteTarget by remember { mutableStateOf<SheetFile?>(null) }
     var restoreBulk by remember { mutableStateOf(false) }
     var deleteBulk by remember { mutableStateOf(false) }
-    var isList by remember { mutableStateOf(false) }
+    val prefs = remember(appCtx) { androidx.preference.PreferenceManager.getDefaultSharedPreferences(appCtx) }
+    var fileView by net.typeblog.socks.ui.components.rememberPref(prefs, "ss_fileView") { it.getString("ss_fileView", "grid") ?: "grid" }
+    val isList = fileView == "list"
+    fun setView(list: Boolean) {
+        prefs.edit().putString("ss_fileView", if (list) "list" else "grid").apply()
+    }
 
     fun io(block: suspend () -> Unit) {
         scope.launch { withContext(Dispatchers.IO) { block() } }
@@ -212,8 +217,8 @@ fun SheetArchiveTab(
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ArchiveViewSwitch(selected = !isList, icon = R.drawable.ic_ss_view_grid, label = "Grid view", onClick = { isList = false })
-                ArchiveViewSwitch(selected = isList, icon = R.drawable.ic_ss_view_list, label = "List view", onClick = { isList = true })
+                ArchiveViewSwitch(selected = !isList, icon = R.drawable.ic_ss_view_grid, label = "Grid view", onClick = { setView(false) })
+                ArchiveViewSwitch(selected = isList, icon = R.drawable.ic_ss_view_list, label = "List view", onClick = { setView(true) })
             }
         }
     }

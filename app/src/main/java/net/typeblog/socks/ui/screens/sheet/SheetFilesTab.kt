@@ -29,7 +29,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,10 +88,15 @@ fun SheetFilesTab(
     val store = remember(appCtx) { SheetStore.get(appCtx) }
     val scope = rememberCoroutineScope()
     val files by store.files.collectAsState()
+    val prefs = remember(appCtx) { androidx.preference.PreferenceManager.getDefaultSharedPreferences(appCtx) }
+    var fileView by net.typeblog.socks.ui.components.rememberPref(prefs, "ss_fileView") { it.getString("ss_fileView", "grid") ?: "grid" }
+    val isList = fileView == "list"
+    fun setView(list: Boolean) {
+        prefs.edit().putString("ss_fileView", if (list) "list" else "grid").apply()
+    }
 
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     val selectionMode = selectedIds.isNotEmpty()
-    var isList by rememberSaveable { mutableStateOf(false) }
 
     var createMenu by remember { mutableStateOf(false) }
     var typePick by remember { mutableStateOf<UploadDraft?>(null) }
@@ -307,13 +311,13 @@ fun SheetFilesTab(
                     selected = !isList,
                     icon = net.typeblog.socks.R.drawable.ic_ss_view_grid,
                     label = "Grid view",
-                    onClick = { isList = false }
+                    onClick = { setView(false) }
                 )
                 ViewSwitchButton(
                     selected = isList,
                     icon = net.typeblog.socks.R.drawable.ic_ss_view_list,
                     label = "List view",
-                    onClick = { isList = true }
+                    onClick = { setView(true) }
                 )
             }
             Column(
