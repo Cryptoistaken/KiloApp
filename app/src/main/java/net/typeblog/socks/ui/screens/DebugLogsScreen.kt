@@ -62,8 +62,10 @@ fun DebugLogsScreen(onNavigateBack: () -> Unit) {
             val fresh = withContext(Dispatchers.IO) {
                 LogCollector.collectLogs(context)
             }
-            logs.value = fresh
-            delay(2000)
+            // Same text re-set would recompose the whole giant viewer for
+            // nothing; only push when something actually changed.
+            if (fresh != logs.value) logs.value = fresh
+            delay(5000)
         }
     }
 

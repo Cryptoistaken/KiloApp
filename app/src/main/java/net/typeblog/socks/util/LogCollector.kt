@@ -15,7 +15,7 @@ object LogCollector {
     private const val MAX_LOG_CHARS = 200_000
     private const val CACHE_FILE = "debug_logs_cache.txt"
 
-    fun collectLogs(context: Context): String {
+    fun collectLogs(context: Context, logcatLines: Int = 300, smsLines: Int = 300): String {
         val header = buildString {
             appendLine("=== KiloApp Debug Logs ===")
             appendLine("Date: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}")
@@ -28,13 +28,17 @@ object LogCollector {
 
         // The VPN engine (SocksVpnService) runs in the ":vpn" process, so
         // capture every process of this package — not just the UI process.
+        // Tailed: the screen re-renders this text, so only the newest lines
+        // are kept. Share uses the same tails.
         val pids = appProcessPids(context)
         val output = buildString {
-            appendLine("--- sms events (in-app file log) ---")
-            appendLine(SmsLog.read(context))
+            appendLine("--- last crash (in-app catcher) ---")
+            appendLine(CrashLog.pending(context) ?: "(none)")
+            appendLine("--- sms events (in-app file log, last $smsLines lines) ---")
+            appendLine(SmsLog.read(context).lines().takeLast(smsLines).joinToString("\n"))
             for ((i, pid) in pids.withIndex()) {
                 if (i > 0) appendLine("--- process $pid ---")
-                append(runLogcat(pid))
+                append(runLogcat(pid, logcatLines))
             }
         }
 
@@ -74,10 +78,10 @@ object LogCollector {
         return listOf(mine) + siblings
     }
 
-    private fun runLogcat(pid: Int): String {
+    private fun runLogcat(pid: Int, lines: Int): String {
         return try {
             val process = ProcessBuilder(
-                "logcat", "-d", "-v", "time", "-t", "2000", "--pid", pid.toString()
+                "logcat", "-d", "-v", "time", "-t", lines.toString(), "--pid", pid.toString()
             ).redirectErrorStream(true).start()
             val output = process.inputStream.bufferedReader().readText()
             val exit = process.waitFor()
