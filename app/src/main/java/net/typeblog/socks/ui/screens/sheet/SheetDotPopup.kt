@@ -83,13 +83,71 @@ internal fun DotPopup(
     fileName: String = "",
     presetLabel: String = "",
     rowNo: Int = row.rowIdx + 1,
-    checking: Boolean = false
+    checking: Boolean = false,
+    startWide: Boolean = false,
+    onDock: (() -> Unit)? = null,
+    tab: Int? = null,
+    onTabChange: ((Int) -> Unit)? = null,
+    jumpReq: Int? = null,
+    onJumpReq: ((Int?) -> Unit)? = null
 ) {
-    var wide by remember { mutableStateOf(false) }
-    // 0 Details, 1 Log, 2 Req, 3 Dup (mock order).
-    var tab by remember { mutableStateOf(0) }
-    var jumpReq by remember { mutableStateOf<Int?>(null) }
+    var wide by remember(startWide) { mutableStateOf(startWide) }
+    var innerTab by remember { mutableStateOf(0) }
+    var innerJump by remember { mutableStateOf<Int?>(null) }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = if (androidx.compose.foundation.isSystemInDarkTheme()) 0.5f else 0.25f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
+            DotPopupCard(
+                row = row,
+                check = check,
+                reqs = reqs,
+                dupSources = dupSources,
+                isDup = isDup,
+                fileName = fileName,
+                presetLabel = presetLabel,
+                rowNo = rowNo,
+                checking = checking,
+                wide = wide,
+                onToggleWide = { if (wide && onDock != null) onDock() else wide = !wide },
+                showHeader = true,
+                tab = tab ?: innerTab,
+                onTabChange = onTabChange ?: { innerTab = it },
+                jumpReq = jumpReq ?: innerJump,
+                onJumpReq = onJumpReq ?: { innerJump = it }
+            )
+        }
+    }
+}
 
+// The card alone: used anchored under the dot (narrow, header-less like
+// the mock small popup) and inside the wide dialog above.
+@Composable
+internal fun DotPopupCard(
+    row: SheetRow,
+    check: RowCheck?,
+    reqs: List<CheckReq>,
+    dupSources: List<DupSource>,
+    isDup: Boolean,
+    fileName: String = "",
+    presetLabel: String = "",
+    rowNo: Int = row.rowIdx + 1,
+    checking: Boolean = false,
+    wide: Boolean = false,
+    onToggleWide: () -> Unit = {},
+    showHeader: Boolean = true,
+    tab: Int = 0,
+    onTabChange: (Int) -> Unit = {},
+    jumpReq: Int? = null,
+    onJumpReq: (Int?) -> Unit = {}
+) {
     val hasDup = dupSources.isNotEmpty() || isDup
     val verdict = verdictFor(row, check, checking)
     val dotColor = when (verdict) {
@@ -126,78 +184,67 @@ internal fun DotPopup(
     }
     val dupState = if (hasDup) StripState.WARN else StripState.MUTE
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    Column(
+        modifier = (if (wide) Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .fillMaxHeight(0.88f)
+        else Modifier.width(300.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
     ) {
+        if (showHeader) {
+            PopupHeader(
+                dotColor = dotColor,
+                where = "ROW-$rowNo / ${fileName.uppercase()} / ${presetLabel.uppercase()}",
+                showDup = hasDup,
+                verdict = verdict,
+                copyText = row.uid.ifEmpty { null },
+                wide = wide,
+                onToggleWide = onToggleWide
+            )
+        }
+        // Check strip: expand + UID / SIM / ADV / DUP.
+        CheckStrip(
+            states = listOf(uidState, simState, advState, dupState),
+            onStripTap = { onTabChange(2) },
+            onDupTap = { onTabChange(3) },
+            wide = wide,
+            onToggleWide = onToggleWide
+        )
+        PopupTabBar(
+            tabs = listOf(
+                "Details" to 0,
+                "Log" to 0,
+                "Req" to reqs.size,
+                "Dup" to dupSources.size
+            ),
+            selected = tab,
+            onSelect = onTabChange
+        )
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = if (androidx.compose.foundation.isSystemInDarkTheme()) 0.5f else 0.25f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
-            contentAlignment = Alignment.Center
+                .fillMaxWidth()
+                .weight(1f, fill = false)
+                .heightIn(max = if (wide) 520.dp else 320.dp)
         ) {
-            Column(
-                modifier = (if (wide) Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .fillMaxHeight(0.88f)
-                else Modifier.width(300.dp))
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surface)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
-            ) {
-                PopupHeader(
-                    dotColor = dotColor,
-                    where = "ROW-$rowNo / ${fileName.uppercase()} / ${presetLabel.uppercase()}",
-                    showDup = hasDup,
-                    verdict = verdict,
-                    copyText = row.uid.ifEmpty { null },
-                    wide = wide,
-                    onToggleWide = { wide = !wide }
-                )
-                // Check strip: expand + UID / SIM / ADV / DUP.
-                CheckStrip(
-                    states = listOf(uidState, simState, advState, dupState),
-                    onStripTap = { tab = 2 },
-                    onDupTap = { tab = 3 },
-                    wide = wide,
-                    onToggleWide = { wide = !wide }
-                )
-                PopupTabBar(
-                    tabs = listOf(
-                        "Details" to 0,
-                        "Log" to 0,
-                        "Req" to reqs.size,
-                        "Dup" to dupSources.size
-                    ),
-                    selected = tab,
-                    onSelect = { tab = it }
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f, fill = false)
-                        .heightIn(max = if (wide) 520.dp else 320.dp)
-                ) {
-                    when (tab) {
-                        0 -> DetailsPane(check)
-                        1 -> LogsPane(
-                            check = check,
-                            reqs = reqs,
-                            onJump = { idx ->
-                                jumpReq = idx
-                                tab = 2
-                            }
-                        )
-                        2 -> RequestsPane(reqs = reqs, jumpReq = jumpReq, onJumped = { jumpReq = null })
-                        else -> DuplicatesPane(
-                            dupSources = dupSources,
-                            fallbackAt = check?.checkedAt ?: 0
-                        )
+            when (tab) {
+                0 -> DetailsPane(check)
+                1 -> LogsPane(
+                    check = check,
+                    reqs = reqs,
+                    onJump = { idx ->
+                        onJumpReq(idx)
+                        onTabChange(2)
                     }
-                }
+                )
+                2 -> RequestsPane(reqs = reqs, jumpReq = jumpReq, onJumped = { onJumpReq(null) })
+                else -> DuplicatesPane(
+                    dupSources = dupSources,
+                    fallbackAt = check?.checkedAt ?: 0
+                )
             }
         }
     }

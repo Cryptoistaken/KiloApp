@@ -5,6 +5,10 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.tryAwaitRelease
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -51,6 +55,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -238,8 +244,32 @@ fun SheetDetailScreen(
     var lastTapTime by remember { mutableStateOf(0L) }
     // Slow second tap on the same cell shows the Cut/Copy/Paste menu.
     var menuCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
-    // Dot cell status dialog: set on dot tap, cleared on dismiss.
+    // Dot popup: anchored under the dot like the mock small popup, tap
+    // the open dot again to close. Expand swaps to the wide dialog.
     var dotRowIdx by remember { mutableStateOf<Int?>(null) }
+    var dotWide by remember { mutableStateOf(false) }
+    var dotTab by remember { mutableStateOf(0) }
+    var dotJump by remember { mutableStateOf<Int?>(null) }
+    var dotDups by remember { mutableStateOf<List<net.typeblog.socks.util.sheet.DupSource>>(emptyList()) }
+    LaunchedEffect(fileId, dotRowIdx) {
+        dotTab = 0
+        dotJump = null
+        dotWide = false
+        val ri = dotRowIdx
+        dotDups = emptyList()
+        if (ri != null) {
+            val r = rows.firstOrNull { it.rowIdx == ri }
+            if (r != null) {
+                dotDups = withContext(Dispatchers.IO) {
+                    try {
+                        net.typeblog.socks.util.sheet.SheetDb(appCtx).dupSources(fileId, r)
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                }
+            }
+        }
+    }
 
     var checkMenu by remember { mutableStateOf(false) }
     var overflowMenu by remember { mutableStateOf(false) }
@@ -260,9 +290,10 @@ fun SheetDetailScreen(
     // append 10 more (scroll-gated so idle rest adds nothing).
     val gridState = rememberLazyListState()
     // The floating cell bar anchors to the tapped cell: dismiss it on scroll
-    // so it never floats over the wrong row.
+    // so it never floats over the wrong row. Same for the anchored dot card.
     LaunchedEffect(gridState.isScrollInProgress) {
         if (gridState.isScrollInProgress && menuCell != null) menuCell = null
+        if (gridState.isScrollInProgress && dotRowIdx != null && !dotWide) dotRowIdx = null
     }
     // Multi-cell mode owns the bottom: the single-cell popup never shares
     // the screen with the Copy/Paste/Clear card.
@@ -1335,36 +1366,87 @@ fun SheetDetailScreen(
                                 }
                             }
                         }
-                        Box(
-                            modifier = Modifier
-                                .width(36.dp)
-                                .height(36.dp)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                .background(MaterialTheme.colorScheme.surface)
-                                .combinedClickable(
-                                    onClick = {
-                                        // Dot tap copies the 2FA code; hold opens status.
-                                        val v = row.twofakey
-                                        if (v.isEmpty()) {
-                                            toast(appCtx, "No 2FA to copy.")
-                                        } else {
-                                            clipboard.setText(AnnotatedString(v))
-                                            store.copyGrid(gridOf(row.rowIdx, "twofakey", v))
-                                            toast(appCtx, "Copied.")
-                                        }
+                        Box {
+                            val holdP = remember(row.rowIdx) { Animatable(0f) }
+                            Box(
+                                modifier = Modifier
+                                    .width(36.dp)
+                                    .height(36.dp)
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .pointerInput(row.rowIdx) {
+                                        detectTapGestures(
+                                            onPress = {
+                                                // Hold progress bar under the dot, like the
+                                                // mock hold-to-confirm. Release early cancels.
+                                                val a = launch { holdP.animateTo(1f, tween(500)) }
+                                                tryAwaitRelease()
+                                                a.cancel()
+                                                holdP.snapTo(0f)
+                                            },
+                                            onLongClick = {
+                                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                dotRowIdx = row.rowIdx
+                                            },
+                                            onTap = {
+                                                // Tap-again on the open dot closes it, like
+                                                // the mock; otherwise tap copies the 2FA code.
+                                                if (dotRowIdx == row.rowIdx && !dotWide) {
+                                                    dotRowIdx = null
+                                                } else {
+                                                    val v = row.twofakey
+                                                    if (v.isEmpty()) {
+                                                        toast(appCtx, "No 2FA to copy.")
+                                                    } else {
+                                                        clipboard.setText(AnnotatedString(v))
+                                                        store.copyGrid(gridOf(row.rowIdx, "twofakey", v))
+                                                        toast(appCtx, "Copied.")
+                                                    }
+                                                }
+                                            }
+                                        )
                                     },
-                                    onLongClick = {
-                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                        dotRowIdx = row.rowIdx
-                                    }
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            StatusDot(
-                                status = row.status,
-                                dead = row.dead,
-                                isDup = false
-                            )
+                                contentAlignment = Alignment.Center
+                            ) {
+                                StatusDot(
+                                    status = row.status,
+                                    dead = row.dead,
+                                    isDup = false
+                                )
+                                if (holdP.value > 0f) {
+                                    Box(
+                                        Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth(holdP.value)
+                                            .height(2.dp)
+                                            .background(AliveGreen)
+                                    )
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = dotRowIdx == row.rowIdx && !dotWide,
+                                onDismissRequest = { if (dotRowIdx == row.rowIdx) dotRowIdx = null },
+                                offset = DpOffset(0.dp, 4.dp)
+                            ) {
+                                DotPopupCard(
+                                    row = row,
+                                    check = openChecks[row.rowIdx],
+                                    reqs = openCheckReqs[row.rowIdx] ?: emptyList(),
+                                    dupSources = dotDups,
+                                    isDup = crossDups.any { it.first == row.rowIdx },
+                                    fileName = openFile?.name ?: "",
+                                    presetLabel = openFile?.preset?.name ?: "",
+                                    rowNo = row.rowIdx + 1,
+                                    checking = checking,
+                                    wide = false,
+                                    onToggleWide = { dotWide = true },
+                                    showHeader = false,
+                                    tab = dotTab,
+                                    onTabChange = { dotTab = it },
+                                    jumpReq = dotJump,
+                                    onJumpReq = { dotJump = it }
+                                )
+                            }
                         }
                     }
                 }
@@ -1617,26 +1699,13 @@ fun SheetDetailScreen(
     }
 
     val dotIdx = dotRowIdx
-    if (dotIdx != null) {
-        // Full dot popup from recorded check data (details, logs,
-        // requests, duplicates). Rows checked before recording landed
-        // show the verdict alone.
+    if (dotIdx != null && dotWide) {
+        // Expanded dot dialog from recorded check data. The anchored card
+        // above handles the narrow state; expand swaps here, dock returns.
         val dotRow = rows.firstOrNull { it.rowIdx == dotIdx }
         if (dotRow == null) {
             dotRowIdx = null
         } else {
-            var dotDups by remember(dotIdx) {
-                mutableStateOf<List<net.typeblog.socks.util.sheet.DupSource>>(emptyList())
-            }
-            LaunchedEffect(dotIdx) {
-                dotDups = withContext(Dispatchers.IO) {
-                    try {
-                        net.typeblog.socks.util.sheet.SheetDb(appCtx).dupSources(fileId, dotRow)
-                    } catch (e: Exception) {
-                        emptyList()
-                    }
-                }
-            }
             DotPopup(
                 row = dotRow,
                 check = openChecks[dotIdx],
@@ -1647,7 +1716,13 @@ fun SheetDetailScreen(
                 fileName = openFile?.name ?: "",
                 presetLabel = openFile?.preset?.name ?: "",
                 rowNo = dotRow.rowIdx + 1,
-                checking = checking
+                checking = checking,
+                startWide = true,
+                onDock = { dotWide = false },
+                tab = dotTab,
+                onTabChange = { dotTab = it },
+                jumpReq = dotJump,
+                onJumpReq = { dotJump = it }
             )
         }
     }
