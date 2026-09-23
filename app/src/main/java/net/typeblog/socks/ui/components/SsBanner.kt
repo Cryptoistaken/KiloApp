@@ -101,22 +101,17 @@ fun SsBanner(
             }
         }
         if (actionLabel != null && onAction != null) {
-            Spacer(modifier = Modifier.width(12.dp))
-            Box(
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = actionLabel,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = scheme.primary,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .background(scheme.primary)
                     .combinedClickable(onClick = onAction)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = actionLabel,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = scheme.onPrimary
-                )
-            }
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+            )
         }
         if (dismissable) {
             IconButton(
