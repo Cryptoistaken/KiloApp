@@ -212,7 +212,8 @@ internal fun DotPopupCard(
             onStripTap = { onTabChange(2) },
             onDupTap = { onTabChange(3) },
             wide = wide,
-            onToggleWide = onToggleWide
+            onToggleWide = onToggleWide,
+            divider = showHeader
         )
         PopupTabBar(
             tabs = listOf(
@@ -391,56 +392,84 @@ internal fun CheckStrip(
     onStripTap: () -> Unit,
     onDupTap: () -> Unit,
     wide: Boolean,
-    onToggleWide: () -> Unit
+    onToggleWide: () -> Unit,
+    divider: Boolean = true
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        ExpandBtn(wide = wide, onToggle = onToggleWide)
-        Spacer(modifier = Modifier.width(4.dp))
-        states.forEachIndexed { i, st ->
-            Box(modifier = Modifier.weight(1f)) {
-                // Connector to the next dot, colored by this dot's state.
-                if (i < states.size - 1) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .offset(x = 12.dp, y = 6.dp)
-                            .height(2.dp)
-                            .clip(RoundedCornerShape(1.dp))
-                            .background(stripLineColor(st))
-                    )
-                }
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(4.dp))
-                        .clickable { if (i == 3) onDupTap() else onStripTap() }
-                        .padding(vertical = 2.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    StripDot(state = st)
-                    Spacer(modifier = Modifier.size(4.dp))
-                    Text(
-                        text = labels[i],
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-    }
+    // Mock: four equal cells, connectors run dot-center to dot-center,
+    // expand floats top-left over the strip (small popup placement).
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant)
-    )
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top
+        ) {
+            states.forEachIndexed { i, st ->
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    if (i > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .offset(y = 9.dp)
+                                .fillMaxWidth(0.5f)
+                                .height(2.dp)
+                                .clip(RoundedCornerShape(1.dp))
+                                .background(stripLineColor(states[i - 1]))
+                        )
+                    }
+                    if (i < states.size - 1) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(y = 9.dp)
+                                .fillMaxWidth(0.5f)
+                                .height(2.dp)
+                                .clip(RoundedCornerShape(1.dp))
+                                .background(stripLineColor(st))
+                        )
+                    }
+                    Column(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { if (i == 3) onDupTap() else onStripTap() }
+                            .padding(vertical = 2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        StripDot(state = st)
+                        Spacer(modifier = Modifier.size(5.dp))
+                        Text(
+                            text = labels[i],
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .offset(x = (-8).dp, y = (-4).dp)
+        ) {
+            ExpandBtn(wide = wide, onToggle = onToggleWide)
+        }
+    }
+    // Mock small popup has no divider under the strip.
+    if (divider) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant)
+        )
+    }
 }
 
 @Composable
@@ -449,7 +478,7 @@ private fun stripLineColor(st: StripState): Color {
         StripState.OK -> AliveGreen.copy(alpha = 0.4f)
         StripState.BAD -> DeadRed.copy(alpha = 0.4f)
         StripState.WARN -> StatusYellow.copy(alpha = 0.4f)
-        StripState.RUN -> MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+        // Mock has no run-colored connector: default line.
         else -> MaterialTheme.colorScheme.outlineVariant
     }
 }
@@ -459,7 +488,7 @@ internal fun StripDot(state: StripState) {
     when (state) {
         StripState.SKIP -> Box(
             modifier = Modifier
-                .size(10.dp)
+                .size(7.dp)
                 .clip(androidx.compose.foundation.shape.CircleShape)
                 .border(
                     1.5.dp,
