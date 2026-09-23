@@ -243,6 +243,7 @@ fun SheetDetailScreen(
 
     var checkMenu by remember { mutableStateOf(false) }
     var overflowMenu by remember { mutableStateOf(false) }
+    var filePopupOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
     var picker by remember { mutableStateOf<String?>(null) }
@@ -907,6 +908,21 @@ fun SheetDetailScreen(
                     onDismissRequest = { overflowMenu = false },
                     modifier = Modifier.widthIn(min = 160.dp)
                 ) {
+                    OverflowRow(
+                        label = "Details",
+                        leading = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_ss_info),
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        onClick = {
+                            overflowMenu = false
+                            filePopupOpen = true
+                        }
+                    )
                     if (!readOnly) {
                         OverflowRow(
                             label = "Download xlsx",
@@ -1513,6 +1529,27 @@ fun SheetDetailScreen(
                     confirmText = "Rename"
                 )
             }
+        }
+    }
+
+    if (filePopupOpen) {
+        val f = openFile
+        if (f == null) {
+            filePopupOpen = false
+        } else {
+            FilePopup(
+                fileName = f.name,
+                preset = f.preset,
+                totalRows = dataCount,
+                alive = rows.count { it.status == "good" || it.status == "done" },
+                dead = rows.count { it.status == "bad" || it.dead },
+                dupRows = crossDups.map { it.first }.distinct().size,
+                pageRows = rows.count { it.status == "eligible" },
+                checkedRows = openChecks.size,
+                createdAt = f.createdAt,
+                updatedAt = f.updatedAt,
+                onDismiss = { filePopupOpen = false }
+            )
         }
     }
 
