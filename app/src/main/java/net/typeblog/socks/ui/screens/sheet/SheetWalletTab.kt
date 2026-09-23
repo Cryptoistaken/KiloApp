@@ -354,22 +354,12 @@ fun SheetWalletTab(modifier: Modifier = Modifier) {
                             }
                         }
                         Spacer(modifier = Modifier.size(8.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { saveAccount = !saveAccount },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = saveAccount,
-                                onCheckedChange = { saveAccount = it }
-                            )
-                            Text(
-                                text = "Save account for " + methodLabel,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        SsCheckbox(
+                            checked = saveAccount,
+                            onCheckedChange = { saveAccount = it },
+                            label = "Save account for " + methodLabel,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         Spacer(modifier = Modifier.size(12.dp))
                         val amountValue = amount.toDoubleOrNull()
                         val amountOk = amountValue != null && amountValue > 0 && amountValue <= balance

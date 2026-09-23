@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.typeblog.socks.R
+import net.typeblog.socks.ui.components.SsCheckIndicator
 
 /**
  * Multi-select header (Vivo style, website palette): gold-free single row
@@ -155,30 +156,14 @@ fun SelectBottomBar(
 
 /** Checkbox square shown top-end of a card while selecting. */
 @Composable
-fun SelectCheckBox(selected: Boolean, modifier: Modifier = Modifier) {
-    Box(
+fun SelectCheckBox(
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    label: String? = null
+) {
+    SsCheckIndicator(
+        checked = selected,
+        contentDescription = label?.let { if (selected) "Selected $it" else "Select $it" },
         modifier = modifier
-            .size(20.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(5.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.onSurface
-                else androidx.compose.ui.graphics.Color.Transparent
-            )
-            .border(
-                1.5.dp,
-                if (selected) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.outlineVariant,
-                androidx.compose.foundation.shape.RoundedCornerShape(5.dp)
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        if (selected) {
-            Image(
-                painter = painterResource(R.drawable.ic_ss_check),
-                contentDescription = null,
-                modifier = Modifier.size(13.dp),
-                colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.surface)
-            )
-        }
-    }
+    )
 }

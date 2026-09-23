@@ -72,6 +72,8 @@ import kotlinx.coroutines.withContext
 import net.typeblog.socks.R
 import net.typeblog.socks.ui.components.SsBanner
 import net.typeblog.socks.ui.components.SsBannerStatus
+import net.typeblog.socks.ui.components.SsCheckIndicator
+import net.typeblog.socks.ui.components.SsCheckboxSize
 import net.typeblog.socks.util.sheet.CellStyle
 import net.typeblog.socks.util.sheet.CopiedGrid
 import net.typeblog.socks.util.sheet.MAX_GRID_ROWS
@@ -1579,29 +1581,8 @@ private fun MiniSwitch(checked: Boolean, modifier: Modifier = Modifier) {
 
 @Composable
 private fun ColToggleBox(checked: Boolean) {
-    Box(
-        modifier = Modifier
-            .size(16.dp)
-            .border(
-                1.5.dp,
-                if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                androidx.compose.foundation.shape.RoundedCornerShape(3.dp)
-            )
-            .background(
-                if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-                androidx.compose.foundation.shape.RoundedCornerShape(3.dp)
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        if (checked) {
-            Icon(
-                painter = painterResource(R.drawable.ic_ss_check),
-                contentDescription = null,
-                modifier = Modifier.size(10.dp),
-                tint = MaterialTheme.colorScheme.onPrimary
-            )
-        }
-    }
+    // Astryx CheckboxInput indicator (sm for the compact menu).
+    SsCheckIndicator(checked = checked, size = SsCheckboxSize.SM)
 }
 
 // Compact overflow-menu row (website .sheet-more-item: 8/12 padding,

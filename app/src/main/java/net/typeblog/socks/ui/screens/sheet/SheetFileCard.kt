@@ -153,6 +153,7 @@ fun SheetFileCard(
             if (selectionMode) {
                 SelectCheckBox(
                     selected = selected,
+                    label = file.name,
                     modifier = Modifier.align(Alignment.TopEnd)
                 )
             }
