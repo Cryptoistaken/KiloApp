@@ -172,7 +172,7 @@ fun SheetFileCard(
                             SheetMenuItem(icon = R.drawable.ic_ss_restore, label = "Restore", onClick = { menuOpen = false; onRestore() })
                         }
                         if (onDeleteForever != null) {
-                            SheetMenuItem(icon = R.drawable.ic_ss_trash, label = "Delete forever", danger = true, onClick = { menuOpen = false; onDeleteForever() })
+                            SheetMenuItem(icon = R.drawable.ic_ss_trash, label = "Delete forever", onClick = { menuOpen = false; onDeleteForever() })
                         }
                         if (onRestore == null && onDeleteForever == null) {
                             SheetMenuItem(icon = R.drawable.ic_ss_download, label = "Download", onClick = { menuOpen = false; onDownload() })
