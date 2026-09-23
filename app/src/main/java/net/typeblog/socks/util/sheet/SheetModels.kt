@@ -86,6 +86,47 @@ data class SheetRow(
     }
 }
 
+// Per-row check record: the details behind the dot verdict, recorded on
+// each check run and shown in the dot popup. Only rows checked after
+// this landed carry data; older rows show the verdict alone.
+data class RowCheck(
+    val checkedAt: Long = 0,
+    val uidOk: Boolean = false,
+    val uidError: String? = null,
+    val simplePage: String? = null,
+    val simpleNumber: String? = null,
+    val simpleError: String? = null,
+    val advEligible: Boolean = false,
+    val advPage: String? = null,
+    val advNumber: String? = null,
+    val advBan: String? = null,
+    val advError: String? = null
+) {
+    val hasData: Boolean get() = checkedAt > 0
+}
+
+// One traced HTTP call behind a row check. Cookie values are never
+// stored: reqNote carries a masked summary (names + truncated values +
+// length) and bodies are replaced by short extracted notes.
+data class CheckReq(
+    val kind: String,
+    val method: String,
+    val url: String,
+    val status: Int = 0,
+    val durationMs: Long = 0,
+    val reqNote: String? = null,
+    val resNote: String? = null,
+    val error: String? = null,
+    val at: Long = 0
+)
+
+// Another file holding the same value: the Duplicates tab source line.
+data class DupSource(
+    val fileName: String,
+    val rowNo: Int,
+    val field: String
+)
+
 data class CellStyle(val bg: String? = null, val color: String? = null, val bold: Boolean = false)
 
 // Internal grid clipboard for Google-Sheets-style cross-file copy/paste

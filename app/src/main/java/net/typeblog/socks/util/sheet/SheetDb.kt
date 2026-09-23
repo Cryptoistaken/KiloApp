@@ -10,7 +10,7 @@ import android.database.sqlite.SQLiteOpenHelper
 // crashes and app updates. Online sync (when added) only backs this up.
 // Note: Android deletes app-private data on uninstall, so uninstall survival
 // needs a SAF export copy or an online backup, never this DB alone.
-class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 1) {
+class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE files(id TEXT PRIMARY KEY, name TEXT NOT NULL, preset TEXT NOT NULL, password TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0, deletedAt INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, seq INTEGER NOT NULL DEFAULT 0)")
@@ -23,9 +23,17 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 1)
         db.execSQL("CREATE TABLE wallet_kv(k TEXT PRIMARY KEY, v TEXT NOT NULL)")
         db.execSQL("CREATE TABLE wallet_tx(id TEXT PRIMARY KEY, createdAt INTEGER NOT NULL, type TEXT NOT NULL, amount REAL NOT NULL, balanceAfter REAL NOT NULL, title TEXT NOT NULL, detail TEXT)")
         db.execSQL("CREATE TABLE outbox(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, op TEXT NOT NULL)")
+        db.execSQL("CREATE TABLE row_checks(fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, checkedAt INTEGER NOT NULL DEFAULT 0, uidOk INTEGER NOT NULL DEFAULT 0, uidError TEXT, simplePage TEXT, simpleNumber TEXT, simpleError TEXT, advEligible INTEGER NOT NULL DEFAULT 0, advPage TEXT, advNumber TEXT, advBan TEXT, advError TEXT, PRIMARY KEY(fileId, rowIdx))")
+        db.execSQL("CREATE TABLE check_reqs(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, method TEXT NOT NULL, url TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0, durationMs INTEGER NOT NULL DEFAULT 0, reqNote TEXT, resNote TEXT, error TEXT, at INTEGER NOT NULL)")
+        db.execSQL("CREATE INDEX idx_reqs_row ON check_reqs(fileId, rowIdx, seq)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS row_checks(fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, checkedAt INTEGER NOT NULL DEFAULT 0, uidOk INTEGER NOT NULL DEFAULT 0, uidError TEXT, simplePage TEXT, simpleNumber TEXT, simpleError TEXT, advEligible INTEGER NOT NULL DEFAULT 0, advPage TEXT, advNumber TEXT, advBan TEXT, advError TEXT, PRIMARY KEY(fileId, rowIdx))")
+            db.execSQL("CREATE TABLE IF NOT EXISTS check_reqs(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, method TEXT NOT NULL, url TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0, durationMs INTEGER NOT NULL DEFAULT 0, reqNote TEXT, resNote TEXT, error TEXT, at INTEGER NOT NULL)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_reqs_row ON check_reqs(fileId, rowIdx, seq)")
+        }
     }
 
     private fun cv(vararg pairs: Pair<String, Any?>): ContentValues {
@@ -121,6 +129,8 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 1)
 
     fun deleteFileAll(db: SQLiteDatabase, id: String) {
         db.delete("rows", "fileId=?", arrayOf(id))
+        db.delete("row_checks", "fileId=?", arrayOf(id))
+        db.delete("check_reqs", "fileId=?", arrayOf(id))
         db.delete("styles", "fileId=?", arrayOf(id))
         db.delete("hidden_cols", "fileId=?", arrayOf(id))
         db.delete("journal", "fileId=?", arrayOf(id))
@@ -197,6 +207,123 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 1)
                 if (r.twofakey in (hits["twofakey"] ?: emptySet())) add(Pair(r.rowIdx, "twofakey"))
             }
         }
+    }
+
+    // Check records behind the dot popup. A run replaces the file's
+    // records wholesale; row edits drop single rows (see store).
+    fun saveCheckDetails(
+        db: SQLiteDatabase,
+        fileId: String,
+        checks: Map<Int, RowCheck>,
+        reqs: Map<Int, List<CheckReq>>
+    ) {
+        db.delete("row_checks", "fileId=?", arrayOf(fileId))
+        db.delete("check_reqs", "fileId=?", arrayOf(fileId))
+        for ((ri, c) in checks) {
+            db.insert(
+                "row_checks", null,
+                cv("fileId" to fileId, "rowIdx" to ri, "checkedAt" to c.checkedAt,
+                    "uidOk" to if (c.uidOk) 1 else 0, "uidError" to c.uidError,
+                    "simplePage" to c.simplePage, "simpleNumber" to c.simpleNumber,
+                    "simpleError" to c.simpleError,
+                    "advEligible" to if (c.advEligible) 1 else 0, "advPage" to c.advPage,
+                    "advNumber" to c.advNumber, "advBan" to c.advBan, "advError" to c.advError)
+            )
+        }
+        for ((ri, list) in reqs) {
+            for ((i, q) in list.withIndex()) {
+                db.insert(
+                    "check_reqs", null,
+                    cv("fileId" to fileId, "rowIdx" to ri, "seq" to i,
+                        "kind" to q.kind, "method" to q.method, "url" to q.url,
+                        "status" to q.status, "durationMs" to q.durationMs,
+                        "reqNote" to q.reqNote, "resNote" to q.resNote,
+                        "error" to q.error, "at" to q.at)
+                )
+            }
+        }
+    }
+
+    fun loadRowChecks(fileId: String): Map<Int, RowCheck> {
+        val out = mutableMapOf<Int, RowCheck>()
+        readableDatabase.rawQuery(
+            "SELECT rowIdx,checkedAt,uidOk,uidError,simplePage,simpleNumber,simpleError,advEligible,advPage,advNumber,advBan,advError FROM row_checks WHERE fileId=?",
+            arrayOf(fileId)
+        ).use { c ->
+            while (c.moveToNext()) {
+                out[c.getInt(0)] = RowCheck(
+                    checkedAt = c.getLong(1), uidOk = c.getInt(2) == 1,
+                    uidError = if (c.isNull(3)) null else c.getString(3),
+                    simplePage = if (c.isNull(4)) null else c.getString(4),
+                    simpleNumber = if (c.isNull(5)) null else c.getString(5),
+                    simpleError = if (c.isNull(6)) null else c.getString(6),
+                    advEligible = c.getInt(7) == 1,
+                    advPage = if (c.isNull(8)) null else c.getString(8),
+                    advNumber = if (c.isNull(9)) null else c.getString(9),
+                    advBan = if (c.isNull(10)) null else c.getString(10),
+                    advError = if (c.isNull(11)) null else c.getString(11)
+                )
+            }
+        }
+        return out
+    }
+
+    fun loadCheckReqs(fileId: String): Map<Int, List<CheckReq>> {
+        val out = mutableMapOf<Int, MutableList<CheckReq>>()
+        readableDatabase.rawQuery(
+            "SELECT rowIdx,kind,method,url,status,durationMs,reqNote,resNote,error,at FROM check_reqs WHERE fileId=? ORDER BY rowIdx,seq",
+            arrayOf(fileId)
+        ).use { c ->
+            while (c.moveToNext()) {
+                out.getOrPut(c.getInt(0)) { mutableListOf() }.add(
+                    CheckReq(
+                        kind = c.getString(1) ?: "", method = c.getString(2) ?: "",
+                        url = c.getString(3) ?: "", status = c.getInt(4),
+                        durationMs = c.getLong(5),
+                        reqNote = if (c.isNull(6)) null else c.getString(6),
+                        resNote = if (c.isNull(7)) null else c.getString(7),
+                        error = if (c.isNull(8)) null else c.getString(8),
+                        at = c.getLong(9)
+                    )
+                )
+            }
+        }
+        return out
+    }
+
+    fun deleteRowCheckData(db: SQLiteDatabase, fileId: String, rows: Set<Int>) {
+        if (rows.isEmpty()) return
+        // Small sets: one statement per row keeps the SQL static.
+        for (ri in rows) {
+            db.delete("row_checks", "fileId=? AND rowIdx=?", arrayOf(fileId, ri.toString()))
+            db.delete("check_reqs", "fileId=? AND rowIdx=?", arrayOf(fileId, ri.toString()))
+        }
+    }
+
+    fun clearCheckData(db: SQLiteDatabase, fileId: String) {
+        db.delete("row_checks", "fileId=?", arrayOf(fileId))
+        db.delete("check_reqs", "fileId=?", arrayOf(fileId))
+    }
+
+    // Duplicates tab: other files holding this row's values, with names.
+    fun dupSources(fileId: String, row: SheetRow): List<DupSource> {
+        val out = mutableListOf<DupSource>()
+        fun query(col: String, value: String, field: String) {
+            if (value.isEmpty()) return
+            readableDatabase.rawQuery(
+                "SELECT f.name, o.rowIdx FROM rows o JOIN files f ON f.id=o.fileId " +
+                    "WHERE o.fileId != ? AND o.$col = ? ORDER BY f.name, o.rowIdx LIMIT 20",
+                arrayOf(fileId, value)
+            ).use { c ->
+                while (c.moveToNext()) {
+                    out.add(DupSource(c.getString(0) ?: "", c.getInt(1) + 1, field))
+                }
+            }
+        }
+        query("uid", row.uid, "uid")
+        query("cookies", row.cookies, "cookie")
+        query("twofakey", row.twofakey, "2fa")
+        return out
     }
 
     fun loadStyles(fileId: String): Map<String, CellStyle> {
