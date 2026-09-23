@@ -150,7 +150,11 @@ fun DotPopup(
                             }
                         )
                         2 -> RequestsPane(reqs = reqs, jumpReq = jumpReq, onJumped = { jumpReq = null })
-                        else -> DuplicatesPane(dupSources = dupSources)
+                        else -> DuplicatesPane(
+                            dupSources = dupSources,
+                            row = row,
+                            checkedAt = check?.checkedAt ?: 0
+                        )
                     }
                 }
             }
@@ -499,17 +503,24 @@ private fun RequestsPane(reqs: List<CheckReq>, jumpReq: Int?, onJumped: () -> Un
 }
 
 @Composable
-private fun DuplicatesPane(dupSources: List<DupSource>) {
+private fun DuplicatesPane(dupSources: List<DupSource>, row: SheetRow, checkedAt: Long) {
     if (dupSources.isEmpty()) {
         EmptyPane("No duplicates for this row.")
         return
     }
+    val at = fmtTime(checkedAt)
     LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
         itemsIndexed(dupSources, key = { i, _ -> i }) { _, s ->
+            val value = when (s.field) {
+                "uid" -> row.uid
+                "cookie" -> row.cookies
+                "2fa" -> row.twofakey
+                else -> ""
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
@@ -519,21 +530,38 @@ private fun DuplicatesPane(dupSources: List<DupSource>) {
                         .background(StatusYellow)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = s.fileName,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "row ${s.rowNo} · ${s.field}",
-                    fontSize = 10.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = s.field.uppercase(),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (value.isNotEmpty()) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = value,
+                                fontSize = 11.sp,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.size(2.dp))
+                    Text(
+                        text = s.fileName + " · row " + s.rowNo +
+                            if (at.isNotEmpty()) " · $at" else "",
+                        fontSize = 10.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
