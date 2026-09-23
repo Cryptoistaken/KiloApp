@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1348,12 +1349,12 @@ fun SheetDetailScreen(
                                     if (draft.isNotEmpty()) {
                                         IconButton(
                                             onClick = { draft = "" },
-                                            modifier = Modifier.size(28.dp)
+                                            modifier = Modifier.size(36.dp)
                                         ) {
                                             Icon(
                                                 painter = painterResource(R.drawable.ic_ss_clear_text),
                                                 contentDescription = "Clear text",
-                                                modifier = Modifier.size(15.dp),
+                                                modifier = Modifier.size(18.dp),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
@@ -1369,7 +1370,7 @@ fun SheetDetailScreen(
                                 keyboardActions = KeyboardActions(onDone = { commitDraft() }),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(48.dp)
+                                    .heightIn(min = 48.dp)
                             )
                         }
                     }
