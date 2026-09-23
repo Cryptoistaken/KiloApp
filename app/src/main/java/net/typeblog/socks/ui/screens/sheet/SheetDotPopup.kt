@@ -189,6 +189,8 @@ internal fun DotPopupCard(
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .fillMaxHeight(0.88f)
+        // Mock small popup is 248px; the header-less anchored card matches.
+        else if (!showHeader) Modifier.width(248.dp)
         else Modifier.width(300.dp))
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surface)
@@ -417,6 +419,7 @@ internal fun CheckStrip(
                                 .align(Alignment.TopStart)
                                 .offset(y = 9.dp)
                                 .fillMaxWidth(0.5f)
+                                .padding(end = 9.dp)
                                 .height(2.dp)
                                 .clip(RoundedCornerShape(1.dp))
                                 .background(stripLineColor(states[i - 1]))
@@ -428,6 +431,7 @@ internal fun CheckStrip(
                                 .align(Alignment.TopEnd)
                                 .offset(y = 9.dp)
                                 .fillMaxWidth(0.5f)
+                                .padding(start = 9.dp)
                                 .height(2.dp)
                                 .clip(RoundedCornerShape(1.dp))
                                 .background(stripLineColor(st))
@@ -456,7 +460,7 @@ internal fun CheckStrip(
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .offset(x = (-8).dp, y = (-4).dp)
+                .offset(x = (-10).dp, y = (-6).dp)
         ) {
             ExpandBtn(wide = wide, onToggle = onToggleWide)
         }
