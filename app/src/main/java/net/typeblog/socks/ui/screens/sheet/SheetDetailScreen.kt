@@ -395,15 +395,20 @@ fun SheetDetailScreen(
             val res = withContext(Dispatchers.IO) {
                 store.pasteGrid(grid, anchor, area, visibleCols.map { it.key })
             }
-            val (pasted, skipped, cookies) = res
+            val (pasted, skipped, cookies, dup) = res
             if (pasted == 0 && skipped == 0) {
                 toast(appCtx, "Nothing to paste.")
                 return@launch
             }
+            // Duplicates are named, never counted: "Duplicate cookie."
             toast(
                 appCtx,
-                if (skipped > 0) "Pasted $pasted · skipped $skipped."
-                else "Pasted $pasted."
+                when {
+                    dup != null && pasted > 0 -> "Pasted $pasted · Duplicate $dup."
+                    dup != null -> "Duplicate $dup."
+                    skipped > 0 -> "Pasted $pasted · skipped $skipped."
+                    else -> "Pasted $pasted."
+                }
             )
             if (pasted > 0) {
                 if (cookies) maybeAutoCheck("cookies")

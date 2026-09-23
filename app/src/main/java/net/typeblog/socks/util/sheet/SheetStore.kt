@@ -289,17 +289,17 @@ class SheetStore private constructor(context: Context) {
     // key and unknown keys skip. Cookies drag their c_user along (uid
     // derivation); every other cell goes through the same entry rules as
     // typing (duplicates, 2fa, locked rows skip). Single undo, single
-    // persist. Returns Triple(pasted, skipped, cookiesWritten).
+    // persist. Returns PasteResult(pasted, skipped, cookiesWritten, dup).
     fun pasteGrid(
         grid: CopiedGrid,
         anchor: Pair<Int, String>,
         area: Set<Pair<Int, String>>?,
         order: List<String>
-    ): Triple<Int, Int, Boolean> {
-        val f = openFile.value ?: return Triple(0, 0, false)
-        if (grid.cells.isEmpty() || grid.columns.isEmpty() || order.isEmpty()) return Triple(0, 0, false)
+    ): PasteResult {
+        val f = openFile.value ?: return PasteResult(0, 0, false)
+        if (grid.cells.isEmpty() || grid.columns.isEmpty() || order.isEmpty()) return PasteResult(0, 0, false)
         val rows = openRows.value
-        if (rows.isEmpty()) return Triple(0, 0, false)
+        if (rows.isEmpty()) return PasteResult(0, 0, false)
         val samePreset = grid.preset == f.preset.name
         val selRows: List<Int>
         val selCols: List<String>
@@ -349,6 +349,15 @@ class SheetStore private constructor(context: Context) {
         var pasted = 0
         var cookiesWritten = false
         var dirty = false
+        // First duplicate-skipped data name, for the result toast.
+        var dupName: String? = null
+        fun noteDup(ck: String) {
+            if (dupName == null) dupName = when (ck) {
+                "cookies" -> "cookie"
+                "twofakey" -> "2fa"
+                else -> "uid"
+            }
+        }
         for (t in pass1) {
             val cur = w.getOrNull(t.ri) ?: run { skipped++; continue }
             if (cur.locked) {
@@ -366,6 +375,7 @@ class SheetStore private constructor(context: Context) {
             if ((t.ck == "cookies" || t.ck == "twofakey") && t.value.isNotEmpty() &&
                 w.any { it.rowIdx != t.ri && it.cell(t.ck) == t.value }
             ) {
+                noteDup(t.ck)
                 skipped++
                 continue
             }
@@ -395,6 +405,7 @@ class SheetStore private constructor(context: Context) {
                 continue
             }
             if (t.value.isNotEmpty() && w.any { it.rowIdx != t.ri && it.uid == t.value }) {
+                noteDup("uid")
                 skipped++
                 continue
             }
@@ -402,10 +413,10 @@ class SheetStore private constructor(context: Context) {
             dirty = true
             pasted++
         }
-        if (!dirty) return Triple(pasted, skipped, false)
+        if (!dirty) return PasteResult(pasted, skipped, false, dupName)
         pushUndo()
         persistRows(topUp(w, f.preset), "paste")
-        return Triple(pasted, skipped, cookiesWritten)
+        return PasteResult(pasted, skipped, cookiesWritten, dupName)
     }
 
     fun addRow(): Boolean {
