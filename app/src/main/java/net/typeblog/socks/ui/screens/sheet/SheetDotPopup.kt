@@ -168,7 +168,6 @@ private fun CheckStripDot(modifier: Modifier = Modifier, label: String, ok: Bool
     }
     Column(
         modifier = modifier
-            .weight(1f)
             .clip(RoundedCornerShape(4.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 2.dp),
