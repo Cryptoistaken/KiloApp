@@ -954,6 +954,7 @@ fun SheetDetailScreen(
                 title = "Archived",
                 description = "View only. Cannot modify.",
                 actionLabel = "Restore",
+                actionIcon = R.drawable.ic_ss_restore,
                 onAction = {
                     // Sequence it: DB restore + reopen first, then toast
                     // and leave archived view, so the banner clears exactly

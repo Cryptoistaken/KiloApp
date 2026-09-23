@@ -44,6 +44,7 @@ fun SsBanner(
     title: String,
     description: String? = null,
     actionLabel: String? = null,
+    actionIcon: Int? = null,
     onAction: (() -> Unit)? = null,
     dismissable: Boolean = false,
     onDismiss: (() -> Unit)? = null,
@@ -102,16 +103,29 @@ fun SsBanner(
         }
         if (actionLabel != null && onAction != null) {
             Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = actionLabel,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = scheme.primary,
+            Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
                     .combinedClickable(onClick = onAction)
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
-            )
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (actionIcon != null) {
+                    Icon(
+                        painter = painterResource(actionIcon),
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                        tint = scheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
+                Text(
+                    text = actionLabel,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.primary
+                )
+            }
         }
         if (dismissable) {
             IconButton(
