@@ -13,7 +13,7 @@ import org.json.JSONObject
 
 // In-memory working state over SheetDb. Every mutation writes the DB first
 // (local-first), then refreshes the exposed flows. Undo/redo is per open
-// file and memory-only, matching the website behavior.
+// file and persisted in undo_hist/redo_hist, so it survives app restarts.
 class SheetStore private constructor(context: Context) {
     private val db = SheetDb(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -57,16 +57,39 @@ class SheetStore private constructor(context: Context) {
     }
 
     private fun pushUndo() {
-        undoStack.addLast(openRows.value.map { it.copy() })
+        val prev = openRows.value.map { it.copy() }
+        undoStack.addLast(prev)
         if (undoStack.size > 50) undoStack.removeFirst()
         redoStack.clear()
         canUndo.value = undoStack.isNotEmpty()
         canRedo.value = false
+        // Persist pre-state so undo survives app restarts. New edits drop
+        // the redo chain, same as memory.
+        val fid = openFile.value?.id ?: return
+        try {
+            db.tx { d ->
+                db.insertUndo(d, fid, rowsToJson(prev))
+                db.clearRedo(d, fid)
+            }
+        } catch (e: Exception) {
+            // Memory stack already updated; DB is best-effort here.
+        }
     }
 
     fun undo(): Boolean {
         val prev = undoStack.removeLastOrNull() ?: return false
-        redoStack.addLast(openRows.value.map { it.copy() })
+        val cur = openRows.value.map { it.copy() }
+        redoStack.addLast(cur)
+        val fid = openFile.value?.id
+        if (fid != null) {
+            try {
+                db.tx { d ->
+                    db.insertRedo(d, fid, rowsToJson(cur))
+                    db.popUndo(d, fid)
+                }
+            } catch (e: Exception) {
+            }
+        }
         persistRows(prev, "undo")
         canUndo.value = undoStack.isNotEmpty()
         canRedo.value = true
@@ -75,7 +98,19 @@ class SheetStore private constructor(context: Context) {
 
     fun redo(): Boolean {
         val next = redoStack.removeLastOrNull() ?: return false
-        undoStack.addLast(openRows.value.map { it.copy() })
+        val cur = openRows.value.map { it.copy() }
+        undoStack.addLast(cur)
+        if (undoStack.size > 50) undoStack.removeFirst()
+        val fid = openFile.value?.id
+        if (fid != null) {
+            try {
+                db.tx { d ->
+                    db.insertUndo(d, fid, rowsToJson(cur))
+                    db.popRedo(d, fid)
+                }
+            } catch (e: Exception) {
+            }
+        }
         persistRows(next, "redo")
         canUndo.value = true
         canRedo.value = redoStack.isNotEmpty()
@@ -138,8 +173,6 @@ class SheetStore private constructor(context: Context) {
 
     fun open(id: String): Boolean {
         val f = db.getFile(id) ?: return false
-        undoStack.clear()
-        redoStack.clear()
         // Atomic publish: load everything first, then flip all flows at
         // once. Publishing file/rows/styles/hidden one at a time (with DB
         // work between) recomposed the grid mid-load — a flash of hidden
@@ -154,8 +187,34 @@ class SheetStore private constructor(context: Context) {
         } catch (e: Exception) {
             emptySet()
         }
-        canUndo.value = false
-        canRedo.value = false
+        // Restore persisted undo/redo (survives app restarts). Corrupt
+        // entries are skipped, never crash open.
+        val savedUndo = try {
+            db.loadUndoStack(id, 50)
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val savedRedo = try {
+            db.loadRedoStack(id, 50)
+        } catch (e: Exception) {
+            emptyList()
+        }
+        undoStack.clear()
+        redoStack.clear()
+        for (data in savedUndo) {
+            try {
+                undoStack.addLast(rowsFromJson(data).map { it.copy() })
+            } catch (e: Exception) {
+            }
+        }
+        for (data in savedRedo) {
+            try {
+                redoStack.addLast(rowsFromJson(data).map { it.copy() })
+            } catch (e: Exception) {
+            }
+        }
+        canUndo.value = undoStack.isNotEmpty()
+        canRedo.value = redoStack.isNotEmpty()
         openFile.value = f
         openRows.value = rows
         openStyles.value = styles

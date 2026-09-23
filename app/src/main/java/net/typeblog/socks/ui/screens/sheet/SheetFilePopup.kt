@@ -164,7 +164,8 @@ fun FilePopup(
                     onStripTap = { tab = 2 },
                     onDupTap = { tab = 3 },
                     wide = wide,
-                    onToggleWide = { wide = !wide }
+                    onToggleWide = { wide = !wide },
+                    showExpand = false
                 )
                 PopupTabBar(
                     tabs = listOf(

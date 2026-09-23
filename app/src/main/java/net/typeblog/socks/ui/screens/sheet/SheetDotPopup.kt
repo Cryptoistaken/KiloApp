@@ -215,7 +215,8 @@ internal fun DotPopupCard(
             onDupTap = { onTabChange(3) },
             wide = wide,
             onToggleWide = onToggleWide,
-            divider = showHeader
+            divider = showHeader,
+            showExpand = !showHeader
         )
         PopupTabBar(
             tabs = listOf(
@@ -395,7 +396,8 @@ internal fun CheckStrip(
     onDupTap: () -> Unit,
     wide: Boolean,
     onToggleWide: () -> Unit,
-    divider: Boolean = true
+    divider: Boolean = true,
+    showExpand: Boolean = true
 ) {
     // Mock: four equal cells, connectors run dot-center to dot-center,
     // expand floats top-left over the strip (small popup placement).
@@ -457,12 +459,14 @@ internal fun CheckStrip(
                 }
             }
         }
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .offset(x = (-10).dp, y = (-6).dp)
-        ) {
-            ExpandBtn(wide = wide, onToggle = onToggleWide)
+        if (showExpand) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (-10).dp, y = (-6).dp)
+            ) {
+                ExpandBtn(wide = wide, onToggle = onToggleWide)
+            }
         }
     }
     // Mock small popup has no divider under the strip.
@@ -711,7 +715,13 @@ internal fun DetailsPane(check: RowCheck?) {
         if (check.simpleError != null && check.simplePage == null) {
             ResRow("simple.error", check.simpleError)
         }
-        ResRow("advanced.eligible", check.advEligible.toString())
+        // advEligible defaults false, so only show it once advanced really
+        // ran (any adv field present) or it is genuinely true.
+        val advRan = check.advPage != null || check.advNumber != null ||
+            (check.advBan != null && check.advBan != "null") || check.advError != null
+        if (check.advEligible || advRan) {
+            ResRow("advanced.eligible", check.advEligible.toString())
+        }
         check.advPage?.let { ResRow("advanced.page", it) }
         check.advNumber?.let { ResRow("advanced.number", it) }
         if (check.advBan != null && check.advBan != "null") ResRow("advanced.ban", check.advBan)

@@ -10,7 +10,7 @@ import android.database.sqlite.SQLiteOpenHelper
 // crashes and app updates. Online sync (when added) only backs this up.
 // Note: Android deletes app-private data on uninstall, so uninstall survival
 // needs a SAF export copy or an online backup, never this DB alone.
-class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2) {
+class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE files(id TEXT PRIMARY KEY, name TEXT NOT NULL, preset TEXT NOT NULL, password TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0, deletedAt INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, seq INTEGER NOT NULL DEFAULT 0)")
@@ -26,6 +26,10 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2)
         db.execSQL("CREATE TABLE row_checks(fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, checkedAt INTEGER NOT NULL DEFAULT 0, uidOk INTEGER, uidError TEXT, simplePage TEXT, simpleNumber TEXT, simpleError TEXT, advEligible INTEGER NOT NULL DEFAULT 0, advPage TEXT, advNumber TEXT, advBan TEXT, advError TEXT, PRIMARY KEY(fileId, rowIdx))")
         db.execSQL("CREATE TABLE check_reqs(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, method TEXT NOT NULL, url TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0, durationMs INTEGER NOT NULL DEFAULT 0, reqNote TEXT, resNote TEXT, error TEXT, at INTEGER NOT NULL)")
         db.execSQL("CREATE INDEX idx_reqs_row ON check_reqs(fileId, rowIdx, seq)")
+        db.execSQL("CREATE TABLE undo_hist(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, ts INTEGER NOT NULL, data TEXT NOT NULL)")
+        db.execSQL("CREATE INDEX idx_undo_file ON undo_hist(fileId, id)")
+        db.execSQL("CREATE TABLE redo_hist(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, ts INTEGER NOT NULL, data TEXT NOT NULL)")
+        db.execSQL("CREATE INDEX idx_redo_file ON redo_hist(fileId, id)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -33,6 +37,12 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2)
             db.execSQL("CREATE TABLE IF NOT EXISTS row_checks(fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, checkedAt INTEGER NOT NULL DEFAULT 0, uidOk INTEGER, uidError TEXT, simplePage TEXT, simpleNumber TEXT, simpleError TEXT, advEligible INTEGER NOT NULL DEFAULT 0, advPage TEXT, advNumber TEXT, advBan TEXT, advError TEXT, PRIMARY KEY(fileId, rowIdx))")
             db.execSQL("CREATE TABLE IF NOT EXISTS check_reqs(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, method TEXT NOT NULL, url TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0, durationMs INTEGER NOT NULL DEFAULT 0, reqNote TEXT, resNote TEXT, error TEXT, at INTEGER NOT NULL)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_reqs_row ON check_reqs(fileId, rowIdx, seq)")
+        }
+        if (oldVersion < 3) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS undo_hist(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, ts INTEGER NOT NULL, data TEXT NOT NULL)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_undo_file ON undo_hist(fileId, id)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS redo_hist(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, ts INTEGER NOT NULL, data TEXT NOT NULL)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_redo_file ON redo_hist(fileId, id)")
         }
     }
 
@@ -132,6 +142,8 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2)
         db.delete("rows", "fileId=?", arrayOf(id))
         db.delete("row_checks", "fileId=?", arrayOf(id))
         db.delete("check_reqs", "fileId=?", arrayOf(id))
+        db.delete("undo_hist", "fileId=?", arrayOf(id))
+        db.delete("redo_hist", "fileId=?", arrayOf(id))
         db.delete("styles", "fileId=?", arrayOf(id))
         db.delete("hidden_cols", "fileId=?", arrayOf(id))
         db.delete("journal", "fileId=?", arrayOf(id))
@@ -434,6 +446,64 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2)
             if (!c.moveToFirst()) return null
             return c.getLong(0) to c.getString(1)
         }
+    }
+
+    // Persistent undo/redo: pre/post row states per file, survives app
+    // restarts. Memory stacks mirror these tables while a file is open.
+    fun insertUndo(db: SQLiteDatabase, fileId: String, data: String) {
+        db.insert("undo_hist", null, cv("fileId" to fileId, "ts" to System.currentTimeMillis(), "data" to data))
+        db.execSQL(
+            "DELETE FROM undo_hist WHERE fileId=? AND id NOT IN (SELECT id FROM undo_hist WHERE fileId=? ORDER BY id DESC LIMIT 50)",
+            arrayOf(fileId, fileId)
+        )
+    }
+
+    fun loadUndoStack(fileId: String, limit: Int = 50): List<String> {
+        val out = mutableListOf<String>()
+        readableDatabase.rawQuery(
+            "SELECT data FROM undo_hist WHERE fileId=? ORDER BY id ASC LIMIT $limit", arrayOf(fileId)
+        ).use { c ->
+            while (c.moveToNext()) out.add(c.getString(0) ?: "")
+        }
+        // Table keeps oldest-first pruning above, but cap the load to the
+        // newest entries when oversized.
+        return if (out.size > limit) out.takeLast(limit) else out
+    }
+
+    fun popUndo(db: SQLiteDatabase, fileId: String) {
+        db.execSQL(
+            "DELETE FROM undo_hist WHERE id=(SELECT id FROM undo_hist WHERE fileId=? ORDER BY id DESC LIMIT 1)",
+            arrayOf(fileId)
+        )
+    }
+
+    fun insertRedo(db: SQLiteDatabase, fileId: String, data: String) {
+        db.insert("redo_hist", null, cv("fileId" to fileId, "ts" to System.currentTimeMillis(), "data" to data))
+        db.execSQL(
+            "DELETE FROM redo_hist WHERE fileId=? AND id NOT IN (SELECT id FROM redo_hist WHERE fileId=? ORDER BY id DESC LIMIT 50)",
+            arrayOf(fileId, fileId)
+        )
+    }
+
+    fun loadRedoStack(fileId: String, limit: Int = 50): List<String> {
+        val out = mutableListOf<String>()
+        readableDatabase.rawQuery(
+            "SELECT data FROM redo_hist WHERE fileId=? ORDER BY id ASC LIMIT $limit", arrayOf(fileId)
+        ).use { c ->
+            while (c.moveToNext()) out.add(c.getString(0) ?: "")
+        }
+        return if (out.size > limit) out.takeLast(limit) else out
+    }
+
+    fun popRedo(db: SQLiteDatabase, fileId: String) {
+        db.execSQL(
+            "DELETE FROM redo_hist WHERE id=(SELECT id FROM redo_hist WHERE fileId=? ORDER BY id DESC LIMIT 1)",
+            arrayOf(fileId)
+        )
+    }
+
+    fun clearRedo(db: SQLiteDatabase, fileId: String) {
+        db.delete("redo_hist", "fileId=?", arrayOf(fileId))
     }
 
     fun walletBalance(): Double {
