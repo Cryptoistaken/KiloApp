@@ -119,8 +119,8 @@ fun DotPopup(
                         )
                     }
                     CheckStripDot(Modifier.weight(1f), "UID", uidState, false, onClick = { tab = 2 })
-                    CheckStripDot(Modifier.weight(1f), "SIMPLE", if (simpleRan) simpleOk else null, false, onClick = { tab = 2 })
-                    CheckStripDot(Modifier.weight(1f), "ADVANCED", if (advRan) advOk else null, false, onClick = { tab = 2 })
+                    CheckStripDot(Modifier.weight(1f), "SIM", if (simpleRan) simpleOk else null, false, onClick = { tab = 2 })
+                    CheckStripDot(Modifier.weight(1f), "ADV", if (advRan) advOk else null, false, onClick = { tab = 2 })
                     CheckStripDot(Modifier.weight(1f), "DUP", null, isDup, onClick = { tab = 3 })
                 }
                 PopupTabBar(
