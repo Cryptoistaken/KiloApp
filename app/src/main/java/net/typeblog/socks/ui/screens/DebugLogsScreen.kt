@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -200,6 +201,32 @@ fun DebugLogsScreen(onNavigateBack: () -> Unit) {
                         Spacer(modifier = Modifier.width(8.dp))
                     }
                     Text(text = if (copied.value) "Copied!" else "Copy Logs")
+                }
+                // Clear button: deletes old logs (SMS file log, cached
+                // export, logcat buffers). Crash report is kept.
+                OutlinedButton(
+                    onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            LogCollector.clearAll(context)
+                            val fresh = LogCollector.collectLogs(context)
+                            withContext(Dispatchers.Main) {
+                                logs.value = fresh
+                                Toast.makeText(context, "Logs cleared", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_ss_trash),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "Clear")
                 }
             }
         }

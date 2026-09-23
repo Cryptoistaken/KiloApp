@@ -93,6 +93,21 @@ object LogCollector {
         }
     }
 
+    // Clear button: wipes the SMS file log and the cached export, then
+    // best-effort clears the logcat buffers. The crash report is kept —
+    // it has its own Dismiss in the crash dialog.
+    fun clearAll(context: Context) {
+        SmsLog.clear(context)
+        try {
+            File(context.filesDir, CACHE_FILE).delete()
+        } catch (_: Exception) {
+        }
+        try {
+            ProcessBuilder("logcat", "-c").redirectErrorStream(true).start().waitFor()
+        } catch (_: Exception) {
+        }
+    }
+
     fun shareLogs(context: Context, logs: String) {
         val file = File(context.cacheDir, "kiloapp_logs_${System.currentTimeMillis()}.txt")
         file.writeText(logs)

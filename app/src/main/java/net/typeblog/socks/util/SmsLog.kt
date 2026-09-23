@@ -37,4 +37,11 @@ object SmsLog {
             "(sms events unreadable: ${e.message})"
         }
     }
+
+    fun clear(context: Context) {
+        try {
+            File(context.filesDir, FILE).delete()
+        } catch (_: Exception) {
+        }
+    }
 }
