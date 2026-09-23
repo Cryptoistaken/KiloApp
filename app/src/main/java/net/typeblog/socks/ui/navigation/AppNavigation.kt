@@ -1,5 +1,7 @@
 package net.typeblog.socks.ui.navigation
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
@@ -218,7 +220,14 @@ fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0) {
         NavHost(
             navController = navController,
             startDestination = Screen.Connect.route,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.padding(innerPadding),
+            // Instant page switches: the default crossfade keeps the old
+            // page visible and tappable mid-fade, so fast taps land on the
+            // previous page even after navigating.
+            enterTransition = { EnterTransition.None },
+            exitTransition = { ExitTransition.None },
+            popEnterTransition = { EnterTransition.None },
+            popExitTransition = { ExitTransition.None }
         ) {
             composable(Screen.Profiles.route) {
                 ProxiesScreen(
