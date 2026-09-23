@@ -140,14 +140,29 @@ class SheetStore private constructor(context: Context) {
         val f = db.getFile(id) ?: return false
         undoStack.clear()
         redoStack.clear()
+        // Atomic publish: load everything first, then flip all flows at
+        // once. Publishing file/rows/styles/hidden one at a time (with DB
+        // work between) recomposed the grid mid-load — a flash of hidden
+        // columns and empty text before the file rendered.
+        val rows = topUp(db.loadRows(id).ifEmpty { emptyPad(f.preset) }, f.preset)
+        val styles = db.loadStyles(id)
+        val hidden = db.loadHidden(id)
+        val checks = db.loadRowChecks(id)
+        val reqs = db.loadCheckReqs(id)
+        val dups = try {
+            db.crossDupCells(id, rows)
+        } catch (e: Exception) {
+            emptySet()
+        }
         canUndo.value = false
         canRedo.value = false
         openFile.value = f
-        openRows.value = topUp(db.loadRows(id).ifEmpty { emptyPad(f.preset) }, f.preset)
-        openStyles.value = db.loadStyles(id)
-        openHidden.value = db.loadHidden(id)
-        reloadChecks()
-        refreshCrossDups()
+        openRows.value = rows
+        openStyles.value = styles
+        openHidden.value = hidden
+        openChecks.value = checks
+        openCheckReqs.value = reqs
+        openCrossDups.value = dups
         return true
     }
 

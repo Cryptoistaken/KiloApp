@@ -314,6 +314,20 @@ fun SheetDetailScreen(
         scope.launch { withContext(Dispatchers.IO) { block() } }
     }
 
+    val fileReady = openFile?.id == fileId
+    if (!fileReady) {
+        // Loading gate: stale or empty flows must never render as a file.
+        // Without this the grid flashes hidden columns and stray text for
+        // a frame before the open lands.
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
     // Row count + auto-grow: when the user scrolls within 6 rows of the end,
     // append 10 more (scroll-gated so idle rest adds nothing).
     val gridState = rememberLazyListState()
