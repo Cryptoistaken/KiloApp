@@ -114,6 +114,33 @@ private fun parseHexColor(hex: String?): Color? {
 
 private fun styleKey(rowIdx: Int, colKey: String): String = "$rowIdx:$colKey"
 
+// Dot card provider: right-aligned under the dot like the mock small
+// popup (plain Popup, NOT DropdownMenu — menus intrinsic-measure their
+// content and LazyColumn tabs crash intrinsics).
+@Composable
+private fun dotCardProvider(): androidx.compose.ui.window.PopupPositionProvider {
+    val density = LocalDensity.current
+    return remember(density) {
+        val gap = with(density) { 4.dp.roundToPx() }
+        object : androidx.compose.ui.window.PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: androidx.compose.ui.unit.IntRect,
+                windowSize: androidx.compose.ui.unit.IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: androidx.compose.ui.unit.IntSize
+            ): androidx.compose.ui.unit.IntOffset {
+                val x = (anchorBounds.right - popupContentSize.width)
+                    .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+                var y = anchorBounds.bottom + gap
+                if (y + popupContentSize.height > windowSize.height) {
+                    y = (anchorBounds.top - popupContentSize.height - gap).coerceAtLeast(0)
+                }
+                return androidx.compose.ui.unit.IntOffset(x, y)
+            }
+        }
+    }
+}
+
 // Sheets-style floating cell bar: white line with text buttons centered
 // above the tapped cell, flipping below it when there is no room.
 @Composable
@@ -1424,29 +1451,31 @@ fun SheetDetailScreen(
                                     )
                                 }
                             }
-                            DropdownMenu(
-                                expanded = dotRowIdx == row.rowIdx && !dotWide,
-                                onDismissRequest = { if (dotRowIdx == row.rowIdx) dotRowIdx = null },
-                                offset = DpOffset(0.dp, 4.dp)
-                            ) {
-                                DotPopupCard(
-                                    row = row,
-                                    check = openChecks[row.rowIdx],
-                                    reqs = openCheckReqs[row.rowIdx] ?: emptyList(),
-                                    dupSources = dotDups,
-                                    isDup = crossDups.any { it.first == row.rowIdx },
-                                    fileName = openFile?.name ?: "",
-                                    presetLabel = openFile?.preset?.name ?: "",
-                                    rowNo = row.rowIdx + 1,
-                                    checking = checking,
-                                    wide = false,
-                                    onToggleWide = { dotWide = true },
-                                    showHeader = false,
-                                    tab = dotTab,
-                                    onTabChange = { dotTab = it },
-                                    jumpReq = dotJump,
-                                    onJumpReq = { dotJump = it }
-                                )
+                            if (dotRowIdx == row.rowIdx && !dotWide) {
+                                Popup(
+                                    popupPositionProvider = dotCardProvider(),
+                                    onDismissRequest = { dotRowIdx = null },
+                                    properties = PopupProperties(focusable = true)
+                                ) {
+                                    DotPopupCard(
+                                        row = row,
+                                        check = openChecks[row.rowIdx],
+                                        reqs = openCheckReqs[row.rowIdx] ?: emptyList(),
+                                        dupSources = dotDups,
+                                        isDup = crossDups.any { it.first == row.rowIdx },
+                                        fileName = openFile?.name ?: "",
+                                        presetLabel = openFile?.preset?.name ?: "",
+                                        rowNo = row.rowIdx + 1,
+                                        checking = checking,
+                                        wide = false,
+                                        onToggleWide = { dotWide = true },
+                                        showHeader = false,
+                                        tab = dotTab,
+                                        onTabChange = { dotTab = it },
+                                        jumpReq = dotJump,
+                                        onJumpReq = { dotJump = it }
+                                    )
+                                }
                             }
                         }
                     }
