@@ -126,9 +126,9 @@ fun DotPopup(
                 PopupTabBar(
                     tabs = listOf(
                         "Details" to 0,
-                        "Logs" to 0,
-                        "Requests" to reqs.size,
-                        "Duplicates" to dupSources.size
+                        "Log" to 0,
+                        "Req" to reqs.size,
+                        "Dup" to dupSources.size
                     ),
                     selected = tab,
                     onSelect = { tab = it }
