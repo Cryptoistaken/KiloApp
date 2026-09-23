@@ -909,7 +909,7 @@ fun SheetDetailScreen(
                     modifier = Modifier.widthIn(min = 160.dp)
                 ) {
                     OverflowRow(
-                        label = "Details",
+                        label = "Inspector",
                         leading = {
                             Icon(
                                 painter = painterResource(R.drawable.ic_ss_info),
@@ -1537,15 +1537,28 @@ fun SheetDetailScreen(
         if (f == null) {
             filePopupOpen = false
         } else {
+            var inspectorDups by remember(fileId) {
+                mutableStateOf<List<net.typeblog.socks.util.sheet.FileDup>>(emptyList())
+            }
+            LaunchedEffect(filePopupOpen, rows) {
+                if (filePopupOpen) {
+                    inspectorDups = withContext(Dispatchers.IO) {
+                        try {
+                            net.typeblog.socks.util.sheet.SheetDb(appCtx).fileDups(f.id, rows)
+                        } catch (e: Exception) {
+                            emptyList()
+                        }
+                    }
+                }
+            }
             FilePopup(
                 fileName = f.name,
                 preset = f.preset,
-                totalRows = dataCount,
-                alive = rows.count { it.status == "good" || it.status == "done" },
-                dead = rows.count { it.status == "bad" || it.dead },
-                dupRows = crossDups.map { it.first }.distinct().size,
-                pageRows = rows.count { it.status == "eligible" },
-                checkedRows = openChecks.size,
+                rows = rows,
+                checks = openChecks,
+                reqs = openCheckReqs,
+                fileDups = inspectorDups,
+                checking = checking,
                 createdAt = f.createdAt,
                 updatedAt = f.updatedAt,
                 onDismiss = { filePopupOpen = false }
@@ -1630,7 +1643,11 @@ fun SheetDetailScreen(
                 reqs = openCheckReqs[dotIdx] ?: emptyList(),
                 dupSources = dotDups,
                 isDup = crossDups.any { it.first == dotIdx },
-                onDismiss = { dotRowIdx = null }
+                onDismiss = { dotRowIdx = null },
+                fileName = openFile?.name ?: "",
+                presetLabel = openFile?.preset?.name ?: "",
+                rowNo = dotRow.rowIdx + 1,
+                checking = checking
             )
         }
     }

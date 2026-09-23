@@ -308,23 +308,71 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2)
     }
 
     // Duplicates tab: other files holding this row's values, with names.
+    // at = the other file's row check time (0 when never checked).
     fun dupSources(fileId: String, row: SheetRow): List<DupSource> {
         val out = mutableListOf<DupSource>()
         fun query(col: String, value: String, field: String) {
             if (value.isEmpty()) return
             readableDatabase.rawQuery(
-                "SELECT f.name, o.rowIdx FROM rows o JOIN files f ON f.id=o.fileId " +
+                "SELECT f.name, o.rowIdx, r.checkedAt FROM rows o JOIN files f ON f.id=o.fileId " +
+                    "LEFT JOIN row_checks r ON r.fileId=o.fileId AND r.rowIdx=o.rowIdx " +
                     "WHERE o.fileId != ? AND o.$col = ? ORDER BY f.name, o.rowIdx LIMIT 20",
                 arrayOf(fileId, value)
             ).use { c ->
                 while (c.moveToNext()) {
-                    out.add(DupSource(c.getString(0) ?: "", c.getInt(1) + 1, field))
+                    out.add(
+                        DupSource(
+                            c.getString(0) ?: "", c.getInt(1) + 1, field,
+                            if (c.isNull(2)) 0 else c.getLong(2)
+                        )
+                    )
                 }
             }
         }
         query("uid", row.uid, "uid")
         query("cookies", row.cookies, "cookie")
         query("twofakey", row.twofakey, "2fa")
+        return out
+    }
+
+    // Inspector Dup tab: every value in this file that also exists in
+    // another file, with the local row, the other file/row and its check
+    // time. Distinct values are chunked under the SQLite bind limit and
+    // the total is capped so huge files stay fast.
+    fun fileDups(fileId: String, rows: List<SheetRow>): List<net.typeblog.socks.util.sheet.FileDup> {
+        val out = mutableListOf<net.typeblog.socks.util.sheet.FileDup>()
+        fun query(col: String, field: String, localOf: (SheetRow) -> String) {
+            val localRows = mutableMapOf<String, Int>()
+            for (r in rows) {
+                val v = localOf(r)
+                if (v.isNotEmpty() && !localRows.containsKey(v)) localRows[v] = r.rowIdx + 1
+            }
+            if (localRows.isEmpty()) return
+            for (chunk in localRows.keys.chunked(400)) {
+                if (out.size >= 200) return
+                val q = chunk.joinToString(",") { "?" }
+                readableDatabase.rawQuery(
+                    "SELECT o.$col, f.name, o.rowIdx, r.checkedAt FROM rows o JOIN files f ON f.id=o.fileId " +
+                        "LEFT JOIN row_checks r ON r.fileId=o.fileId AND r.rowIdx=o.rowIdx " +
+                        "WHERE o.fileId != ? AND o.$col IN ($q) ORDER BY f.name, o.rowIdx LIMIT 200",
+                    arrayOf(fileId) + chunk.toTypedArray()
+                ).use { c ->
+                    while (c.moveToNext() && out.size < 200) {
+                        val v = c.getString(0) ?: continue
+                        out.add(
+                            net.typeblog.socks.util.sheet.FileDup(
+                                field, c.getString(1) ?: "", c.getInt(2) + 1,
+                                localRows[v] ?: 0,
+                                if (c.isNull(3)) 0 else c.getLong(3)
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        query("uid", "uid") { it.uid }
+        query("cookies", "cookie") { it.cookies }
+        query("twofakey", "2fa") { it.twofakey }
         return out
     }
 

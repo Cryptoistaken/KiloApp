@@ -122,10 +122,22 @@ data class CheckReq(
 )
 
 // Another file holding the same value: the Duplicates tab source line.
+// at = the other file's row check time (0 when never checked).
 data class DupSource(
     val fileName: String,
     val rowNo: Int,
-    val field: String
+    val field: String,
+    val at: Long = 0
+)
+
+// File-level duplicate: a value in this file also present in another
+// file. localRow = 1-based row here holding the value.
+data class FileDup(
+    val field: String,
+    val fileName: String,
+    val rowNo: Int,
+    val localRow: Int,
+    val at: Long = 0
 )
 
 // Checker trace to stored record: same fields, no secrets either way.
