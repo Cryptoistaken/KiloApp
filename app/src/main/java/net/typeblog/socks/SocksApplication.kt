@@ -13,6 +13,11 @@ class SocksApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // Crash catcher first: another app's logcat cannot see our
+        // process, so uncaught exceptions persist to a file shown next
+        // launch with a copy button.
+        net.typeblog.socks.util.CrashLog.install(this)
+
         // Ensure default preference values are set before reading
         PreferenceManager.setDefaultValues(this, R.xml.settings, false)
         migrateSplitSingleMode()

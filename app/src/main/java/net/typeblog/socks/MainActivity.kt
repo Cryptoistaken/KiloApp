@@ -26,6 +26,8 @@ import net.typeblog.socks.ui.navigation.AppNavigation
 import net.typeblog.socks.ui.theme.KiloProxyTheme
 import net.typeblog.socks.util.Constants.PREF_FLOATING_CONTROL
 import net.typeblog.socks.util.Constants.PREF_SKIPPED_UPDATE_VERSION
+import net.typeblog.socks.util.CrashLog
+import net.typeblog.socks.util.CrashReportDialog
 import net.typeblog.socks.util.UpdateChecker
 
 class MainActivity : ComponentActivity() {
@@ -66,6 +68,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             val context = this@MainActivity
             var updatePrompt by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+            var crashReport by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(Unit) {
+                crashReport = withContext(Dispatchers.IO) { CrashLog.pending(context) }
+            }
 
             // Proactive update check: on launch, look for a newer release and prompt
             // the user once per version (they can update or skip). Runs on a
@@ -94,6 +100,15 @@ class MainActivity : ComponentActivity() {
                                 .edit()
                                 .putInt(PREF_SKIPPED_UPDATE_VERSION, info.versionCode)
                                 .apply()
+                        }
+                    )
+                }
+                crashReport?.let { report ->
+                    CrashReportDialog(
+                        text = report,
+                        onDismiss = {
+                            crashReport = null
+                            CrashLog.clear(context)
                         }
                     )
                 }
