@@ -53,13 +53,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -100,6 +104,76 @@ private fun parseHexColor(hex: String?): Color? {
 }
 
 private fun styleKey(rowIdx: Int, colKey: String): String = "$rowIdx:$colKey"
+
+// Sheets-style floating cell bar: white line with text buttons centered
+// above the tapped cell, flipping below it when there is no room.
+@Composable
+private fun cellBarProvider(): androidx.compose.ui.window.PopupPositionProvider {
+    val density = LocalDensity.current
+    return remember(density) {
+        val gap = with(density) { 8.dp.roundToPx() }
+        val margin = with(density) { 4.dp.roundToPx() }
+        object : androidx.compose.ui.window.PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: androidx.compose.ui.unit.IntRect,
+                windowSize: androidx.compose.ui.unit.IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: androidx.compose.ui.unit.IntSize
+            ): androidx.compose.ui.unit.IntOffset {
+                val x = (anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2)
+                    .coerceIn(margin, (windowSize.width - popupContentSize.width - margin).coerceAtLeast(margin))
+                var y = anchorBounds.top - popupContentSize.height - gap
+                if (y < margin) y = anchorBounds.bottom + gap
+                return androidx.compose.ui.unit.IntOffset(x, y)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CellPopBar(
+    readOnly: Boolean,
+    onCut: () -> Unit,
+    onCopy: () -> Unit,
+    onPaste: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Popup(
+        popupPositionProvider = cellBarProvider(),
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true)
+    ) {
+        androidx.compose.foundation.layout.Row(
+            modifier = Modifier
+                .shadow(8.dp, androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surface)
+        ) {
+            if (!readOnly) CellBarButton("Cut", onCut)
+            CellBarButton("Copy", onCopy)
+            if (!readOnly) CellBarButton("Paste", onPaste)
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.CellBarButton(
+    label: String,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .combinedClickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            fontSize = 15.sp,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -175,6 +249,11 @@ fun SheetDetailScreen(
     // Row count + auto-grow: when the user scrolls within 6 rows of the end,
     // append 10 more (scroll-gated so idle rest adds nothing).
     val gridState = rememberLazyListState()
+    // The floating cell bar anchors to the tapped cell: dismiss it on scroll
+    // so it never floats over the wrong row.
+    LaunchedEffect(gridState.isScrollInProgress) {
+        if (gridState.isScrollInProgress && menuCell != null) menuCell = null
+    }
     LaunchedEffect(fileId, readOnly) {
         snapshotFlow {
             gridState.isScrollInProgress to
@@ -1119,30 +1198,16 @@ fun SheetDetailScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )
-                                // Sheets-style tap-again menu on the selected cell.
-                                androidx.compose.material3.DropdownMenu(
-                                    expanded = menuCell == selKey,
-                                    onDismissRequest = { menuCell = null }
-                                ) {
-                                    if (!readOnly) {
-                                        SheetMenuItem(
-                                            icon = R.drawable.ic_ss_cut,
-                                            label = "Cut",
-                                            onClick = { menuCell = null; cutCell(selKey.first, selKey.second) }
-                                        )
-                                    }
-                                    SheetMenuItem(
-                                        icon = R.drawable.ic_ss_copy,
-                                        label = "Copy",
-                                        onClick = { menuCell = null; copyCell(selKey.first, selKey.second) }
+                                // Sheets-style tap-again bar: white floating line
+                                // with text buttons above the selected cell.
+                                if (menuCell == selKey) {
+                                    CellPopBar(
+                                        readOnly = readOnly,
+                                        onCut = { menuCell = null; cutCell(selKey.first, selKey.second) },
+                                        onCopy = { menuCell = null; copyCell(selKey.first, selKey.second) },
+                                        onPaste = { menuCell = null; pasteInto(selKey.first, selKey.second) },
+                                        onDismiss = { menuCell = null }
                                     )
-                                    if (!readOnly) {
-                                        SheetMenuItem(
-                                            icon = R.drawable.ic_ss_paste,
-                                            label = "Paste",
-                                            onClick = { menuCell = null; pasteInto(selKey.first, selKey.second) }
-                                        )
-                                    }
                                 }
                             }
                         }
