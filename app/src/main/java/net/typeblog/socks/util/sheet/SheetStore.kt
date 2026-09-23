@@ -289,7 +289,7 @@ class SheetStore private constructor(context: Context) {
     // key and unknown keys skip. Cookies drag their c_user along (uid
     // derivation); every other cell goes through the same entry rules as
     // typing (duplicates, 2fa, locked rows skip). Single undo, single
-    // persist. Returns PasteResult(pasted, skipped, cookiesWritten, dup).
+    // persist. Returns PasteResult(pasted, skipped, cookiesWritten, note).
     fun pasteGrid(
         grid: CopiedGrid,
         anchor: Pair<Int, String>,
@@ -349,13 +349,13 @@ class SheetStore private constructor(context: Context) {
         var pasted = 0
         var cookiesWritten = false
         var dirty = false
-        // First duplicate-skipped data name, for the result toast.
-        var dupName: String? = null
+        // First notable skip message, for the result toast.
+        var note: String? = null
         fun noteDup(ck: String) {
-            if (dupName == null) dupName = when (ck) {
-                "cookies" -> "cookie"
-                "twofakey" -> "2fa"
-                else -> "uid"
+            if (note == null) note = "Duplicate " + when (ck) {
+                "cookies" -> "cookie."
+                "twofakey" -> "2fa."
+                else -> "uid."
             }
         }
         for (t in pass1) {
@@ -397,7 +397,11 @@ class SheetStore private constructor(context: Context) {
             }
             if (cur.cookies.isNotEmpty()) {
                 // Derived: only the cookie's own c_user may stand.
-                if (cur.uid == t.value) pasted++ else skipped++
+                if (cur.uid == t.value) pasted++
+                else {
+                    if (note == null) note = "UID comes from the cookie."
+                    skipped++
+                }
                 continue
             }
             if (cur.uid == t.value) {
@@ -413,10 +417,10 @@ class SheetStore private constructor(context: Context) {
             dirty = true
             pasted++
         }
-        if (!dirty) return PasteResult(pasted, skipped, false, dupName)
+        if (!dirty) return PasteResult(pasted, skipped, false, note)
         pushUndo()
         persistRows(topUp(w, f.preset), "paste")
-        return PasteResult(pasted, skipped, cookiesWritten, dupName)
+        return PasteResult(pasted, skipped, cookiesWritten, note)
     }
 
     fun addRow(): Boolean {

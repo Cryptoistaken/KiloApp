@@ -97,13 +97,14 @@ data class CopiedGrid(
     val cells: List<List<Pair<String, String>>>
 )
 
-// Result of a grid paste: counts plus the data name ("cookie", "uid",
-// "2fa") of the first duplicate-skipped write, so the toast can name it.
+// Result of a grid paste: counts plus the first notable skip message
+// ("Duplicate cookie.", "UID comes from the cookie."), so the toast can
+// name it instead of counting it.
 data class PasteResult(
     val pasted: Int,
     val skipped: Int,
     val cookiesWritten: Boolean,
-    val dup: String? = null
+    val note: String? = null
 )
 
 data class WalletTx(
