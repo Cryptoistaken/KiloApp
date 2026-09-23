@@ -266,9 +266,9 @@ object SheetChecker {
             PAGE_ID_RES.forEach { cands.add(it.find(html)?.groupValues?.get(1)) }
             cands.add(Regex("c_user=(\\d+)").find(cookie)?.groupValues?.get(1))
             val pageId = cands.firstOrNull { !it.isNullOrEmpty() && it.matches(Regex("^\\d+$")) }
-                ?: return fail("Invalid pageID")
+                ?: return fail("Invalid pageID") to traces
             val dtsg = Regex("\"DTSGInitData\"[,\\[\\]\\s]*\\{[^}]*\"token\"\\s*:\\s*\"([^\"]+)\"")
-                .find(html)?.groupValues?.get(1) ?: return fail("Could not extract fb_dtsg")
+                .find(html)?.groupValues?.get(1) ?: return fail("Could not extract fb_dtsg") to traces
             val cuser = Regex("c_user=(\\d+)").find(cookie)?.groupValues?.get(1) ?: ""
             val dpr = (Regex("dpr=([\\d.]+)").find(cookie)?.groupValues?.get(1)?.toDoubleOrNull()
                 ?.let { Math.round(it).toString() }) ?: "3"

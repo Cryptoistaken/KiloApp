@@ -625,8 +625,8 @@ class SheetStore private constructor(context: Context) {
                         checks[r.rowIdx] = RowCheck(checkedAt = now, uidOk = alive)
                         if (batch != null) {
                             reqList(r.rowIdx).add(
-                                batch.trace.copy(
-                                    resNote = if (alive) "valid" else (batch.names[uid] ?: "dead")
+                                batch.trace.toCheckReq(
+                                    if (alive) "valid" else (batch.names[uid] ?: "dead")
                                 )
                             )
                         }
@@ -672,8 +672,8 @@ class SheetStore private constructor(context: Context) {
                             )
                             for (t in traces) {
                                 reqList(r.rowIdx).add(
-                                    t.copy(
-                                        resNote = res.pageName?.let { "Page \"$it\"" }
+                                    t.toCheckReq(
+                                        res.pageName?.let { "Page \"$it\"" }
                                             ?: res.error ?: "No page"
                                     )
                                 )
@@ -695,11 +695,11 @@ class SheetStore private constructor(context: Context) {
                             for (t in traces) {
                                 reqList(r.rowIdx).add(
                                     when (t.kind) {
-                                        "graphql" -> t.copy(
-                                            resNote = if (res.eligible) "Eligible"
+                                        "graphql" -> t.toCheckReq(
+                                            if (res.eligible) "Eligible"
                                             else (res.error ?: res.banReason ?: "Not eligible")
                                         )
-                                        else -> t.copy(resNote = t.error ?: "Page shell")
+                                        else -> t.toCheckReq(t.error ?: "Page shell")
                                     }
                                 )
                             }

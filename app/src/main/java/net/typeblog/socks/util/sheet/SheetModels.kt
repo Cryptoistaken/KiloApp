@@ -128,6 +128,10 @@ data class DupSource(
     val field: String
 )
 
+// Checker trace to stored record: same fields, no secrets either way.
+fun SheetChecker.ReqTrace.toCheckReq(resNote: String? = this.resNote): CheckReq =
+    CheckReq(kind, method, url, status, durationMs, reqNote, resNote, error, at)
+
 data class CellStyle(val bg: String? = null, val color: String? = null, val bold: Boolean = false)
 
 // Internal grid clipboard for Google-Sheets-style cross-file copy/paste

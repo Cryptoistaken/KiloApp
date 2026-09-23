@@ -226,6 +226,8 @@ fun SheetDetailScreen(
     val visibleCols = remember(columns, hidden) { columns.filter { !hidden.contains(it.key) } }
 
     val crossDups by store.openCrossDups.collectAsState()
+    val openChecks by store.openChecks.collectAsState()
+    val openCheckReqs by store.openCheckReqs.collectAsState()
     val gridClip by store.copiedGrid.collectAsState()
 
     var selectedCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
@@ -1566,79 +1568,33 @@ fun SheetDetailScreen(
 
     val dotIdx = dotRowIdx
     if (dotIdx != null) {
-        // Row status from real data only: verdict + uid + lock flags.
-        // No per-row check log exists, so no log/request sections.
+        // Full dot popup from recorded check data (details, logs,
+        // requests, duplicates). Rows checked before recording landed
+        // show the verdict alone.
         val dotRow = rows.firstOrNull { it.rowIdx == dotIdx }
         if (dotRow == null) {
             dotRowIdx = null
         } else {
-            val verdict = when {
-                dotRow.dead || dotRow.status == "bad" -> "Dead"
-                dotRow.status == "good" || dotRow.status == "done" -> "Live"
-                dotRow.status == "eligible" -> "Eligible"
-                dotRow.status == "pending" -> "Pending"
-                else -> "No data"
+            var dotDups by remember(dotIdx) {
+                mutableStateOf<List<net.typeblog.socks.util.sheet.DupSource>>(emptyList())
             }
-            SheetModal(
-                onDismiss = { dotRowIdx = null },
-                widthDp = 320,
-                title = "Row ${dotRow.rowIdx + 1}"
-            ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        StatusDot(
-                            status = dotRow.status,
-                            dead = dotRow.dead,
-                            isDup = false
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = verdict,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                    Spacer(modifier = Modifier.size(12.dp))
-                    if (dotRow.uid.isNotEmpty()) {
-                        Text(
-                            text = dotRow.uid,
-                            fontSize = 13.sp,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.size(4.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            TextButton(
-                                onClick = {
-                                    clipboard.setText(AnnotatedString(dotRow.uid))
-                                    toast(appCtx, "Copied.")
-                                }
-                            ) { Text("Copy UID") }
-                        }
-                    } else {
-                        Text(
-                            text = "No UID yet.",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (dotRow.hold || dotRow.approved) {
-                        Spacer(modifier = Modifier.size(8.dp))
-                        Text(
-                            text = if (dotRow.hold) "On hold. Editing is locked." else "Approved.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(modifier = Modifier.size(12.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        SheetBtnGhost(label = "Close", onClick = { dotRowIdx = null })
+            LaunchedEffect(dotIdx) {
+                dotDups = withContext(Dispatchers.IO) {
+                    try {
+                        net.typeblog.socks.util.sheet.SheetDb(appCtx).dupSources(fileId, dotRow)
+                    } catch (e: Exception) {
+                        emptyList()
                     }
                 }
             }
+            DotPopup(
+                row = dotRow,
+                check = openChecks[dotIdx],
+                reqs = openCheckReqs[dotIdx] ?: emptyList(),
+                dupSources = dotDups,
+                isDup = crossDups.any { it.first == dotIdx },
+                onDismiss = { dotRowIdx = null }
+            )
         }
     }
 
