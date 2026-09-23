@@ -886,16 +886,17 @@ fun SheetDetailScreen(
                             .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
                             .background(MaterialTheme.colorScheme.primary)
                             .combinedClickable(onClick = {
-                                // The old handler only flipped UI state while
-                                // the db row stayed archived, so readOnly never
-                                // cleared and nothing happened. Restore in the
-                                // store first, then leave archived view.
-                                io {
-                                    store.archiveFile(fileId, false)
-                                    store.open(fileId)
+                                // Sequence it: DB restore + reopen first, then
+                                // toast and leave archived view, so the banner
+                                // clears exactly when the file is editable.
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        store.archiveFile(fileId, false)
+                                        store.open(fileId)
+                                    }
+                                    toast(appCtx, "File restored.")
+                                    onRestoreArchived(fileId)
                                 }
-                                toast(appCtx, "File restored.")
-                                onRestoreArchived(fileId)
                             })
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                         contentAlignment = Alignment.Center
