@@ -225,7 +225,6 @@ fun SheetDetailScreen(
     val columns = openFile?.preset?.columns ?: emptyList()
     val visibleCols = remember(columns, hidden) { columns.filter { !hidden.contains(it.key) } }
 
-    val crossDups by store.openCrossDups.collectAsState()
     val gridClip by store.copiedGrid.collectAsState()
 
     var selectedCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
@@ -1061,13 +1060,10 @@ fun SheetDetailScreen(
                     }
                 }
                 items(rows, key = { it.rowIdx }) { row ->
-                    // Cross-file dup is per cell now: a row may flag only its
-                    // cookie, only its 2fa, or everything. Dots stay on the
-                    // account status and never change for duplicates.
-                    val rowHasDup = crossDups.any { it.first == row.rowIdx }
+                    // Dots stay on the account status and never change for
+                    // duplicates; cross-file dup only counts on the file.
                     val statusColor: Color? = when {
                         row.dead || row.status == "bad" -> DeadRed
-                        rowHasDup -> StatusYellow
                         row.status == "eligible" -> PageBlue
                         row.status == "good" || row.status == "done" -> AliveGreen
                         else -> null
@@ -1104,7 +1100,6 @@ fun SheetDetailScreen(
                             val selKey = Pair(row.rowIdx, col.key)
                             val isActive = selectedCell == selKey && !selectionMode
                             val isMulti = selectedItems.contains(selKey)
-                            val isDup = crossDups.contains(selKey)
                             val customBg = parseHexColor(st?.bg)
                             val fg = parseHexColor(st?.color)
                             val cellBg: Color = when {
@@ -1112,13 +1107,11 @@ fun SheetDetailScreen(
                                 isMulti -> MaterialTheme.colorScheme.surfaceVariant
                                 row.hold && statusColor != null -> statusColor
                                 row.approved && statusColor != null -> statusColor
-                                isDup -> StatusYellow.copy(alpha = 0.15f)
                                 else -> Color.Transparent
                             }
                             val cellBorder: Color = when {
                                 isActive -> MaterialTheme.colorScheme.onSurface
                                 isMulti -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                                isDup -> StatusYellow
                                 else -> MaterialTheme.colorScheme.outlineVariant
                             }
                             Box(

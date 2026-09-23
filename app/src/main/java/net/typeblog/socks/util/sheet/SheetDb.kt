@@ -163,8 +163,8 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 1)
 
     // Cross-file duplicates: open-file (rowIdx, colKey) cells whose uid,
     // cookies or 2fa key also occur in any OTHER file. Same-file repeats
-    // are blocked at entry, so only cross-file collisions flag yellow —
-    // per cell, so a row may flag only its cookie, only its 2fa, or all.
+    // are blocked at entry. Kept for detail use; the grid never paints
+    // them and the file indicator counts rows via countDups.
     fun crossDupCells(excludeFileId: String, rows: List<SheetRow>): Set<Pair<Int, String>> {
         val byCol = mapOf(
             "uid" to rows.mapNotNull { it.uid.ifEmpty { null } }.toSet(),
@@ -319,9 +319,17 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 1)
         }
     }
 
+    // Cross-file duplicate rows: rows of this file whose uid, cookie
+    // or 2fa key also occurs in any OTHER file. In-file repeats are
+    // blocked at entry, so the file indicator only ever counts cross
+    // collisions; the grid itself never paints them.
     private fun countDups(fileId: String): Int {
         readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM (SELECT uid FROM rows WHERE fileId=? AND uid<>'' GROUP BY uid HAVING COUNT(*)>1)",
+            "SELECT COUNT(*) FROM rows r WHERE fileId=? AND (" +
+                "(uid<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.uid<>'' AND o.uid = r.uid)) OR " +
+                "(cookies<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.cookies<>'' AND o.cookies = r.cookies)) OR " +
+                "(twofakey<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.twofakey<>'' AND o.twofakey = r.twofakey))" +
+                ")",
             arrayOf(fileId)
         ).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
     }
