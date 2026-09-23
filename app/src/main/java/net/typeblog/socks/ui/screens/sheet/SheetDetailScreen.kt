@@ -302,11 +302,11 @@ fun SheetDetailScreen(
             openFile?.preset == SheetPreset.PAGE
         ) { valid, dead ->
             scope.launch {
-                // Zero counts are not mentioned: "3 dead.", "2 alive.",
-                // "2 alive, 1 dead.".
+                // Zero counts are not mentioned: "Dead 3.", "Alive 2.",
+                // "Alive 2, Dead 1.".
                 val parts = buildList {
-                    if (valid > 0) add("$valid alive")
-                    if (dead > 0) add("$dead dead")
+                    if (valid > 0) add("Alive $valid")
+                    if (dead > 0) add("Dead $dead")
                 }
                 toast(appCtx, if (parts.isEmpty()) "No UID to check." else parts.joinToString(", ") + ".")
             }
@@ -574,6 +574,52 @@ fun SheetDetailScreen(
     }
 
     var detailUploadMode by remember { mutableStateOf("replace") }
+    // "Send a copy": same content as Download, dropped in cache and opened
+    // in the system share sheet (Telegram, Drive, ...).
+    fun shareOpenFile() {
+        scope.launch {
+            var uri: Uri? = null
+            var subject = ""
+            val err = withContext(Dispatchers.IO) {
+                try {
+                    val f = openFile
+                    val cols = f?.preset?.columns ?: emptyList()
+                    val data = rows
+                    if (f == null || cols.isEmpty() || data.none { it.isData(cols) }) {
+                        return@withContext "Add content first."
+                    }
+                    appCtx.cacheDir.listFiles { file ->
+                        file.isFile && file.name.startsWith("share-") && file.name.endsWith(".xlsx")
+                    }?.forEach { try { it.delete() } catch (_: Exception) { } }
+                    val out = java.io.File(appCtx.cacheDir, "share-" + sanitizeFileName(f.name) + ".xlsx")
+                    out.writeBytes(SheetXlsx.build(cols, data))
+                    uri = androidx.core.content.FileProvider.getUriForFile(
+                        appCtx, "${appCtx.packageName}.provider", out
+                    )
+                    subject = f.name
+                    null
+                } catch (e: Exception) {
+                    "Couldn't share."
+                }
+            }
+            val u = uri
+            if (u != null) {
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    putExtra(android.content.Intent.EXTRA_STREAM, u)
+                    putExtra(android.content.Intent.EXTRA_SUBJECT, subject)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(android.content.Intent.createChooser(intent, "Send a copy"))
+                } catch (e: Exception) {
+                    toast(appCtx, "No app can share this file.")
+                }
+            } else if (err != null) {
+                toast(appCtx, err)
+            }
+        }
+    }
     val detailUploadLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -876,6 +922,21 @@ fun SheetDetailScreen(
                                 val nm = sanitizeFileName(f.name)
                                 downloadName = nm
                                 downloadLauncher.launch("$nm.xlsx")
+                            }
+                        )
+                        OverflowRow(
+                            label = "Send a copy",
+                            leading = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_ss_send),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
+                            onClick = {
+                                overflowMenu = false
+                                shareOpenFile()
                             }
                         )
                         OverflowRow(
