@@ -225,6 +225,7 @@ fun SheetDetailScreen(
     val columns = openFile?.preset?.columns ?: emptyList()
     val visibleCols = remember(columns, hidden) { columns.filter { !hidden.contains(it.key) } }
 
+    val crossDups by store.openCrossDups.collectAsState()
     val gridClip by store.copiedGrid.collectAsState()
 
     var selectedCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
@@ -1133,8 +1134,8 @@ fun SheetDetailScreen(
                     }
                 }
                 items(rows, key = { it.rowIdx }) { row ->
-                    // Dots stay on the account status and never change for
-                    // duplicates; cross-file dup only counts on the file.
+                    // Cross-file dup paints the duplicate cell only; dots stay
+                    // on the account status and never change for duplicates.
                     val statusColor: Color? = when {
                         row.dead || row.status == "bad" -> DeadRed
                         row.status == "eligible" -> PageBlue
@@ -1173,11 +1174,13 @@ fun SheetDetailScreen(
                             val selKey = Pair(row.rowIdx, col.key)
                             val isActive = selectedCell == selKey && !selectionMode
                             val isMulti = selectedItems.contains(selKey)
+                            val isDup = crossDups.contains(selKey)
                             val customBg = parseHexColor(st?.bg)
                             val fg = parseHexColor(st?.color)
                             val cellBg: Color = when {
                                 customBg != null -> customBg
                                 isMulti -> MaterialTheme.colorScheme.surfaceVariant
+                                isDup -> StatusYellow.copy(alpha = 0.15f)
                                 row.hold && statusColor != null -> statusColor
                                 row.approved && statusColor != null -> statusColor
                                 else -> Color.Transparent
@@ -1185,6 +1188,7 @@ fun SheetDetailScreen(
                             val cellBorder: Color = when {
                                 isActive -> MaterialTheme.colorScheme.onSurface
                                 isMulti -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                isDup -> StatusYellow
                                 else -> MaterialTheme.colorScheme.outlineVariant
                             }
                             Box(
