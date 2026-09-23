@@ -53,10 +53,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.awaitEachGesture
 import androidx.compose.ui.input.pointer.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.waitForUpOrCancellation
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -1380,9 +1380,10 @@ fun SheetDetailScreen(
                                         // Hold opens the anchored card with a progress bar
                                         // under the dot, like the mock hold-to-confirm.
                                         // Release early = tap (close if open, else copy 2FA).
+                                        val gestureScope = this
                                         awaitEachGesture {
                                             awaitFirstDown()
-                                            val anim = launch { holdP.animateTo(1f, tween(500)) }
+                                            val anim = gestureScope.launch { holdP.animateTo(1f, tween(500)) }
                                             val up = kotlinx.coroutines.withTimeoutOrNull(500) {
                                                 waitForUpOrCancellation()
                                             }
