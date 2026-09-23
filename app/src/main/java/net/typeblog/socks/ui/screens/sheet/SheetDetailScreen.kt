@@ -53,9 +53,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.graphics.Color
@@ -1370,29 +1369,27 @@ fun SheetDetailScreen(
                         }
                         Box {
                             val holdP = remember(row.rowIdx) { Animatable(0f) }
+                            val pressSource = remember(row.rowIdx) { MutableInteractionSource() }
+                            val pressed by pressSource.collectIsPressedAsState()
+                            LaunchedEffect(pressed) {
+                                // Hold progress bar under the dot, like the mock
+                                // hold-to-confirm. Release early snaps it back.
+                                if (pressed) holdP.animateTo(1f, tween(500))
+                                else holdP.snapTo(0f)
+                            }
                             Box(
                                 modifier = Modifier
                                     .width(36.dp)
                                     .height(36.dp)
                                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                     .background(MaterialTheme.colorScheme.surface)
-                                    .pointerInput(row.rowIdx) {
-                                        // Hold opens the anchored card with a progress bar
-                                        // under the dot, like the mock hold-to-confirm.
-                                        // Release early = tap (close if open, else copy 2FA).
-                                        val gestureScope = this
-                                        awaitEachGesture {
-                                            awaitFirstDown()
-                                            val anim = gestureScope.launch { holdP.animateTo(1f, tween(500)) }
-                                            val up = kotlinx.coroutines.withTimeoutOrNull(500) {
-                                                waitForUpOrCancellation()
-                                            }
-                                            anim.cancel()
-                                            holdP.snapTo(0f)
-                                            if (up == null) {
-                                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                dotRowIdx = row.rowIdx
-                                            } else if (dotRowIdx == row.rowIdx && !dotWide) {
+                                    .combinedClickable(
+                                        interactionSource = pressSource,
+                                        indication = null,
+                                        onClick = {
+                                            // Tap-again on the open dot closes it, like
+                                            // the mock; otherwise tap copies the 2FA code.
+                                            if (dotRowIdx == row.rowIdx && !dotWide) {
                                                 dotRowIdx = null
                                             } else {
                                                 val v = row.twofakey
@@ -1404,8 +1401,12 @@ fun SheetDetailScreen(
                                                     toast(appCtx, "Copied.")
                                                 }
                                             }
+                                        },
+                                        onLongClick = {
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            dotRowIdx = row.rowIdx
                                         }
-                                    },
+                                    ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 StatusDot(
