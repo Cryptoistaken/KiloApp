@@ -670,6 +670,8 @@ fun SheetDetailScreen(
                         }
                         db.tx { d ->
                             db.saveAllRows(d, f.id, cleaned)
+                            // Wholesale replace: rowIdx keys would orphan.
+                            db.clearCheckData(d, f.id)
                             db.recordOp(d, f.id, "replace")
                         }
                         store.open(f.id)

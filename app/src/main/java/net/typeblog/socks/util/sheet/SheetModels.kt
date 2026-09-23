@@ -91,7 +91,8 @@ data class SheetRow(
 // this landed carry data; older rows show the verdict alone.
 data class RowCheck(
     val checkedAt: Long = 0,
-    val uidOk: Boolean = false,
+    // Null = this check never ran for the row (strip dot stays muted).
+    val uidOk: Boolean? = null,
     val uidError: String? = null,
     val simplePage: String? = null,
     val simpleNumber: String? = null,

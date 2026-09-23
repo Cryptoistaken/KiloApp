@@ -24,7 +24,37 @@ object SheetChecker {
     private const val UA_WIN =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
-    private fun get(url: String, headers: Map<String, String>, timeoutMs: Int): Triple<Int, String, String> {
+    // One traced HTTP call behind a row check. Cookie values are never
+    // stored: reqNote carries maskCookie output only, bodies are replaced
+    // by short extracted notes set by the caller per row.
+    data class ReqTrace(
+        val kind: String,
+        val method: String,
+        val url: String,
+        val status: Int = 0,
+        val durationMs: Long = 0,
+        val reqNote: String? = null,
+        val resNote: String? = null,
+        val error: String? = null,
+        val at: Long = System.currentTimeMillis()
+    )
+
+    // Cookie names + truncated values + length. Values never persist raw.
+    fun maskCookie(cookie: String): String {
+        if (cookie.isEmpty()) return ""
+        val shown = cookie.split(";").map { it.trim() }
+            .filter { it.isNotEmpty() }.take(6).map { p ->
+                val i = p.indexOf("=")
+                if (i < 0) p.take(12) else p.substring(0, i) + "=" + p.substring(i + 1).take(4) + ".."
+            }
+        return shown.joinToString("; ") + " (" + cookie.length + " chars)"
+    }
+
+    private fun get(
+        url: String, headers: Map<String, String>, timeoutMs: Int,
+        traceTo: MutableList<ReqTrace>? = null, traceKind: String = ""
+    ): Triple<Int, String, String> {
+        val t0 = System.currentTimeMillis()
         val c = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = timeoutMs
             readTimeout = timeoutMs
@@ -40,6 +70,10 @@ object SheetChecker {
         } finally {
             c.disconnect()
         }
+        traceTo?.add(
+            ReqTrace(traceKind, "GET", url, code, System.currentTimeMillis() - t0,
+                reqNote = headers["Cookie"]?.let(::maskCookie)?.ifEmpty { null }, at = t0)
+        )
         return Triple(code, text, c.url.toString())
     }
 
@@ -48,8 +82,10 @@ object SheetChecker {
         body: String,
         contentType: String,
         headers: Map<String, String>,
-        timeoutMs: Int
+        timeoutMs: Int,
+        traceTo: MutableList<ReqTrace>? = null, traceKind: String = ""
     ): Pair<Int, String> {
+        val t0 = System.currentTimeMillis()
         val c = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = timeoutMs
             readTimeout = timeoutMs
@@ -74,38 +110,53 @@ object SheetChecker {
         } finally {
             c.disconnect()
         }
+        traceTo?.add(
+            ReqTrace(traceKind, "POST", url, code, System.currentTimeMillis() - t0,
+                reqNote = headers["Cookie"]?.let(::maskCookie)?.ifEmpty { null }, at = t0)
+        )
         return code to text
     }
 
-    // ── 1. UID liveness (batch ≤500). Returns the DEAD uids
-    // (every uid whose status.name is not "valid").
-    fun checkUidsDead(uids: List<String>): Set<String> {
-        if (uids.isEmpty()) return emptySet()
+    // ── 1. UID liveness (batch ≤500). The dead uids plus every parsed
+    // status name, with the batch trace for per-row logs.
+    data class UidBatch(
+        val dead: Set<String>,
+        val names: Map<String, String>,
+        val trace: ReqTrace
+    )
+
+    fun checkUids(uids: List<String>): UidBatch {
+        val clean = uids.take(500)
+        if (clean.isEmpty()) return UidBatch(emptySet(), emptyMap(), ReqTrace("uid", "POST", CHECK_URL))
         val payload = JSONObject()
-            .put("inputData", org.json.JSONArray(uids.take(500)))
+            .put("inputData", org.json.JSONArray(clean))
             .put("userLang", "en")
             .put("checkFriends", false)
             .toString()
+        val traces = mutableListOf<ReqTrace>()
         val (code, text) = post(
             CHECK_URL, payload, "application/json",
-            mapOf("Accept" to "application/x-ndjson"), 30_000
+            mapOf("Accept" to "application/x-ndjson"), 30_000, traces, "uid"
         )
         if (code !in 200..299) throw IllegalStateException("checker responded $code")
         val dead = mutableSetOf<String>()
+        val names = mutableMapOf<String, String>()
         for (line in text.split("\n")) {
             val start = line.indexOf("{")
             if (start < 0) continue
             try {
                 val data = JSONObject(line.substring(start)).optJSONObject("data") ?: continue
                 val uid = data.optString("uid").ifEmpty { data.optString("account") }
-                if (uid.isNotEmpty() && data.optJSONObject("status")?.optString("name") != "valid") {
-                    dead.add(uid)
-                }
+                if (uid.isEmpty()) continue
+                val name = data.optJSONObject("status")?.optString("name") ?: ""
+                if (name.isNotEmpty()) names[uid] = name
+                if (name != "valid") dead.add(uid)
             } catch (e: Exception) {
                 // NDJSON framing line — skip, like the worker.
             }
         }
-        return dead
+        val trace = traces.firstOrNull() ?: ReqTrace("uid", "POST", CHECK_URL)
+        return UidBatch(dead, names, trace)
     }
 
     private fun challenged(html: String): Boolean =
@@ -128,7 +179,9 @@ object SheetChecker {
     )
 
     // ── 2. Simple check: accountscenter scrape → pages.
-    fun pageSimple(cookie: String): SimpleResult {
+    // Returns the result with its single GET trace.
+    fun pageSimple(cookie: String): Pair<SimpleResult, List<ReqTrace>> {
+        val traces = mutableListOf<ReqTrace>()
         try {
             val (_, html) = get(
                 "https://accountscenter.facebook.com/profiles",
@@ -143,10 +196,10 @@ object SheetChecker {
                     "upgrade-insecure-requests" to "1",
                     "User-Agent" to UA_IOS
                 ),
-                20_000
+                20_000, traces, "simple"
             )
             if (challenged(html)) {
-                return SimpleResult(false, null, null, "Session requires 2FA or login challenge")
+                return SimpleResult(false, null, null, "Session requires 2FA or login challenge") to traces
             }
             val names = PAGES_RE.findAll(html).map { it.groupValues[1] }.toList()
             val pageName = names.firstOrNull()
@@ -155,9 +208,14 @@ object SheetChecker {
                 pageName = pageName,
                 linkedNumber = LINKED_RE.find(html)?.groupValues?.get(1),
                 error = null
-            )
+            ) to traces
         } catch (e: Exception) {
-            return SimpleResult(false, null, null, netError(e))
+            val err = netError(e)
+            traces.add(
+                ReqTrace("simple", "GET", "https://accountscenter.facebook.com/profiles",
+                    error = err)
+            )
+            return SimpleResult(false, null, null, err) to traces
         }
     }
 
@@ -181,8 +239,10 @@ object SheetChecker {
     )
 
     // ── 3. Advanced check: business.facebook.com scrape + GraphQL eligibility.
-    fun pageAdvanced(cookie: String): AdvancedResult {
+    // Returns the result with its page-GET and GraphQL traces.
+    fun pageAdvanced(cookie: String): Pair<AdvancedResult, List<ReqTrace>> {
         fun fail(error: String) = AdvancedResult(false, null, null, null, error)
+        val traces = mutableListOf<ReqTrace>()
         try {
             val (_, html, finalUrl) = get(
                 "https://business.facebook.com/latest/inbox/wec",
@@ -194,11 +254,11 @@ object SheetChecker {
                     "sec-fetch-site" to "none",
                     "User-Agent" to UA_WIN
                 ),
-                15_000
+                15_000, traces, "advanced"
             )
-            if (challenged(html)) return fail("Session requires 2FA or login challenge")
+            if (challenged(html)) return fail("Session requires 2FA or login challenge") to traces
             if (html.contains("Insufficient Permission") || html.contains("You do not have the necessary permission")) {
-                return fail("Not eligible for this page")
+                return fail("Not eligible for this page") to traces
             }
             val cands = mutableListOf<String?>()
             cands.add(Regex("[?&](?:asset_id|page_id)[=_](\\d{14,17})").find(finalUrl)?.groupValues?.get(1))
@@ -229,20 +289,20 @@ object SheetChecker {
                     "Cookie" to cookie,
                     "User-Agent" to UA_WIN
                 ),
-                15_000
+                15_000, traces, "graphql"
             )
-            if (gcode == 429) return fail("Rate limited")
-            if (gcode !in 200..299) return fail("GraphQL returned $gcode")
+            if (gcode == 429) return fail("Rate limited") to traces
+            if (gcode !in 200..299) return fail("GraphQL returned $gcode") to traces
             if (gtext.contains("Insufficient Permission") || gtext.contains("You do not have the necessary permission")) {
-                return fail("Not eligible for this page")
+                return fail("Not eligible for this page") to traces
             }
             val json = try {
                 JSONObject(gtext.replace(Regex("^for\\s*\\(;;\\)\\s*;?\\s*"), ""))
             } catch (e: Exception) {
-                return fail("Invalid GraphQL JSON")
+                return fail("Invalid GraphQL JSON") to traces
             }
-            val data = json.optJSONObject("data") ?: return fail("Unexpected response structure")
-            if (data.isNull("xfb_is_page_eligible_for_wa_link")) return fail("Unexpected response structure")
+            val data = json.optJSONObject("data") ?: return fail("Unexpected response structure") to traces
+            if (data.isNull("xfb_is_page_eligible_for_wa_link")) return fail("Unexpected response structure") to traces
             val elig = data.optJSONObject("xfb_is_page_eligible_for_wa_link")
             val rawName = data.optJSONObject("page")?.optString("name")
             val pageName = if (!rawName.isNullOrBlank()) rawName else null
@@ -253,9 +313,14 @@ object SheetChecker {
                 linkedNumber = elig?.optString("page_whatsapp_number")?.ifEmpty { null },
                 pageName = pageName,
                 error = null
-            )
+            ) to traces
         } catch (e: Exception) {
-            return fail(netError(e))
+            val err = netError(e)
+            traces.add(
+                ReqTrace("advanced", "GET", "https://business.facebook.com/latest/inbox/wec",
+                    error = err)
+            )
+            return fail(err) to traces
         }
     }
 

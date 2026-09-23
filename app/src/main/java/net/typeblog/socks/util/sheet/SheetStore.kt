@@ -31,6 +31,11 @@ class SheetStore private constructor(context: Context) {
     // Same-file repeats are blocked at entry — only collisions with OTHER
     // files flag, per cell.
     val openCrossDups = MutableStateFlow<Set<Pair<Int, String>>>(emptySet())
+    // Check records behind the dot popup, keyed by rowIdx. Refreshed on
+    // open and after every check; row edits drop stale rows (see
+    // persistRows), reindexing ops drop the file.
+    val openChecks = MutableStateFlow<Map<Int, RowCheck>>(emptyMap())
+    val openCheckReqs = MutableStateFlow<Map<Int, List<CheckReq>>>(emptyMap())
     val checking = MutableStateFlow(false)
 
     private val undoStack = ArrayDeque<List<SheetRow>>()
@@ -141,8 +146,27 @@ class SheetStore private constructor(context: Context) {
         openRows.value = topUp(db.loadRows(id).ifEmpty { emptyPad(f.preset) }, f.preset)
         openStyles.value = db.loadStyles(id)
         openHidden.value = db.loadHidden(id)
+        reloadChecks()
         refreshCrossDups()
         return true
+    }
+
+    fun reloadChecks() {
+        val f = openFile.value ?: run {
+            openChecks.value = emptyMap()
+            openCheckReqs.value = emptyMap()
+            return
+        }
+        openChecks.value = db.loadRowChecks(f.id)
+        openCheckReqs.value = db.loadCheckReqs(f.id)
+    }
+
+    // Wholesale drop (reindexing ops, import replace): DB + flows.
+    fun dropCheckData() {
+        val f = openFile.value ?: return
+        db.tx { d -> db.clearCheckData(d, f.id) }
+        openChecks.value = emptyMap()
+        openCheckReqs.value = emptyMap()
     }
 
     fun closeFile() {
@@ -151,6 +175,8 @@ class SheetStore private constructor(context: Context) {
         openStyles.value = emptyMap()
         openHidden.value = emptySet()
         openCrossDups.value = emptySet()
+        openChecks.value = emptyMap()
+        openCheckReqs.value = emptyMap()
         undoStack.clear()
         redoStack.clear()
         canUndo.value = false
@@ -174,11 +200,27 @@ class SheetStore private constructor(context: Context) {
         val now = System.currentTimeMillis()
         val seq = f.seq + 1
         val snapshot = rowsToJson(rows)
+        val prevByIdx = openRows.value.associateBy { it.rowIdx }
+        // Check records follow the verdict: any row whose identity or
+        // verdict changed leaves stale details behind, so drop them.
+        // Reindexing ops (delete-dead, compact, restore, import) clear
+        // the file explicitly — rowIdx keys would otherwise orphan.
+        val stale = rows.mapNotNull { nr ->
+            val o = prevByIdx[nr.rowIdx]
+            if (o == null || o.cookies != nr.cookies || o.uid != nr.uid ||
+                o.status != nr.status || o.dead != nr.dead
+            ) nr.rowIdx else null
+        }.toSet()
         db.tx { d ->
             db.saveAllRows(d, f.id, rows)
             db.saveSnapshot(d, f.id, seq, snapshot)
             db.updateFile(d, f.copy(updatedAt = now, seq = seq))
             db.recordOp(d, f.id, op)
+            if (stale.isNotEmpty()) db.deleteRowCheckData(d, f.id, stale)
+        }
+        if (stale.isNotEmpty() && (openChecks.value.keys.any { it in stale } || openCheckReqs.value.keys.any { it in stale })) {
+            openChecks.value = openChecks.value.filterKeys { it !in stale }
+            openCheckReqs.value = openCheckReqs.value.filterKeys { it !in stale }
         }
         openFile.value = db.getFile(f.id)
         openRows.value = rows
@@ -479,6 +521,8 @@ class SheetStore private constructor(context: Context) {
         pushUndo()
         val kept = openRows.value.filterNot { it.status == "bad" || it.dead }
             .mapIndexed { i, r -> r.copy(rowIdx = i) }
+        // Reindexed: rowIdx keys would orphan, drop the file's records.
+        dropCheckData()
         persistRows(topUp(kept.ifEmpty { emptyPad(f.preset, 0) }, f.preset).ifEmpty { emptyPad(f.preset) }, "delete-dead")
         voidUnused(cols)
         return dead.size
@@ -492,6 +536,8 @@ class SheetStore private constructor(context: Context) {
         val cols = f.preset.columns
         val data = openRows.value.filter { it.isData(cols) }.mapIndexed { i, r -> r.copy(rowIdx = i) }
         pushUndo()
+        // Reindexed: rowIdx keys would orphan, drop the file's records.
+        dropCheckData()
         persistRows(topUp(data, f.preset).ifEmpty { emptyPad(f.preset) }, "compact")
     }
 
@@ -518,6 +564,8 @@ class SheetStore private constructor(context: Context) {
         val snap = db.latestSnapshot(f.id) ?: return false
         pushUndo()
         val rows = rowsFromJson(snap.second).mapIndexed { i, r -> r.copy(rowIdx = i) }
+        // Reindexed: rowIdx keys would orphan, drop the file's records.
+        dropCheckData()
         persistRows(topUp(rows, f.preset).ifEmpty { emptyPad(f.preset) }, "restore")
         return true
     }
@@ -542,20 +590,27 @@ class SheetStore private constructor(context: Context) {
             var valid = 0
             var dead = 0
             var rows = openRows.value
+            val now = System.currentTimeMillis()
+            // Records behind the dot popup, keyed by rowIdx. Saved after
+            // persistRows (which drops the stale ones first).
+            val checks = mutableMapOf<Int, RowCheck>()
+            val reqs = mutableMapOf<Int, MutableList<CheckReq>>()
+            fun reqList(ri: Int) = reqs.getOrPut(ri) { mutableListOf() }
             // 1. UID liveness: one batched direct request (worker checkUids).
             // Falls back to the local format heuristic when offline.
             if (uidOn) {
                 fun effUid(r: SheetRow): String = r.uid.ifEmpty {
                     Regex("c_user=(\\d+)").find(r.cookies)?.groupValues?.get(1) ?: ""
                 }
-                val verdict: Set<String>? = try {
-                    SheetChecker.checkUidsDead(
+                val batch: SheetChecker.UidBatch? = try {
+                    SheetChecker.checkUids(
                         rows.filter { r -> r.isData(cols) && !r.locked && effUid(r).isNotEmpty() }
                             .map { effUid(it) }.distinct()
                     )
                 } catch (e: Exception) {
                     null
                 }
+                val verdict = batch?.dead
                 rows = rows.map { r ->
                     if (!r.isData(cols) || r.locked) {
                         r
@@ -564,23 +619,25 @@ class SheetStore private constructor(context: Context) {
                         // even "eligible" — never alive, never page, just dead.
                         // A live UID never downgrades "eligible" back to
                         // "good" (eligible rows are never page-checked again).
-                        if (verdict == null) {
-                            if (isValidUid(effUid(r))) {
-                                valid++
-                                r.copy(status = if (r.status == "eligible") "eligible" else "good", dead = false)
-                            } else {
-                                dead++
-                                r.copy(status = "bad", dead = true)
-                            }
-                        } else if (!verdict.contains(effUid(r))) {
-                            valid++
+                        val uid = effUid(r)
+                        val alive = if (verdict == null) isValidUid(uid) else !verdict.contains(uid)
+                        if (alive) valid++ else dead++
+                        checks[r.rowIdx] = RowCheck(checkedAt = now, uidOk = alive)
+                        if (batch != null) {
+                            reqList(r.rowIdx).add(
+                                batch.trace.copy(
+                                    resNote = if (alive) "valid" else (batch.names[uid] ?: "dead")
+                                )
+                            )
+                        }
+                        if (alive) {
                             r.copy(status = if (r.status == "eligible") "eligible" else "good", dead = false)
                         } else {
-                            dead++
                             r.copy(status = "bad", dead = true)
                         }
                     } else if (r.uid.isNotEmpty() && !isValidUid(r.uid)) {
                         dead++
+                        checks[r.rowIdx] = RowCheck(checkedAt = now, uidOk = false)
                         r.copy(status = "bad", dead = true)
                     } else {
                         r.copy(status = if (r.status == "good" || r.status == "done") r.status else "pending")
@@ -605,16 +662,51 @@ class SheetStore private constructor(context: Context) {
                 var updated = rows
                 for (r in cands) {
                     try {
-                        val ok = if (simpleOn) {
-                            val res = SheetChecker.pageSimple(r.cookies)
-                            res.error == null && res.eligible
+                        if (simpleOn) {
+                            val (res, traces) = SheetChecker.pageSimple(r.cookies)
+                            val base = checks.getOrPut(r.rowIdx) { RowCheck(checkedAt = now) }
+                            checks[r.rowIdx] = base.copy(
+                                checkedAt = now,
+                                simplePage = res.pageName, simpleNumber = res.linkedNumber,
+                                simpleError = res.error
+                            )
+                            for (t in traces) {
+                                reqList(r.rowIdx).add(
+                                    t.copy(
+                                        resNote = res.pageName?.let { "Page \"$it\"" }
+                                            ?: res.error ?: "No page"
+                                    )
+                                )
+                            }
+                            if (res.error == null && res.eligible) {
+                                updated = updated.map {
+                                    if (it.rowIdx == r.rowIdx) it.copy(status = "eligible") else it
+                                }
+                            }
                         } else {
-                            val res = SheetChecker.pageAdvanced(r.cookies)
-                            res.error == null && res.eligible
-                        }
-                        if (ok) {
-                            updated = updated.map {
-                                if (it.rowIdx == r.rowIdx) it.copy(status = "eligible") else it
+                            val (res, traces) = SheetChecker.pageAdvanced(r.cookies)
+                            val base = checks.getOrPut(r.rowIdx) { RowCheck(checkedAt = now) }
+                            checks[r.rowIdx] = base.copy(
+                                checkedAt = now,
+                                advEligible = res.eligible,
+                                advPage = res.pageName, advNumber = res.linkedNumber,
+                                advBan = res.banReason, advError = res.error
+                            )
+                            for (t in traces) {
+                                reqList(r.rowIdx).add(
+                                    when (t.kind) {
+                                        "graphql" -> t.copy(
+                                            resNote = if (res.eligible) "Eligible"
+                                            else (res.error ?: res.banReason ?: "Not eligible")
+                                        )
+                                        else -> t.copy(resNote = t.error ?: "Page shell")
+                                    }
+                                )
+                            }
+                            if (res.error == null && res.eligible) {
+                                updated = updated.map {
+                                    if (it.rowIdx == r.rowIdx) it.copy(status = "eligible") else it
+                                }
                             }
                         }
                     } catch (e: Exception) {
@@ -626,6 +718,11 @@ class SheetStore private constructor(context: Context) {
             withContext(Dispatchers.IO) {
                 pushUndo()
                 persistRows(rows, "check")
+                if (checks.isNotEmpty() || reqs.isNotEmpty()) {
+                    db.tx { d -> db.saveCheckDetails(d, f.id, checks, reqs) }
+                    openChecks.value = checks.mapValues { it.value }
+                    openCheckReqs.value = reqs.mapValues { it.value.toList() }
+                }
             }
             checking.value = false
             done(valid, dead)

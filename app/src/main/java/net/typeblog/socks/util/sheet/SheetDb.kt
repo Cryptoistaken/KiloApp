@@ -23,14 +23,14 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2)
         db.execSQL("CREATE TABLE wallet_kv(k TEXT PRIMARY KEY, v TEXT NOT NULL)")
         db.execSQL("CREATE TABLE wallet_tx(id TEXT PRIMARY KEY, createdAt INTEGER NOT NULL, type TEXT NOT NULL, amount REAL NOT NULL, balanceAfter REAL NOT NULL, title TEXT NOT NULL, detail TEXT)")
         db.execSQL("CREATE TABLE outbox(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, op TEXT NOT NULL)")
-        db.execSQL("CREATE TABLE row_checks(fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, checkedAt INTEGER NOT NULL DEFAULT 0, uidOk INTEGER NOT NULL DEFAULT 0, uidError TEXT, simplePage TEXT, simpleNumber TEXT, simpleError TEXT, advEligible INTEGER NOT NULL DEFAULT 0, advPage TEXT, advNumber TEXT, advBan TEXT, advError TEXT, PRIMARY KEY(fileId, rowIdx))")
+        db.execSQL("CREATE TABLE row_checks(fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, checkedAt INTEGER NOT NULL DEFAULT 0, uidOk INTEGER, uidError TEXT, simplePage TEXT, simpleNumber TEXT, simpleError TEXT, advEligible INTEGER NOT NULL DEFAULT 0, advPage TEXT, advNumber TEXT, advBan TEXT, advError TEXT, PRIMARY KEY(fileId, rowIdx))")
         db.execSQL("CREATE TABLE check_reqs(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, method TEXT NOT NULL, url TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0, durationMs INTEGER NOT NULL DEFAULT 0, reqNote TEXT, resNote TEXT, error TEXT, at INTEGER NOT NULL)")
         db.execSQL("CREATE INDEX idx_reqs_row ON check_reqs(fileId, rowIdx, seq)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
-            db.execSQL("CREATE TABLE IF NOT EXISTS row_checks(fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, checkedAt INTEGER NOT NULL DEFAULT 0, uidOk INTEGER NOT NULL DEFAULT 0, uidError TEXT, simplePage TEXT, simpleNumber TEXT, simpleError TEXT, advEligible INTEGER NOT NULL DEFAULT 0, advPage TEXT, advNumber TEXT, advBan TEXT, advError TEXT, PRIMARY KEY(fileId, rowIdx))")
+            db.execSQL("CREATE TABLE IF NOT EXISTS row_checks(fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, checkedAt INTEGER NOT NULL DEFAULT 0, uidOk INTEGER, uidError TEXT, simplePage TEXT, simpleNumber TEXT, simpleError TEXT, advEligible INTEGER NOT NULL DEFAULT 0, advPage TEXT, advNumber TEXT, advBan TEXT, advError TEXT, PRIMARY KEY(fileId, rowIdx))")
             db.execSQL("CREATE TABLE IF NOT EXISTS check_reqs(id INTEGER PRIMARY KEY AUTOINCREMENT, fileId TEXT NOT NULL, rowIdx INTEGER NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, method TEXT NOT NULL, url TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0, durationMs INTEGER NOT NULL DEFAULT 0, reqNote TEXT, resNote TEXT, error TEXT, at INTEGER NOT NULL)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_reqs_row ON check_reqs(fileId, rowIdx, seq)")
         }
@@ -42,6 +42,7 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2)
             when (v) {
                 null -> c.putNull(k)
                 is String -> c.put(k, v)
+                is Boolean -> c.put(k, if (v) 1 else 0)
                 is Int -> c.put(k, v)
                 is Long -> c.put(k, v)
                 is Double -> c.put(k, v)
@@ -223,7 +224,7 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2)
             db.insert(
                 "row_checks", null,
                 cv("fileId" to fileId, "rowIdx" to ri, "checkedAt" to c.checkedAt,
-                    "uidOk" to if (c.uidOk) 1 else 0, "uidError" to c.uidError,
+                    "uidOk" to c.uidOk, "uidError" to c.uidError,
                     "simplePage" to c.simplePage, "simpleNumber" to c.simpleNumber,
                     "simpleError" to c.simpleError,
                     "advEligible" to if (c.advEligible) 1 else 0, "advPage" to c.advPage,
@@ -252,7 +253,8 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 2)
         ).use { c ->
             while (c.moveToNext()) {
                 out[c.getInt(0)] = RowCheck(
-                    checkedAt = c.getLong(1), uidOk = c.getInt(2) == 1,
+                    checkedAt = c.getLong(1),
+                    uidOk = if (c.isNull(2)) null else c.getInt(2) == 1,
                     uidError = if (c.isNull(3)) null else c.getString(3),
                     simplePage = if (c.isNull(4)) null else c.getString(4),
                     simpleNumber = if (c.isNull(5)) null else c.getString(5),
