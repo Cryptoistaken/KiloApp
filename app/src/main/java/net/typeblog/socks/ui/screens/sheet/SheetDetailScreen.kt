@@ -65,6 +65,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.typeblog.socks.R
+import net.typeblog.socks.ui.components.SsBanner
+import net.typeblog.socks.ui.components.SsBannerStatus
 import net.typeblog.socks.util.sheet.CellStyle
 import net.typeblog.socks.util.sheet.CopiedGrid
 import net.typeblog.socks.util.sheet.MAX_GRID_ROWS
@@ -860,56 +862,25 @@ fun SheetDetailScreen(
         }
 
         if (readOnly) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, top = 12.dp)
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Archived (view only)",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-                            .background(MaterialTheme.colorScheme.primary)
-                            .combinedClickable(onClick = {
-                                // Sequence it: DB restore + reopen first, then
-                                // toast and leave archived view, so the banner
-                                // clears exactly when the file is editable.
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        store.archiveFile(fileId, false)
-                                        store.open(fileId)
-                                    }
-                                    toast(appCtx, "File restored.")
-                                    onRestoreArchived(fileId)
-                                }
-                            })
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Restore",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
+            SsBanner(
+                status = SsBannerStatus.INFO,
+                title = "Archived (view only)",
+                actionLabel = "Restore",
+                onAction = {
+                    // Sequence it: DB restore + reopen first, then toast
+                    // and leave archived view, so the banner clears exactly
+                    // when the file is editable.
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            store.archiveFile(fileId, false)
+                            store.open(fileId)
+                        }
+                        toast(appCtx, "File restored.")
+                        onRestoreArchived(fileId)
                     }
-                }
-            }
+                },
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp)
+            )
         }
 
         // Grid.

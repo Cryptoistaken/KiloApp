@@ -78,6 +78,8 @@ import androidx.core.content.ContextCompat
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.delay
 import net.typeblog.socks.R
+import net.typeblog.socks.ui.components.SsBanner
+import net.typeblog.socks.ui.components.SsBannerStatus
 import net.typeblog.socks.util.SMS_EXPIRE_SEC
 import net.typeblog.socks.util.SmsCountry
 import net.typeblog.socks.util.SmsMsg
@@ -393,22 +395,14 @@ private fun BgWatchBanner(waiting: Boolean, now: Long) {
         !(batteryOk && alarmOk)
     }
     if (!restricted) return
-    Column(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp)).padding(12.dp)
-    ) {
-        Text(text = "Background SMS may stall", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = "Allow background running so codes arrive with the app closed.",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = { openBackgroundSettings(ctx) }, modifier = Modifier.fillMaxWidth()) {
-            Text("Allow background")
-        }
-    }
+    SsBanner(
+        status = SsBannerStatus.WARNING,
+        title = "Background SMS may stall",
+        description = "Allow background running so codes arrive with the app closed.",
+        actionLabel = "Allow",
+        onAction = { openBackgroundSettings(ctx) },
+        modifier = Modifier.padding(vertical = 8.dp)
+    )
 }
 
 @Composable
