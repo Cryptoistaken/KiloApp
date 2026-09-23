@@ -865,7 +865,7 @@ fun SheetDetailScreen(
             SsBanner(
                 status = SsBannerStatus.INFO,
                 title = "Archived",
-                description = "View only. You can check UIDs and copy data.",
+                description = "View only. Cannot modify.",
                 actionLabel = "Restore",
                 onAction = {
                     // Sequence it: DB restore + reopen first, then toast
