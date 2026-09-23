@@ -392,6 +392,11 @@ fun SheetDetailScreen(
         }
         clipboard.setText(AnnotatedString(lines.joinToString("\n")))
         toast(appCtx, "Copied.")
+        // Action completed: leave multi-cell mode.
+        if (selectionMode) {
+            selectedItems = emptySet()
+            selectionMode = false
+        }
     }
 
     // Sheets-standard paste entry: single undo/persist in the store, result
@@ -1514,6 +1519,9 @@ fun SheetDetailScreen(
                 io { store.clearCells(items) }
                 val sel = selectedCell
                 if (sel != null && items.contains(sel)) draft = ""
+                // Action completed: leave multi-cell mode.
+                selectedItems = emptySet()
+                selectionMode = false
             }
         )
     }
