@@ -156,8 +156,8 @@ private fun CellPopBar(
     ) {
         androidx.compose.foundation.layout.Row(
             modifier = Modifier
-                .shadow(8.dp, androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                .shadow(12.dp, androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(28.dp))
                 .background(MaterialTheme.colorScheme.surface)
         ) {
             if (!readOnly) CellBarButton("Cut", onCut)
@@ -175,13 +175,14 @@ private fun androidx.compose.foundation.layout.RowScope.CellBarButton(
 ) {
     Box(
         modifier = Modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
             .combinedClickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+            .padding(horizontal = 22.dp, vertical = 14.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
-            fontSize = 15.sp,
+            fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onSurface
         )
     }
