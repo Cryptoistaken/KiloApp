@@ -1120,13 +1120,29 @@ fun SheetDetailScreen(
                                     .combinedClickable(
                                         onClick = {
                                             if (readOnly) {
-                                                // Archived view: copy filled cells; empty
-                                                // cells stay silent like Sheets.
-                                                val v = row.cell(col.key)
-                                                if (v.isNotEmpty()) {
-                                                    clipboard.setText(AnnotatedString(v))
-                                                    toast(appCtx, "Copied.")
+                                                // Archived view: single tap selects,
+                                                // double-tap copies, slow re-tap shows
+                                                // the Copy bar. Empty cells stay silent.
+                                                val now = System.currentTimeMillis()
+                                                if (lastTapCell == selKey && now - lastTapTime < 400) {
+                                                    lastTapCell = null
+                                                    menuCell = null
+                                                    val v = row.cell(col.key)
+                                                    if (v.isNotEmpty()) {
+                                                        clipboard.setText(AnnotatedString(v))
+                                                        toast(appCtx, "Copied.")
+                                                    }
+                                                    return@combinedClickable
                                                 }
+                                                if (lastTapCell == selKey) {
+                                                    lastTapCell = null
+                                                    menuCell = selKey
+                                                    return@combinedClickable
+                                                }
+                                                lastTapCell = selKey
+                                                lastTapTime = now
+                                                selectedCell = selKey
+                                                draft = row.cell(col.key)
                                                 return@combinedClickable
                                             }
                                             if (selectionMode) {
