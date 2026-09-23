@@ -118,10 +118,10 @@ fun DotPopup(
                             colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurfaceVariant)
                         )
                     }
-                    CheckStripDot(label = "UID", ok = uidState, warn = false, onClick = { tab = 2 })
-                    CheckStripDot(label = "SIMPLE", ok = if (simpleRan) simpleOk else null, warn = false, onClick = { tab = 2 })
-                    CheckStripDot(label = "ADVANCED", ok = if (advRan) advOk else null, warn = false, onClick = { tab = 2 })
-                    CheckStripDot(label = "DUP", ok = null, warn = isDup, onClick = { tab = 3 })
+                    CheckStripDot(Modifier.weight(1f), "UID", uidState, false, onClick = { tab = 2 })
+                    CheckStripDot(Modifier.weight(1f), "SIMPLE", if (simpleRan) simpleOk else null, false, onClick = { tab = 2 })
+                    CheckStripDot(Modifier.weight(1f), "ADVANCED", if (advRan) advOk else null, false, onClick = { tab = 2 })
+                    CheckStripDot(Modifier.weight(1f), "DUP", null, isDup, onClick = { tab = 3 })
                 }
                 PopupTabBar(
                     tabs = listOf(
@@ -159,7 +159,7 @@ fun DotPopup(
 }
 
 @Composable
-private fun CheckStripDot(label: String, ok: Boolean?, warn: Boolean, onClick: () -> Unit) {
+private fun CheckStripDot(modifier: Modifier = Modifier, label: String, ok: Boolean?, warn: Boolean, onClick: () -> Unit) {
     val color = when {
         warn -> StatusYellow
         ok == true -> AliveGreen
@@ -167,7 +167,7 @@ private fun CheckStripDot(label: String, ok: Boolean?, warn: Boolean, onClick: (
         else -> MaterialTheme.colorScheme.outlineVariant
     }
     Column(
-        modifier = Modifier
+        modifier = modifier
             .weight(1f)
             .clip(RoundedCornerShape(4.dp))
             .clickable(onClick = onClick)
