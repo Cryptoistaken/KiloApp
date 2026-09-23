@@ -249,20 +249,28 @@ class SheetStore private constructor(context: Context) {
         // UID comes from the cookie, never from typing: committing a cookie
         // overwrites the uid with its c_user (or blanks it when the cookie
         // carries none), and clearing the cookie clears the uid with it.
+        // The verdict goes with the identity: any cookie write also clears
+        // the dot (status/dead), the auto-check re-verdicts right after.
         // Centralized here so every entry point (formula bar, double-tap
         // paste, quick paste button) behaves the same.
         if (colKey == "cookies") {
             pushUndo()
             rows[rowIdx] = if (value.isEmpty()) {
                 cur.withCell(colKey, value).withCell("uid", "")
+                    .copy(status = "", dead = false)
             } else {
                 cur.withCell(colKey, value).withCell("uid", extractCUser(value) ?: "")
+                    .copy(status = "", dead = false)
             }
             persistRows(topUp(rows, f.preset), "edit")
             return true
         }
         pushUndo()
-        rows[rowIdx] = cur.withCell(colKey, value)
+        rows[rowIdx] = if (colKey == "uid") {
+            cur.withCell(colKey, value).copy(status = "", dead = false)
+        } else {
+            cur.withCell(colKey, value)
+        }
         persistRows(topUp(rows, f.preset), "edit")
         return true
     }
@@ -364,6 +372,7 @@ class SheetStore private constructor(context: Context) {
             w[t.ri] = if (t.ck == "cookies") {
                 cookiesWritten = true
                 cur.withCell(t.ck, t.value).withCell("uid", extractCUser(t.value) ?: "")
+                    .copy(status = "", dead = false)
             } else {
                 cur.withCell(t.ck, t.value)
             }
@@ -389,7 +398,7 @@ class SheetStore private constructor(context: Context) {
                 skipped++
                 continue
             }
-            w[t.ri] = cur.withCell("uid", t.value)
+            w[t.ri] = cur.withCell("uid", t.value).copy(status = "", dead = false)
             dirty = true
             pasted++
         }
@@ -433,7 +442,12 @@ class SheetStore private constructor(context: Context) {
             if (ck == "uid" && rows[ri].cookies.isNotEmpty()) continue
             if (rows[ri].cell(ck).isNotEmpty()) {
                 rows[ri] = rows[ri].withCell(ck, "")
+                // The verdict goes with the identity: clearing a cookie
+                // (which takes its uid) or a uid also clears the dot.
                 if (ck == "cookies") rows[ri] = rows[ri].withCell("uid", "")
+                if (ck == "cookies" || ck == "uid") {
+                    rows[ri] = rows[ri].copy(status = "", dead = false)
+                }
                 touched = true
             }
         }
