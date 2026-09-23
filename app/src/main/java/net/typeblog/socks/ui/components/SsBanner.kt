@@ -1,5 +1,6 @@
 package net.typeblog.socks.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -36,6 +37,7 @@ enum class SsBannerStatus { INFO, SUCCESS, WARNING, ERROR }
 
 private val SsAmber = Color(0xFFD97706)
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SsBanner(
     status: SsBannerStatus,
