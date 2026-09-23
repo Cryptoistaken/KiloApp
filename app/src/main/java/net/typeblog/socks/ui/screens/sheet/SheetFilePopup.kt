@@ -118,12 +118,14 @@ fun FilePopup(
             list.map { ri to it }
         }.sortedBy { it.second.at }.take(200)
     }
-    val flatLines = remember(checks, reqs) {
-        reqs.entries.sortedBy { it.key }.flatMap { (ri, list) ->
-            logLines(checks[ri], list).map { l ->
-                l.copy(text = "R${ri + 1} ${l.text}")
+    // Log lines over the flat list: reqIdx is the flat position so a tap
+    // jumps to the right request (per-row indices would misfire).
+    val flatLines = remember(checks, reqs, flatReqs) {
+        flatReqs.mapIndexed { fi, (ri, q) ->
+            logLines(checks[ri], listOf(q)).firstOrNull()?.let { l ->
+                l.copy(text = "R${ri + 1} ${l.text}", reqIdx = fi)
             }
-        }.sortedBy { it.at }.take(200)
+        }.filterNotNull().sortedBy { it.at }.take(200)
     }
 
     Dialog(
@@ -295,7 +297,13 @@ private fun FileRequestsPane(
     LaunchedEffect(jumpReq) {
         if (jumpReq != null && jumpReq in reqs.indices) {
             openIdx = jumpReq
-            listState.scrollToItem(jumpReq)
+            try {
+                listState.scrollToItem(jumpReq)
+            } catch (e: Exception) {
+                // List not laid out yet; the open highlight still applies.
+            }
+            onJumped()
+        } else if (jumpReq != null) {
             onJumped()
         }
     }

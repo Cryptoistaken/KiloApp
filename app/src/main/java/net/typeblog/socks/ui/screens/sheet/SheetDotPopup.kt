@@ -227,7 +227,6 @@ internal fun DotPopupCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f, fill = false)
                 .heightIn(max = if (wide) 520.dp else 320.dp)
         ) {
             when (tab) {
@@ -785,7 +784,7 @@ internal fun LogSummary(lines: List<LogLine>) {
 @Composable
 internal fun LogTimeline(lines: List<LogLine>, onJump: (Int) -> Unit) {
     LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
-        itemsIndexed(lines, key = { _, l -> l.reqIdx }) { idx, l ->
+        itemsIndexed(lines, key = { i, _ -> i }) { idx, l ->
             val dot = when (l.cls) {
                 LogCls.OK -> AliveGreen
                 LogCls.BAD -> DeadRed
@@ -895,7 +894,13 @@ internal fun RequestsPane(
     LaunchedEffect(jumpReq) {
         if (jumpReq != null && jumpReq in reqs.indices) {
             openIdx = jumpReq
-            listState.scrollToItem(jumpReq)
+            try {
+                listState.scrollToItem(jumpReq)
+            } catch (e: Exception) {
+                // List not laid out yet; the open highlight still applies.
+            }
+            onJumped()
+        } else if (jumpReq != null) {
             onJumped()
         }
     }
