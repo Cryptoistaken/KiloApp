@@ -235,6 +235,8 @@ fun SheetDetailScreen(
     var lastTapTime by remember { mutableStateOf(0L) }
     // Slow second tap on the same cell shows the Cut/Copy/Paste menu.
     var menuCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    // Dot cell status dialog: set on dot tap, cleared on dismiss.
+    var dotRowIdx by remember { mutableStateOf<Int?>(null) }
 
     var checkMenu by remember { mutableStateOf(false) }
     var overflowMenu by remember { mutableStateOf(false) }
@@ -1248,7 +1250,14 @@ fun SheetDetailScreen(
                                 .width(36.dp)
                                 .height(36.dp)
                                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                .background(MaterialTheme.colorScheme.surface),
+                                .background(MaterialTheme.colorScheme.surface)
+                                .combinedClickable(
+                                    onClick = { dotRowIdx = row.rowIdx },
+                                    onLongClick = {
+                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        dotRowIdx = row.rowIdx
+                                    }
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             StatusDot(
@@ -1468,6 +1477,84 @@ fun SheetDetailScreen(
                 io { store.compactRows() }
             }
         )
+    }
+
+    val dotIdx = dotRowIdx
+    if (dotIdx != null) {
+        // Row status from real data only: verdict + uid + lock flags.
+        // No per-row check log exists, so no log/request sections.
+        val dotRow = rows.firstOrNull { it.rowIdx == dotIdx }
+        if (dotRow == null) {
+            dotRowIdx = null
+        } else {
+            val verdict = when {
+                dotRow.dead || dotRow.status == "bad" -> "Dead"
+                dotRow.status == "good" || dotRow.status == "done" -> "Live"
+                dotRow.status == "eligible" -> "Eligible"
+                dotRow.status == "pending" -> "Pending"
+                else -> "No data"
+            }
+            SheetModal(
+                onDismiss = { dotRowIdx = null },
+                widthDp = 320,
+                title = "Row ${dotRow.rowIdx + 1}"
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StatusDot(
+                            status = dotRow.status,
+                            dead = dotRow.dead,
+                            isDup = false
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = verdict,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Spacer(modifier = Modifier.size(12.dp))
+                    if (dotRow.uid.isNotEmpty()) {
+                        Text(
+                            text = dotRow.uid,
+                            fontSize = 13.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.size(4.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(
+                                onClick = {
+                                    clipboard.setText(AnnotatedString(dotRow.uid))
+                                    toast(appCtx, "Copied.")
+                                }
+                            ) { Text("Copy UID") }
+                        }
+                    } else {
+                        Text(
+                            text = "No UID yet.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (dotRow.hold || dotRow.approved) {
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text(
+                            text = if (dotRow.hold) "On hold. Editing is locked." else "Approved.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.size(12.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        SheetBtnGhost(label = "Close", onClick = { dotRowIdx = null })
+                    }
+                }
+            }
+        }
     }
 
     val pick = picker
