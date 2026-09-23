@@ -130,6 +130,7 @@ private fun cellBarProvider(): androidx.compose.ui.window.PopupPositionProvider 
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CellPopBar(
     readOnly: Boolean,
@@ -156,6 +157,7 @@ private fun CellPopBar(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun androidx.compose.foundation.layout.RowScope.CellBarButton(
     label: String,
@@ -280,7 +282,7 @@ fun SheetDetailScreen(
                 (r.uid.isNotEmpty() || extractCUser(r.cookies) != null)
         }
         if (!checkable) {
-            toast(appCtx, "Add UID or cookie first.")
+            toast(appCtx, "No UID to check.")
             return
         }
         // Archived view: UID check only, never simple/advanced (website parity).
@@ -291,7 +293,13 @@ fun SheetDetailScreen(
             openFile?.preset == SheetPreset.PAGE
         ) { valid, dead ->
             scope.launch {
-                toast(appCtx, "Check done: $valid valid, $dead dead.")
+                // Zero counts are not mentioned: "3 dead.", "2 alive.",
+                // "2 alive, 1 dead.".
+                val parts = buildList {
+                    if (valid > 0) add("$valid alive")
+                    if (dead > 0) add("$dead dead")
+                }
+                toast(appCtx, if (parts.isEmpty()) "No UID to check." else parts.joinToString(", ") + ".")
             }
         }
     }
@@ -1112,10 +1120,10 @@ fun SheetDetailScreen(
                                     .combinedClickable(
                                         onClick = {
                                             if (readOnly) {
+                                                // Archived view: copy filled cells; empty
+                                                // cells stay silent like Sheets.
                                                 val v = row.cell(col.key)
-                                                if (v.isEmpty()) {
-                                                    toast(appCtx, "Cell is empty.")
-                                                } else {
+                                                if (v.isNotEmpty()) {
                                                     clipboard.setText(AnnotatedString(v))
                                                     toast(appCtx, "Copied.")
                                                 }
