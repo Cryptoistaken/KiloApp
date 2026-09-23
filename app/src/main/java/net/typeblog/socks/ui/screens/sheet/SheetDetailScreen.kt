@@ -258,6 +258,11 @@ fun SheetDetailScreen(
     LaunchedEffect(gridState.isScrollInProgress) {
         if (gridState.isScrollInProgress && menuCell != null) menuCell = null
     }
+    // Multi-cell mode owns the bottom: the single-cell popup never shares
+    // the screen with the Copy/Paste/Clear card.
+    LaunchedEffect(selectionMode) {
+        if (selectionMode && menuCell != null) menuCell = null
+    }
     LaunchedEffect(fileId, readOnly) {
         snapshotFlow {
             gridState.isScrollInProgress to
