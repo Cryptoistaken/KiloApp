@@ -7,8 +7,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.tryAwaitRelease
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -55,7 +53,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.awaitEachGesture
+import androidx.compose.ui.input.pointer.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.waitForUpOrCancellation
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -1375,36 +1376,33 @@ fun SheetDetailScreen(
                                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                     .background(MaterialTheme.colorScheme.surface)
                                     .pointerInput(row.rowIdx) {
-                                        detectTapGestures(
-                                            onPress = {
-                                                // Hold progress bar under the dot, like the
-                                                // mock hold-to-confirm. Release early cancels.
-                                                val a = launch { holdP.animateTo(1f, tween(500)) }
-                                                tryAwaitRelease()
-                                                a.cancel()
-                                                holdP.snapTo(0f)
-                                            },
-                                            onLongClick = {
+                                        // Hold opens the anchored card with a progress bar
+                                        // under the dot, like the mock hold-to-confirm.
+                                        // Release early = tap (close if open, else copy 2FA).
+                                        awaitEachGesture {
+                                            awaitFirstDown()
+                                            val anim = launch { holdP.animateTo(1f, tween(500)) }
+                                            val up = kotlinx.coroutines.withTimeoutOrNull(500) {
+                                                waitForUpOrCancellation()
+                                            }
+                                            anim.cancel()
+                                            holdP.snapTo(0f)
+                                            if (up == null) {
                                                 haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                                 dotRowIdx = row.rowIdx
-                                            },
-                                            onTap = {
-                                                // Tap-again on the open dot closes it, like
-                                                // the mock; otherwise tap copies the 2FA code.
-                                                if (dotRowIdx == row.rowIdx && !dotWide) {
-                                                    dotRowIdx = null
+                                            } else if (dotRowIdx == row.rowIdx && !dotWide) {
+                                                dotRowIdx = null
+                                            } else {
+                                                val v = row.twofakey
+                                                if (v.isEmpty()) {
+                                                    toast(appCtx, "No 2FA to copy.")
                                                 } else {
-                                                    val v = row.twofakey
-                                                    if (v.isEmpty()) {
-                                                        toast(appCtx, "No 2FA to copy.")
-                                                    } else {
-                                                        clipboard.setText(AnnotatedString(v))
-                                                        store.copyGrid(gridOf(row.rowIdx, "twofakey", v))
-                                                        toast(appCtx, "Copied.")
-                                                    }
+                                                    clipboard.setText(AnnotatedString(v))
+                                                    store.copyGrid(gridOf(row.rowIdx, "twofakey", v))
+                                                    toast(appCtx, "Copied.")
                                                 }
                                             }
-                                        )
+                                        }
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
