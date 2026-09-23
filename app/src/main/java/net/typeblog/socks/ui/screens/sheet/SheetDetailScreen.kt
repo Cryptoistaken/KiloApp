@@ -1252,7 +1252,17 @@ fun SheetDetailScreen(
                                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                 .background(MaterialTheme.colorScheme.surface)
                                 .combinedClickable(
-                                    onClick = { dotRowIdx = row.rowIdx },
+                                    onClick = {
+                                        // Dot tap copies the 2FA code; hold opens status.
+                                        val v = row.twofakey
+                                        if (v.isEmpty()) {
+                                            toast(appCtx, "No 2FA to copy.")
+                                        } else {
+                                            clipboard.setText(AnnotatedString(v))
+                                            store.copyGrid(gridOf(row.rowIdx, "twofakey", v))
+                                            toast(appCtx, "Copied.")
+                                        }
+                                    },
                                     onLongClick = {
                                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                         dotRowIdx = row.rowIdx
