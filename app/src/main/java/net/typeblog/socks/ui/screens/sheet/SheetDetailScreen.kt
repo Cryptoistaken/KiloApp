@@ -219,8 +219,9 @@ private fun androidx.compose.foundation.layout.RowScope.CellBarButton(
     }
 }
 
-// File-open skeleton: toolbar bones + grid bones with a soft pulse, so
-// the gate never shows a bare spinner or a half-rendered file.
+// File-open skeleton: same boxes as the real top bar + grid, with a
+// soft pulse. Column count is unknown while loading, so 3 (the common
+// PAGE/COMBO shape); widths use the same fitW math as the grid.
 @Composable
 private fun SheetSkeleton() {
     val t = rememberInfiniteTransition(label = "skel")
@@ -230,24 +231,27 @@ private fun SheetSkeleton() {
         label = "pulse"
     )
     val bone = MaterialTheme.colorScheme.surfaceVariant
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .alpha(a)
-    ) {
+    val line = MaterialTheme.colorScheme.outlineVariant
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Top row: back, title, undo, redo, Check pill, overflow.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp)
+                .alpha(a),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(bone)
-            )
-            Spacer(modifier = Modifier.size(12.dp))
+                modifier = Modifier.size(48.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(bone)
+                )
+            }
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -255,35 +259,128 @@ private fun SheetSkeleton() {
                     .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
                     .background(bone)
             )
-            Spacer(modifier = Modifier.size(12.dp))
-            repeat(3) {
+            repeat(2) {
                 Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(bone)
-                )
-                Spacer(modifier = Modifier.size(8.dp))
-            }
-        }
-        repeat(12) {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Box(
-                    modifier = Modifier
-                        .width(40.dp)
-                        .height(36.dp)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                )
-                repeat(3) {
+                    modifier = Modifier.size(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(36.dp)
-                            .padding(4.dp)
+                            .size(18.dp)
                             .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
                             .background(bone)
                     )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .width(94.dp)
+                    .height(32.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.38f))
+            )
+            Box(
+                modifier = Modifier.size(48.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(6.dp)
+                        .height(20.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                        .background(bone)
+                )
+            }
+        }
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .alpha(a)
+        ) {
+            val fitW = (maxWidth - 72.dp) / 3
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Sticky header: corner + 3 header cells + trailing box.
+                Row(
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(36.dp)
+                            .height(36.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    )
+                    repeat(3) {
+                        Box(
+                            modifier = Modifier
+                                .width(fitW)
+                                .height(36.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.6f)
+                                    .height(12.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
+                                    .background(line)
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(36.dp)
+                            .height(36.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    )
+                }
+                // Body rows: gutter + 3 cells + dot box.
+                repeat(12) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .width(36.dp)
+                                .height(36.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                        )
+                        repeat(3) {
+                            Box(
+                                modifier = Modifier
+                                    .width(fitW)
+                                    .height(36.dp)
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .padding(horizontal = 8.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.7f)
+                                        .height(13.dp)
+                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
+                                        .background(bone)
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .width(36.dp)
+                                .height(36.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .background(MaterialTheme.colorScheme.surface),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(2.5.dp))
+                                    .background(bone)
+                            )
+                        }
+                    }
                 }
             }
         }
