@@ -1835,11 +1835,19 @@ class FloatingControlService : Service() {
         menuOverlay?.hide()
         smsOverlay?.hide()
         sheetOverlay?.hide()
+        val fileId = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString(Constants.PREF_SHEET_BUBBLE_FILE_ID, null)
+        // The popup only ever shows a configured file: with nothing selected
+        // there is no grid to mirror, so point at the Sheet tab instead.
+        if (fileId.isNullOrBlank()) {
+            toast(getString(R.string.bubble_sheet_no_file))
+            openSheetTab()
+            return
+        }
         sheetBubbleGeneration++
         val generation = sheetBubbleGeneration
         pendingSheetSkipNo2Fa = markNo2Fa
-        pendingSheetFileId = PreferenceManager.getDefaultSharedPreferences(this)
-            .getString(Constants.PREF_SHEET_BUBBLE_FILE_ID, null)
+        pendingSheetFileId = fileId
         val x = params?.x ?: 0
         val y = params?.y ?: 0
         sheetOverlay?.show(
@@ -1862,6 +1870,14 @@ class FloatingControlService : Service() {
                 if (fileId == null) null else sheetBubbleCoordinator.load(fileId)
             }
             if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
+            // The file vanished (deleted/archived) between tap and load: close
+            // the shell and route to the Sheet tab like the no-file tap.
+            if (initial == null) {
+                sheetOverlay?.hide()
+                toast(getString(R.string.bubble_sheet_no_file))
+                openSheetTab()
+                return@launch
+            }
             sheetOverlay?.render(initial)
             val clipboard = readSheetClipboard()
             val result = withContext(Dispatchers.IO) {
@@ -1870,6 +1886,19 @@ class FloatingControlService : Service() {
             if (generation == sheetBubbleGeneration && sheetOverlay?.isShowing() == true) {
                 sheetOverlay?.render(result?.snapshot)
             }
+        }
+    }
+
+    /** No Sheet file is configured for the bubble: open the app on its tab. */
+    private fun openSheetTab() {
+        try {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_OPEN_SHEET, true)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open Sheet tab", e)
         }
     }
 

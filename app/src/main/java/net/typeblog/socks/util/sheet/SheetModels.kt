@@ -94,6 +94,12 @@ data class SheetRow(
         if (columns.any { cell(it.key).isNotEmpty() }) return true
         return uid.isNotEmpty() || status.isNotEmpty()
     }
+    // Raw emptiness for storage trimming (Google values[][] parity: trailing
+    // empties are never stored). Wider than isData: status-only rows trim too
+    // only when every field and flag is empty.
+    fun isEmptyRow(): Boolean =
+        cookies.isEmpty() && twofakey.isEmpty() && uid.isEmpty() && status.isEmpty() &&
+            !hold && !approved && !dead
 }
 
 // Per-row check record: the details behind the dot verdict, recorded on

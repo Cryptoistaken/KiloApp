@@ -2,6 +2,7 @@ package net.typeblog.socks.ui.screens.sheet
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +52,8 @@ fun SheetFileCard(
     onRename: () -> Unit = {},
     onArchive: () -> Unit = {},
     onUseWithBubble: (() -> Unit)? = null,
+    onRemoveFromBubble: (() -> Unit)? = null,
+    isBubbleFile: Boolean = false,
     list: Boolean = false,
     daysLeft: Int? = null,
     onRestore: (() -> Unit)? = null,
@@ -112,6 +116,9 @@ fun SheetFileCard(
                         Image(painter = painterResource(R.drawable.ic_ss_facebook), contentDescription = null, modifier = Modifier.size(10.dp))
                     })
                     TypeBadgePill({ PasswordBadge(password = file.password) })
+                    if (isBubbleFile) {
+                        BubbleActivePill()
+                    }
                 }
             } else {
                 Column(
@@ -137,6 +144,10 @@ fun SheetFileCard(
                         })
                         Spacer(modifier = Modifier.width(4.dp))
                         TypeBadgePill({ PasswordBadge(password = file.password) })
+                        if (isBubbleFile) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            BubbleActivePill()
+                        }
                     }
                     val ts = fmtDate(if (file.updatedAt > 0) file.updatedAt else file.createdAt)
                     if (ts.isNotEmpty()) {
@@ -180,12 +191,22 @@ fun SheetFileCard(
                             SheetMenuItem(icon = R.drawable.ic_ss_download, label = "Download", onClick = { menuOpen = false; onDownload() })
                             SheetMenuItem(icon = R.drawable.ic_ss_send, label = "Send a copy", onClick = { menuOpen = false; onSendCopy() })
                             SheetMenuItem(icon = R.drawable.ic_ss_rename, label = "Rename", onClick = { menuOpen = false; onRename() })
-                            onUseWithBubble?.let { callback ->
-                                SheetMenuItem(
-                                    icon = R.drawable.ic_tab_sheet,
-                                    label = "Use with bubble",
-                                    onClick = { menuOpen = false; callback() }
-                                )
+                            if (isBubbleFile) {
+                                onRemoveFromBubble?.let { callback ->
+                                    SheetMenuItem(
+                                        icon = R.drawable.ic_tab_sheet,
+                                        label = "Remove from bubble",
+                                        onClick = { menuOpen = false; callback() }
+                                    )
+                                }
+                            } else {
+                                onUseWithBubble?.let { callback ->
+                                    SheetMenuItem(
+                                        icon = R.drawable.ic_tab_sheet,
+                                        label = "Use with bubble",
+                                        onClick = { menuOpen = false; callback() }
+                                    )
+                                }
                             }
                             SheetMenuItem(icon = R.drawable.ic_ss_archive_sel, label = "Archive", onClick = { menuOpen = false; onArchive() })
                         }
@@ -231,6 +252,33 @@ private fun IndicatorCell(color: Color, label: String) {
             text = label,
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** Green "Bubble" marker on the one file the floating bubble mirrors. */
+@Composable
+private fun BubbleActivePill() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        modifier = Modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+            .background(AliveGreen.copy(alpha = 0.14f))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Image(
+            painter = painterResource(R.drawable.ic_tab_sheet),
+            contentDescription = null,
+            modifier = Modifier.size(10.dp),
+            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(AliveGreen)
+        )
+        Text(
+            text = "Bubble",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = AliveGreen,
+            maxLines = 1
         )
     }
 }

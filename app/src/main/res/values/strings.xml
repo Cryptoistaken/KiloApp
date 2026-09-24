@@ -80,4 +80,5 @@
     <string name="bubble_section_all">ALL</string>
     <string name="bubble_section_no_results">NO RESULTS</string>
     <string name="bubble_country_switch_unavailable">No country switch</string>
+    <string name="bubble_sheet_no_file">Select a Sheet file first</string>
 </resources>

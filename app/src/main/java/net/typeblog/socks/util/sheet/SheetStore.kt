@@ -26,6 +26,10 @@ class SheetStore private constructor(context: Context) {
 
     val openFile = MutableStateFlow<SheetFile?>(null)
     val openRows = MutableStateFlow<List<SheetRow>>(emptyList())
+    // UUID of the file the floating Sheet bubble mirrors. Observed by the
+    // file cards so the active file shows a badge and the menu offers
+    // remove instead of select. Null means the bubble has no file.
+    val bubbleFileId = MutableStateFlow<String?>(null)
     val openStyles = MutableStateFlow<Map<String, CellStyle>>(emptyMap())
     val openHidden = MutableStateFlow<Set<String>>(emptySet())
     // Cross-file duplicate marks for the open file ((rowIdx, colKey) cells).
@@ -45,6 +49,7 @@ class SheetStore private constructor(context: Context) {
     val canRedo = MutableStateFlow(false)
 
     init {
+        bubbleFileId.value = bubbleFilePrefs.getString(PREF_SHEET_BUBBLE_FILE_ID, null)
         refresh()
     }
 
@@ -62,23 +67,35 @@ class SheetStore private constructor(context: Context) {
         val file = db.getFile(id) ?: return false
         if (file.archived) return false
         bubbleFilePrefs.edit().putString(PREF_SHEET_BUBBLE_FILE_ID, id).apply()
+        bubbleFileId.value = id
         return true
     }
 
     /** Re-resolve the remembered file on every use and clear stale pointers. */
     fun getActiveBubbleFile(): SheetFile? {
-        val id = bubbleFilePrefs.getString(PREF_SHEET_BUBBLE_FILE_ID, null) ?: return null
+        val id = bubbleFilePrefs.getString(PREF_SHEET_BUBBLE_FILE_ID, null) ?: run {
+            bubbleFileId.value = null
+            return null
+        }
         val file = db.getFile(id)
         if (file == null || file.archived) {
             bubbleFilePrefs.edit().remove(PREF_SHEET_BUBBLE_FILE_ID).apply()
+            bubbleFileId.value = null
             return null
         }
         return file
     }
 
+    /** Detach the bubble from any file (from the active card's menu). */
+    fun clearBubbleFile() {
+        bubbleFilePrefs.edit().remove(PREF_SHEET_BUBBLE_FILE_ID).apply()
+        bubbleFileId.value = null
+    }
+
     fun clearBubbleFileIfSelected(id: String) {
         if (bubbleFilePrefs.getString(PREF_SHEET_BUBBLE_FILE_ID, null) == id) {
             bubbleFilePrefs.edit().remove(PREF_SHEET_BUBBLE_FILE_ID).apply()
+            bubbleFileId.value = null
         }
     }
 

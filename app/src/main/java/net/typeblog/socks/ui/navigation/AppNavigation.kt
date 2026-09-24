@@ -83,7 +83,7 @@ private val bottomNavRoutes = listOf(
 ).toSet()
 
 @Composable
-fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0) {
+fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0, sheetSignal: Int = 0) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -151,6 +151,14 @@ fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0) {
     LaunchedEffect(smsSignal) {
         if (smsSignal > 0) {
             navigateToTab(Screen.Sms.route)
+        }
+    }
+
+    // External request (Sheet bubble with no file configured): jump straight
+    // to the Sheet tab so the user can pick a file for the bubble.
+    LaunchedEffect(sheetSignal) {
+        if (sheetSignal > 0) {
+            navigateToTab(Screen.Sheet.route)
         }
     }
 

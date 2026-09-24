@@ -36,6 +36,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_OPEN_SPLIT_APPS = "open_split_apps"
         /** Open the app straight on the SMS tab (bubble SMS long-press). */
         const val EXTRA_OPEN_SMS = "open_sms"
+        /** Open the app straight on the Sheet tab (Sheet bubble with no file). */
+        const val EXTRA_OPEN_SHEET = "open_sheet"
     }
 
     // Incremented whenever an intent asks for the apps list (bubble
@@ -44,6 +46,9 @@ class MainActivity : ComponentActivity() {
         private set
     // Same pattern for the SMS tab (bubble circle-menu SMS long-press).
     var smsRequest by mutableStateOf(0)
+        private set
+    // Same pattern for the Sheet tab (Sheet bubble with no file configured).
+    var sheetRequest by mutableStateOf(0)
         private set
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -63,6 +68,9 @@ class MainActivity : ComponentActivity() {
         }
         if (intent?.getBooleanExtra(EXTRA_OPEN_SMS, false) == true) {
             smsRequest++
+        }
+        if (intent?.getBooleanExtra(EXTRA_OPEN_SHEET, false) == true) {
+            sheetRequest++
         }
 
         setContent {
@@ -88,7 +96,7 @@ class MainActivity : ComponentActivity() {
 
             KiloProxyTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AppNavigation(splitAppsSignal = splitAppsRequest, smsSignal = smsRequest)
+                    AppNavigation(splitAppsSignal = splitAppsRequest, smsSignal = smsRequest, sheetSignal = sheetRequest)
                 }
                 updatePrompt?.let { info ->
                     UpdateDialog(
@@ -124,6 +132,9 @@ class MainActivity : ComponentActivity() {
         }
         if (intent.getBooleanExtra(EXTRA_OPEN_SMS, false)) {
             smsRequest++
+        }
+        if (intent.getBooleanExtra(EXTRA_OPEN_SHEET, false)) {
+            sheetRequest++
         }
     }
 

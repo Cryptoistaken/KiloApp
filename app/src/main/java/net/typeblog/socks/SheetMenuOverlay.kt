@@ -15,9 +15,12 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import net.typeblog.socks.util.ThemeMode
 import net.typeblog.socks.util.sheet.NO_2FA
 import net.typeblog.socks.util.sheet.SheetBubbleSnapshot
@@ -26,10 +29,15 @@ import net.typeblog.socks.util.sheet.SheetRow
 import net.typeblog.socks.util.sheet.isNo2Fa
 
 /**
- * Read-only 230dp x 280dp Sheet file window used by the floating Circle menu.
- * It mirrors the existing country/SMS popup shell: full-screen outside-tap
- * catcher, smart four-side placement, and bubble-edge grow-in. No cell, row,
- * toolbar, or menu control receives a click listener.
+ * Sheet file window for the floating Circle menu. It is the same shell as
+ * the proxy/SMS popups: a fixed 230x280dp panel on menu_panel_bg, the same
+ * 44dp top bar (identity left, shared exit icon right), the same smart
+ * four-side bubble-edge placement and grow-in, and the same scrim-tap/X to
+ * close. The body mirrors the in-app file grid (preset columns, row
+ * numbers, site status-dot colors). The service only opens this when a
+ * bubble file is configured and captures the clipboard into the active row
+ * on open, so a null snapshot means the file vanished mid-open and the
+ * shell closes instead of showing an empty popup.
  */
 class SheetMenuOverlay(
     private val context: Context,
@@ -40,11 +48,11 @@ class SheetMenuOverlay(
     private val handler = Handler(Looper.getMainLooper())
     private var rootView: FrameLayout? = null
     private var rowsView: LinearLayout? = null
+    private var scrollView: ScrollView? = null
     private var emptyView: TextView? = null
     private var iconView: ImageView? = null
     private var nameView: TextView? = null
     private var descriptionView: TextView? = null
-    private var lastSnapshot: SheetBubbleSnapshot? = null
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
 
@@ -63,22 +71,31 @@ class SheetMenuOverlay(
         }
         val panel = root.findViewById<LinearLayout>(R.id.bubble_sheet_panel) ?: return
         val rows = root.findViewById<LinearLayout>(R.id.bubble_sheet_rows) ?: return
+        val scroll = root.findViewById<ScrollView>(R.id.bubble_sheet_scroll)
         val empty = root.findViewById<TextView>(R.id.bubble_sheet_empty) ?: return
         val icon = root.findViewById<ImageView>(R.id.bubble_sheet_icon)
         val name = root.findViewById<TextView>(R.id.bubble_sheet_name)
         val description = root.findViewById<TextView>(R.id.bubble_sheet_description)
+        val close = root.findViewById<ImageButton>(R.id.bubble_sheet_close) ?: return
         rootView = root
         rowsView = rows
+        scrollView = scroll
         emptyView = empty
         iconView = icon
         nameView = name
         descriptionView = description
-        render(lastSnapshot)
+        // Placeholder identity until the service renders the loaded snapshot
+        // right after attach (DB load + clipboard capture).
+        icon?.setImageResource(R.drawable.ic_tab_sheet)
+        name?.text = "Sheet"
+        description?.text = ""
+        empty.visibility = View.GONE
+        close.setOnClickListener { hide() }
 
         val bounds = contentBounds()
         val margin = dp(8f)
         val panelWidth = minOf(dp(230f), (bounds.width() - bubbleSizePx - dp(16f)).coerceAtLeast(1))
-        val panelHeight = minOf(dp(280f), (bounds.height() - dp(16f)).coerceAtLeast(1))
+        val panelHeight = dp(280f)
         val panelLp = panel.layoutParams as? FrameLayout.LayoutParams
             ?: FrameLayout.LayoutParams(panelWidth, panelHeight)
         panelLp.width = panelWidth
@@ -133,31 +150,41 @@ class SheetMenuOverlay(
             "bottom" -> 0f
             else -> panelHeight / 2f
         }
-        panel.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(120).start()
+        panel.animate()
+            .scaleX(1f).scaleY(1f).alpha(1f)
+            .setDuration(120)
+            .setInterpolator(FastOutSlowInInterpolator())
+            .start()
         root.post { if (isShowing()) onOpened() }
     }
 
     fun render(snapshot: SheetBubbleSnapshot?) {
-        lastSnapshot = snapshot
+        if (snapshot == null) {
+            hide()
+            return
+        }
         val rows = rowsView ?: return
         val empty = emptyView ?: return
         rows.removeAllViews()
-        if (snapshot == null) {
-            iconView?.setImageResource(R.drawable.ic_tab_sheet)
-            nameView?.text = "Sheet"
-            descriptionView?.text = "Select a file"
-            empty.text = "Select a Sheet file first"
-            empty.visibility = View.VISIBLE
-            return
-        }
         val file = snapshot.file
         iconView?.setImageResource(iconFor(file.preset))
         nameView?.text = file.name
         descriptionView?.text = file.preset.desc
-        empty.visibility = View.GONE
+        val dataRows = snapshot.rows.filter { it.isData(file.preset.columns) }
+        val hasData = dataRows.isNotEmpty()
+        empty.visibility = if (hasData) View.GONE else View.VISIBLE
+        scrollView?.visibility = if (hasData) View.VISIBLE else View.GONE
+        if (!hasData) return
         rows.addView(headerRow(file))
-        snapshot.rows.take(40).forEachIndexed { index, row ->
-            rows.addView(dataRow(file, row, index == snapshot.activeRow))
+        // Mirror the in-app grid order: every stored data row, active row
+        // highlighted, capped so the small window stays scrollable.
+        var shown = 0
+        snapshot.rows.forEachIndexed { index, row ->
+            if (shown >= 40) return@forEachIndexed
+            if (row.isData(file.preset.columns)) {
+                rows.addView(dataRow(file, row, index == snapshot.activeRow))
+                shown++
+            }
         }
     }
 
@@ -176,8 +203,8 @@ class SheetMenuOverlay(
     }
 
     private fun clearReferences() {
-        lastSnapshot = null
         rowsView = null
+        scrollView = null
         emptyView = null
         iconView = null
         nameView = null
@@ -253,6 +280,7 @@ class SheetMenuOverlay(
         SheetPreset.PAGE -> R.drawable.ic_ss_page
     }
 
+    // Site status tokens, same as the in-app grid (SheetUi).
     private fun statusColor(row: SheetRow): Int = when {
         row.dead || row.status == "bad" -> Color.rgb(0xE3, 0x3B, 0x2E)
         row.status == "eligible" -> Color.rgb(0x25, 0x63, 0xEB)

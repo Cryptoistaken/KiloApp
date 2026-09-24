@@ -91,6 +91,7 @@ fun SheetFilesTab(
     val store = remember(appCtx) { SheetStore.get(appCtx) }
     val scope = rememberCoroutineScope()
     val files by store.files.collectAsState()
+    val bubbleFileId by store.bubbleFileId.collectAsState()
     val prefs = remember(appCtx) { androidx.preference.PreferenceManager.getDefaultSharedPreferences(appCtx) }
     var fileView by net.typeblog.socks.ui.components.rememberPref(prefs, "ss_fileView") { it.getString("ss_fileView", "grid") ?: "grid" }
     val isList = fileView == "list"
@@ -123,6 +124,13 @@ fun SheetFilesTab(
         scope.launch {
             val ok = withContext(Dispatchers.IO) { store.selectBubbleFile(id) }
             toast(appCtx, if (ok) "Sheet file selected." else "Unable to select Sheet file.")
+        }
+    }
+
+    fun removeBubbleFile() {
+        scope.launch {
+            withContext(Dispatchers.IO) { store.clearBubbleFile() }
+            toast(appCtx, "Removed from bubble.")
         }
     }
 
@@ -285,6 +293,8 @@ fun SheetFilesTab(
                             },
                             onArchive = { archiveTarget = f },
                             onUseWithBubble = { chooseBubbleFile(f.id) },
+                            onRemoveFromBubble = { removeBubbleFile() },
+                            isBubbleFile = f.id == bubbleFileId,
                             list = true
                         )
                     }
@@ -323,7 +333,9 @@ fun SheetFilesTab(
                                 renameText = f.name
                             },
                             onArchive = { archiveTarget = f },
-                            onUseWithBubble = { chooseBubbleFile(f.id) }
+                            onUseWithBubble = { chooseBubbleFile(f.id) },
+                            onRemoveFromBubble = { removeBubbleFile() },
+                            isBubbleFile = f.id == bubbleFileId
                         )
                     }
                 }
