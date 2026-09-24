@@ -190,11 +190,11 @@ class SheetMenuOverlay(
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f))
             background = colorDrawable(headerColor(), gridLineColor())
         }
-        row.addView(cellView("", dp(26f), 0f, true))
+        row.addView(cellView("", 26f, 0f, true))
         file.preset.columns.forEach { column ->
             row.addView(cellView(column.label, 0f, 1f, true))
         }
-        row.addView(cellView("", dp(24f), 0f, true))
+        row.addView(cellView("", 24f, 0f, true))
         return row
     }
 
@@ -204,7 +204,7 @@ class SheetMenuOverlay(
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(30f))
             background = colorDrawable(if (active) activeRowColor() else surfaceColor(), gridLineColor())
         }
-        line.addView(cellView((row.rowIdx + 1).toString(), dp(26f), 0f, false, rowNumber = true))
+        line.addView(cellView((row.rowIdx + 1).toString(), 26f, 0f, false, rowNumber = true))
         file.preset.columns.forEach { column ->
             val value = if (column.key == "twofakey" && isNo2Fa(row.twofakey)) NO_2FA else row.cell(column.key)
             line.addView(cellView(value, 0f, 1f, false))
