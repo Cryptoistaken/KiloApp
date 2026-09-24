@@ -179,6 +179,8 @@ codebase stays clean without future cleanups:
 |---|---|
 | `AGENTS.md` | This file — agent rules, build/install flow, snapshots, filesystem map |
 | `monitor-build.go` | CI waiter (stdlib only): `go run ./monitor-build.go [run-id]` polls the Actions run every 5s with a live job table + log tail, dumps failed logs at the end, exits 0 on success / 1 on failure. Always use this after pushing; never fixed sleeps. **Keep it updated:** when CI-wait requirements change, update the script AND this row in the same commit. |
+| `worker/` | Backend API (Hono/Bun + Postgres, copied from standalone SheetSubmit `backend/`; Railway-deployed via dashboard, `railway.toml` deploy config) |
+| `Pages/` | React SPA frontend (Vite; copied from standalone SheetSubmit `Pages/`; Cloudflare Pages deploys) |
 | `checker/` | Own exit-IP checker (Cloudflare Worker source; deploys via wrangler, outside the APK build) |
 | `cli/` | On-device Go test harness (stdlib only) for the portable engine half: `probe` (SocksTester parity), `check` (Utility.checkWith parity), `bench` (repeat connect-time stats + CSV), `sweep` (bulk proxy list), `speed` (throughput via proxy/direct), `dns` (IPv4-preferred resolve timing). Build: `go build -o kiloproxy .` in `cli/` (binary gitignored). Cannot drive TUN/tun2socks/pdnsd (Android-only). |
 | `sms core/` | Go SMS gateway (stdlib only, Railway-deployed): `gateway.go` (public API `/v1/feed|numbers|otp|meta`, SSE push `/v1/stream`, + `/v1/admin/*`), `providers.go` (sole upstream contact: VoltX/MNIT/Zenex pool, bot-exact app/method labels), `cli/` (admin CLI), `Dockerfile` (multi-stage build). Test: `go vet ./... && go build ./...` inside. Secrets via env, never committed. |

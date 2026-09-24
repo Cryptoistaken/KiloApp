@@ -1,0 +1,196 @@
+// Background jobs — merged in-process (was a separate Railway worker service).
+// Jobs (each on its own interval, sequential):
+//   1. held-uid-check      — pending-approval monitoring: held rows whose UID checks dead → state='dead' (never paid)
+//   2. page-advanced       — WhatsApp eligibility for rows without eligible check_status (writes data.check_status + check:{uid}:{cuser} cache)
+//   3. page-simple         — FB pages scrape for rows without check_status (sets eligible + page name + cache)
+// Available pool rows are NOT background-monitored — they are killed by user checks (POST /fb/check → markDead).
+// Env: DATABASE_URL, REDIS_URL (optional), CHECK_URL, BACKUP_DATABASE_URL (optional standby copy), BACKUP_INTERVAL_MS (30min), HELD_INTERVAL_MS (10min), ADVANCED_INTERVAL_MS (30min, falls back to WA_INTERVAL_MS), SIMPLE_INTERVAL_MS (30min, falls back to PAGE_INTERVAL_MS)
+import postgres from "postgres";
+import { closeRedis, redisDel, redisDelPrefix, publishLiveEvent } from "./redis";
+import { syncToBackup } from "../lib/backup";
+
+if (!Bun.env.DATABASE_URL) throw new Error("DATABASE_URL is required for worker");
+const db = postgres(Bun.env.DATABASE_URL || "", { max: 2, idle_timeout: 20, connect_timeout: 10 });
+const CHECK_URL = Bun.env.CHECK_URL || "https://check.fb.tools/api/check/facebook";
+const UA_IOS = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1";
+const challenged = (html: string) => html.includes("checkpointSubmitButton") || html.includes("m_login_email") || /checkpoint|login_attempt|force_login/i.test(html.substring(0, 5000));
+const extractPages = (html: string) => { const pages: { name: string; type: string }[] = []; const re = /"identity_type":"FB_ADDITIONAL_PROFILE"[^}]*?"full_name":"([^"]+)"[^}]*?"identity_type_string":"([^"]+)"/g; let m: RegExpExecArray | null; while ((m = re.exec(html))) pages.push({ name: m[1], type: m[2] }); return pages; };
+const extractLinkedNumber = (html: string) => html.match(/"__typename":"XFBFXSettingsContactPoint"[^}]*?"navigation_row_subtitle":"([^"]+)"/)?.[1] ?? null;
+const j = (v: unknown) => v;
+
+// ── UID liveness for HELD rows (check.fb.tools, batch ≤500) → dead rows never get paid ──
+async function checkUids(limit: number): Promise<number> {
+  const held: { row_key: string }[] = await db`SELECT DISTINCT row_key FROM pool_rows WHERE state='held' AND row_key ~ '^\d{5,20}$' LIMIT ${limit}`;
+  if (!held.length) return 0;
+  const uids = held.map((r) => r.row_key);
+  const res = await fetch(CHECK_URL, {
+    method: "POST",
+    headers: { accept: "application/x-ndjson", "content-type": "application/json" },
+    signal: AbortSignal.timeout(30_000),
+    body: JSON.stringify({ inputData: uids, userLang: "en", checkFriends: false }),
+  });
+  if (!res.ok) throw new Error(`checker responded ${res.status}`);
+  const dead: string[] = [];
+  for (const line of (await res.text()).split("\n")) {
+    try {
+      const x = JSON.parse(line.slice(line.indexOf("{")));
+      const uid = String(x.data?.uid || x.data?.account || "");
+      if (uid && x.data?.status?.name !== "valid") dead.push(uid);
+    } catch {}
+  }
+  if (dead.length) {
+    await db`UPDATE pool_rows SET state='dead' WHERE state='held' AND row_key IN ${db(dead)}`;
+    await redisDelPrefix("ss:rpc:pools:");
+    // died on hold → permanent blocklist (never re-poolable, even after file deletes)
+    await db`INSERT INTO pool_blocked(row_key,reason,ts) SELECT u.k,'dead',${Date.now()} FROM unnest(${dead}::text[]) AS u(k) ON CONFLICT(row_key) DO NOTHING`;
+    // wake any owner sheets watching these rows (backend relays to file rooms)
+    void publishLiveEvent({ type: "dead-keys", keys: dead });
+  }
+  console.log(`[worker:held] checked ${uids.length} uid(s) — ${dead.length} dead`);
+  return dead.length;
+}
+
+// ── Advanced check: business.facebook.com scrape + GraphQL eligibility ──
+async function pageAdvanced(cookie: string): Promise<{ eligible: boolean; banReason: string | null; linkedNumber: string | null; pageName: string | null; error: string | null }> {
+  const fail = (error: string) => ({ eligible: false, banReason: null, linkedNumber: null, pageName: null, error });
+  try {
+    const pageRes = await fetch("https://business.facebook.com/latest/inbox/wec", { headers: { accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", cookie, "sec-fetch-dest": "document", "sec-fetch-mode": "navigate", "sec-fetch-site": "none", "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" }, signal: AbortSignal.timeout(15000) });
+    const html = await pageRes.text();
+    if (challenged(html)) return fail("Session requires 2FA or login challenge");
+    if (html.includes("Insufficient Permission") || html.includes("You do not have the necessary permission")) return fail("Not eligible for this page");
+    const pageIdPatterns = [pageRes.url.match(/[?&](?:asset_id|page_id)[=_](\d{14,17})/)?.[1], pageRes.url.match(/\/pages\/(\d{14,17})\//)?.[1], ...[/"pageID"\s*:\s*"(\d{14,17})"/, /"page_id"\s*:\s*(\d{14,17})/, /"localScopeID"\s*:\s*"(\d{14,17})"/, /"assetID"\s*:\s*"(\d{14,17})"/, /"selectedPageId"\s*:\s*"(\d{14,17})"/, /"ownerId"\s*:\s*"(\d{14,17})"/, /"business_id"\s*:\s*(\d{14,17})/, /"actorID"\s*:\s*"(\d{14,17})"/].map((p) => html.match(p)?.[1]), cookie.match(/c_user=(\d+)/)?.[1]];
+    const pageID = pageIdPatterns.find((x): x is string => !!x && /^\d+$/.test(x));
+    if (!pageID) return fail("Invalid pageID");
+    const fb_dtsg = html.match(/"DTSGInitData"[,\[\]\s]*\{[^}]*"token"\s*:\s*"([^"]+)"/)?.[1] ?? null;
+    if (!fb_dtsg) return fail("Could not extract fb_dtsg");
+    const cuser = cookie.match(/c_user=(\d+)/)?.[1] || "";
+    const dpr = Math.round(parseFloat(cookie.match(/dpr=([\d.]+)/)?.[1] || "3"));
+    const body = new URLSearchParams({ av: pageID, __user: cuser, dpr: String(dpr), fb_dtsg, __crn: "comet.bizweb.BusinessCometBizSuiteInboxWhatsAppRoute", fb_api_caller_class: "RelayModern", fb_api_req_friendly_name: "WhatsAppOnboardingUnifiedInboxSurfaceQuery", server_timestamps: "true", variables: JSON.stringify({ pageID, wabaID: "", hasWabaID: false }), doc_id: "27161030553583658" });
+    const gqlRes = await fetch("https://business.facebook.com/api/graphql/", { method: "POST", headers: { accept: "*/*", "content-type": "application/x-www-form-urlencoded", "x-fb-friendly-name": "WhatsAppOnboardingUnifiedInboxSurfaceQuery", cookie }, body, signal: AbortSignal.timeout(15000) });
+    if (gqlRes.status === 429) return fail("Rate limited");
+    if (!gqlRes.ok) return fail(`GraphQL returned ${gqlRes.status}`);
+    const text = await gqlRes.text();
+    if (text.includes("Insufficient Permission") || text.includes("You do not have the necessary permission")) return fail("Not eligible for this page");
+    let json: any; try { json = JSON.parse(text.replace(/^for\s*\(;;\)\s*;?\s*/, "")); } catch { return fail("Invalid GraphQL JSON"); }
+    const elig = json?.data?.xfb_is_page_eligible_for_wa_link;
+    if (elig === undefined || elig === null) return fail("Unexpected response structure");
+    const rawName = (json?.data?.page as { name?: unknown } | null | undefined)?.name; const pageName = typeof rawName === "string" && rawName.trim() ? rawName : null;
+    return { eligible: elig?.is_eligible === true && !!pageName, banReason: elig?.ban_reason || null, linkedNumber: elig?.page_whatsapp_number || null, pageName, error: null };
+  } catch (e) { return fail(/abort|timeout|network|fetch/i.test(e instanceof Error ? `${e.name} ${e.message}` : String(e)) ? "Service unavailable" : String(e instanceof Error ? e.message : e)); }
+}
+
+// ── Simple check: accountscenter scrape → pages ──
+async function pageSimple(cookie: string): Promise<{ eligible: boolean; pageName: string | null; linkedNumber: string | null; error: string | null }> {
+  try {
+    const pageRes = await fetch("https://accountscenter.facebook.com/profiles", { headers: { accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", cookie, "sec-ch-ua-mobile": "?1", "sec-ch-ua-platform": '"iOS"', "sec-fetch-dest": "document", "sec-fetch-mode": "navigate", "sec-fetch-site": "same-origin", "upgrade-insecure-requests": "1", "user-agent": UA_IOS }, signal: AbortSignal.timeout(20000), redirect: "follow" });
+    const html = await pageRes.text();
+    if (challenged(html)) return { eligible: false, pageName: null, linkedNumber: null, error: "Session requires 2FA or login challenge" };
+    const pages = extractPages(html);
+    const pageName = pages[0]?.name ?? null;
+    return { eligible: pages.length > 0 && !!pageName, pageName, linkedNumber: extractLinkedNumber(html), error: null };
+  } catch (e) { return { eligible: false, pageName: null, linkedNumber: null, error: /abort|timeout|network|fetch/i.test(e instanceof Error ? `${e.name} ${e.message}` : String(e)) ? "Service unavailable" : String(e instanceof Error ? e.message : e) }; }
+}
+
+type PoolRowRef = { password: string; pool_id: string; row_key: string; src_uid: string | null; cookies: string; cuser: string };
+async function rowsNeedingCheck(kind: "advanced" | "simple", limit: number): Promise<PoolRowRef[]> {
+  // COALESCE keeps pre-rename rows (wa_status/waStatus) readable; new writes use check_status.
+  const q = kind === "advanced"
+    ? db`SELECT password,pool_id,row_key,src_uid,data->>'cookies' AS cookies FROM pool_rows WHERE state='available' AND data->>'cookies' LIKE '%c_user=%' AND (COALESCE(data->>'check_status', data->>'wa_status', data->>'waStatus', '') IS NULL OR (COALESCE(data->>'check_status', data->>'wa_status', data->>'waStatus', '') NOT IN ('eligible','ineligible'))) LIMIT ${limit}`
+    : db`SELECT password,pool_id,row_key,src_uid,data->>'cookies' AS cookies FROM pool_rows WHERE state='available' AND data->>'cookies' LIKE '%c_user=%' AND (COALESCE(data->>'check_status', data->>'wa_status', data->>'waStatus', '') IS NULL OR COALESCE(data->>'check_status', data->>'wa_status', data->>'waStatus', '') <> 'eligible') LIMIT ${limit}`;
+  const rows: any[] = await q;
+  return rows.map((r) => ({ password: r.password, pool_id: r.pool_id, row_key: r.row_key, src_uid: r.src_uid, cookies: r.cookies, cuser: String(r.cookies || "").match(/c_user=(\d+)/)?.[1] || "" })).filter((r) => r.cuser);
+}
+async function applyResult(r: PoolRowRef, patch: Record<string, unknown>, cache: Record<string, unknown> | null) {
+  // writes converge on check_*: merge the patch, then drop legacy wa_* keys
+  await db`UPDATE pool_rows SET data=(data||${j(patch)}::jsonb) - 'wa_status' - 'wa_ban_reason' - 'wa_page_name' - 'wa_linked_number' - 'waStatus' WHERE password=${r.password} AND pool_id=${r.pool_id} AND row_key=${r.row_key}`;
+  await redisDelPrefix("ss:rpc:pools:");
+  if (r.src_uid && cache) { const k = `check:${r.src_uid}:${r.cuser}`; await db`INSERT INTO meta(k,v) VALUES(${k},${j({ ...cache, ts: Date.now() })}) ON CONFLICT(k) DO UPDATE SET v=EXCLUDED.v`; void redisDel(`ss:meta:${k}`); }
+}
+
+async function sweepAdvanced(limit: number) {
+  const rows = await rowsNeedingCheck("advanced", limit);
+  for (const r of rows) {
+    const res = await pageAdvanced(r.cookies);
+    if (res.error) continue; // challenges/rate limits: leave row untouched, retry next sweep
+    const patch: Record<string, unknown> = { check_status: res.eligible ? "eligible" : "ineligible" };
+    if (res.banReason) patch.check_ban_reason = res.banReason;
+    if (res.pageName) patch.check_page_name = res.pageName;
+    if (res.linkedNumber) patch.check_linked_number = res.linkedNumber;
+    await applyResult(r, patch, res.eligible ? { status: "eligible", banReason: res.banReason, pageName: res.pageName, linkedNumber: res.linkedNumber, error: null } : null);
+    if (!res.eligible && r.src_uid) { const ck = `check:${r.src_uid}:${r.cuser}`, lk = `wa:${r.src_uid}:${r.cuser}`; await db`DELETE FROM meta WHERE k IN (${ck},${lk})`; void redisDel(`ss:meta:${ck}`); void redisDel(`ss:meta:${lk}`); }
+  }
+  console.log(`[worker:page-advanced] swept ${rows.length} row(s)`);
+}
+
+async function sweepSimple(limit: number) {
+  const rows = await rowsNeedingCheck("simple", limit);
+  for (const r of rows) {
+    const res = await pageSimple(r.cookies);
+    if (res.error) continue;
+    if (!res.eligible) continue; // simple finds nothing → leave for advanced to decide
+    await applyResult(r, { check_status: "eligible", ...(res.pageName ? { check_page_name: res.pageName } : {}), ...(res.linkedNumber ? { check_linked_number: res.linkedNumber } : {}) }, { status: "eligible", banReason: null, error: null, pageName: res.pageName, linkedNumber: res.linkedNumber });
+  }
+  console.log(`[worker:page-simple] swept ${rows.length} row(s)`);
+}
+
+const interval = (k: string, def: number) => Math.max(60_000, Number(Bun.env[k]) || def);
+const intervalNew = (nk: string, ok: string, def: number) => Math.max(60_000, Number(Bun.env[nk] ?? Bun.env[ok]) || def);
+const JOBS = [
+  { name: "held-uid-check", every: interval("HELD_INTERVAL_MS", 600_000), limit: Number(Bun.env.UID_BATCH) || 500, run: (n: number) => checkUids(n) },
+  { name: "page-simple", every: intervalNew("SIMPLE_INTERVAL_MS", "PAGE_INTERVAL_MS", 1_800_000), limit: Number(Bun.env.CHECK_BATCH) || 25, run: (n: number) => sweepSimple(n) },
+  { name: "page-advanced", every: intervalNew("ADVANCED_INTERVAL_MS", "WA_INTERVAL_MS", 1_800_000), limit: Number(Bun.env.CHECK_BATCH) || 25, run: (n: number) => sweepAdvanced(n) },
+  { name: "backup-sync", every: interval("BACKUP_INTERVAL_MS", 1_800_000), limit: 0, run: () => syncToBackup().then((st) => { if (st !== "backup-off" && st !== "backup-synced") console.log(`[worker:backup-sync] ${st}`); }) },
+];
+
+// merged: the backend owns schema bootstrap + process lifecycle. Jobs fail
+// harmlessly and retry each tick until tables exist.
+const startedAt = Date.now();
+const last = new Map<string, number>();
+const lastError = new Map<string, string>();
+let stopping = false;
+process.once("SIGTERM", () => { stopping = true; });
+process.once("SIGINT", () => { stopping = true; });
+
+export function getWorkerStats() {
+  return {
+    ok: true,
+    inProcess: true,
+    startedAt,
+    uptimeMs: Date.now() - startedAt,
+    jobs: JOBS.map((jn) => ({ name: jn.name, everyMs: jn.every, lastRunAt: last.get(jn.name) ?? null, lastRunAgoMs: last.has(jn.name) ? Date.now() - (last.get(jn.name) as number) : null, lastError: lastError.get(jn.name) ?? null })),
+  };
+}
+
+export async function startWorkerJobs() {
+  console.log(`[worker] started in-process — jobs: ${JOBS.map((j) => `${j.name}@${j.every / 1000}s`).join(", ")}`);
+  // Slow tick so Neon can suspend between sweeps (5min idle timeout).
+  const tickMs = Math.max(60_000, Number(Bun.env.WORKER_TICK_MS) || 600_000);
+  for (;;) {
+    if (stopping) break;
+    // single-leader: only one replica sweeps at a time; losers skip the tick
+    let leader = false;
+    try {
+      const r: any[] = await db`SELECT pg_try_advisory_lock(918273645) AS locked`;
+      leader = !!r[0]?.locked;
+    } catch { leader = true; }
+    if (!leader) { await new Promise((r) => setTimeout(r, tickMs)); continue; }
+    try {
+      // held-uid-check first: dead held rows must stop being payable ASAP, don't let slow sweeps starve it
+      const heldJob = JOBS[0];
+      if ((last.get(heldJob.name) ?? 0) + heldJob.every <= Date.now()) {
+        last.set(heldJob.name, Date.now());
+        try { await heldJob.run(heldJob.limit); lastError.delete(heldJob.name); } catch (e) { lastError.set(heldJob.name, String((e as Error)?.message ?? e).slice(0, 200)); console.error(`[worker:${heldJob.name}]`, (e as Error)?.message ?? e); }
+      }
+      for (const job of JOBS.slice(1)) {
+        if (stopping) break;
+        const due = (last.get(job.name) ?? 0) + job.every <= Date.now();
+        if (!due) continue;
+        last.set(job.name, Date.now());
+        try { await job.run(job.limit); lastError.delete(job.name); } catch (e) { lastError.set(job.name, String((e as Error)?.message ?? e).slice(0, 200)); console.error(`[worker:${job.name}]`, (e as Error)?.message ?? e); }
+      }
+    } finally {
+      try { await db`SELECT pg_advisory_unlock(918273645)`; } catch {}
+    }
+    await new Promise((r) => setTimeout(r, tickMs));
+  }
+}

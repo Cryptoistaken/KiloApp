@@ -1,0 +1,220 @@
+import { describe, expect, it, mock } from "bun:test";
+
+// xlsx seam: import/parse/build through the REAL xlsx lib (no mocks on the
+// format itself — a workbook written by buildXlsx must read back through
+// parseSheetRows/importXlsx). Only the api boundary (hydrateCheckCache's
+// getCheckCache) is stubbed. buildCustomRows/splitRows already have their own
+// suites; download writers that touch fs/DOM are covered only on the
+// no-data path (returns false before any side effect).
+const checkHarness: { cache: Record<string, unknown>; throw: boolean } = { cache: {}, throw: false };
+
+mock.module("@/lib/api", () => ({
+  api: {
+    getCheckCache: async () => {
+      if (checkHarness.throw) throw new Error("down");
+      return { cache: checkHarness.cache };
+    },
+  },
+}));
+
+const XLSX = await import("xlsx");
+const { importXlsx, buildXlsx, parseSheetRows, downloadSheetRows, hydrateCheckCache, genId, todayStr } = await import("../xlsx");
+const { buildDownloadOpts } = await import("../downloadOpts");
+
+const COLS = [
+  { key: "cookies", label: "cookies", width: 340 },
+  { key: "twofakey", label: "2fa key", width: 200 },
+  { key: "uid", label: "uid", width: 120 },
+];
+
+function toBuf(aoa: unknown[][]): ArrayBuffer {
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+}
+
+describe("buildXlsx / parseSheetRows round-trip", () => {
+  it("writes rows and reads them back cell-identical", async () => {
+    const rows = [
+      { cookies: "c_user=1; xs=a", twofakey: "ABCDEFGHJK", uid: "1" },
+      { cookies: "c_user=2;", twofakey: "", uid: "2" },
+    ];
+    const back = await parseSheetRows(await buildXlsx(rows, COLS), COLS);
+    expect(back).toEqual(rows);
+  });
+
+  it("drops fully-empty rows on write and strips the No_2Fa marker", async () => {
+    const rows = [
+      { cookies: "", twofakey: "", uid: "" },
+      { cookies: "c_user=3;", twofakey: "No_2Fa", uid: "3" },
+    ];
+    const back = await parseSheetRows(await buildXlsx(rows, COLS), COLS);
+    expect(back).toEqual([{ cookies: "c_user=3;", twofakey: "", uid: "3" }]);
+  });
+
+  it("parseSheetRows matches columns by label as well as key", async () => {
+    const buf = toBuf([["cookies", "2fa key", "uid"], ["c_user=9;", "K".repeat(10), "9"]]);
+    const back = await parseSheetRows(buf, COLS);
+    expect(back).toEqual([{ cookies: "c_user=9;", twofakey: "K".repeat(10), uid: "9" }]);
+  });
+
+  it("parseSheetRows falls back to positional columns without a header", async () => {
+    const buf = toBuf([["c_user=9;", "K".repeat(10), "9"]]);
+    const back = await parseSheetRows(buf, COLS);
+    expect(back).toEqual([{ cookies: "c_user=9;", twofakey: "K".repeat(10), uid: "9" }]);
+  });
+});
+
+describe("importXlsx", () => {
+  it("detects fb_cookie from headers and autofills uid from c_user", async () => {
+    const buf = toBuf([
+      ["cookies", "2fa key", "uid"],
+      ["c_user=11; xs=1", "", ""],
+      ["c_user=12;", "ABCDEFGHJK", "12"],
+    ]);
+    const res = await importXlsx(buf, "batch.xlsx", []);
+    expect(res.type).toBe("fb_cookie");
+    expect(res.name).toBe("batch");
+    expect(res.dataCount).toBe(2);
+    expect(res.rows[0].uid).toBe("11");
+    expect(res.rows[1]).toMatchObject({ cookies: "c_user=12;", twofakey: "ABCDEFGHJK", uid: "12" });
+    expect(typeof res.id).toBe("string");
+  });
+
+  it("reads headerless cookie blobs positionally from row 0", async () => {
+    const buf = toBuf([["c_user=5; xs=1", "ABCDEFGHJK", ""]]);
+    const res = await importXlsx(buf, "blob.xlsx", []);
+    expect(res.type).toBe("fb_cookie");
+    expect(res.dataCount).toBe(1);
+    expect(res.rows[0]).toMatchObject({ cookies: "c_user=5; xs=1", twofakey: "ABCDEFGHJK", uid: "5" });
+  });
+
+  it("detects UID-first vendor layout: maps cookie+2fa, derives uid, suggests password", async () => {
+    const buf = toBuf([
+      ["61594280670436", "Love@12345", "datr=x; c_user=61594280670436; xs=1", "RBOCDYV7NHW32WIN6YSJEEDFCRH4WGIY"],
+      ["61594141865457", "Love@12345", "datr=y; c_user=61594141865457; xs=2", "NN4JVKXK7FOMFDCCF6DY7YORLU5LBXKP"],
+    ]);
+    const res = await importXlsx(buf, "2fa (Cookie & 2FA) [317].xlsx", []);
+    expect(res.type).toBe("fb_cookie");
+    expect(res.dataCount).toBe(2);
+    expect(res.detectedPassword).toBe("Love@12345");
+    expect(res.rows[0]).toMatchObject({ cookies: "datr=x; c_user=61594280670436; xs=1", twofakey: "RBOCDYV7NHW32WIN6YSJEEDFCRH4WGIY", uid: "61594280670436" });
+    expect(res.rows[0].password).toBeUndefined();
+    expect(res.rows[1].uid).toBe("61594141865457");
+  });
+
+  it("does not trigger UID-first detection on cookie-first blobs", async () => {
+    const buf = toBuf([["c_user=5; xs=1", "ABCDEFGHJK", "5", "extra"]]);
+    const res = await importXlsx(buf, "blob.xlsx", []);
+    expect(res.detectedPassword).toBeUndefined();
+    expect(res.rows[0]).toMatchObject({ cookies: "c_user=5; xs=1", twofakey: "ABCDEFGHJK", uid: "5" });
+  });
+
+  it("still maps UID-first rows when the password is path-unsafe", async () => {
+    const buf = toBuf([
+      ["12345", "a/b", "c_user=9; x=1", "ABCDEFGHJK"],
+      ["12346", "a/b", "c_user=9; x=1", "ABCDEFGHJK"],
+    ]);
+    const res = await importXlsx(buf, "u.xlsx", []);
+    expect(res.detectedPassword).toBeUndefined();
+    expect(res.dataCount).toBe(2);
+    expect(res.rows[0]).toMatchObject({ cookies: "c_user=9; x=1", twofakey: "ABCDEFGHJK", uid: "9" });
+  });
+
+  it("dedups the file name against existing files", async () => {
+    const buf = toBuf([["cookies", "2fa key", "uid"], ["c_user=1;", "", "1"]]);
+    const res = await importXlsx(buf, "batch.xlsx", [{ name: "batch" }]);
+    expect(res.name).not.toBe("batch");
+    expect(res.name.startsWith("batch (")).toBe(true);
+  });
+
+  it("rejects empty workbooks and header-only workbooks", async () => {
+    await expect(importXlsx(toBuf([]), "e.xlsx", [])).rejects.toThrow("The file is empty.");
+    await expect(importXlsx(toBuf([["cookies", "2fa key", "uid"]]), "h.xlsx", [])).rejects.toThrow("No data rows found in this file.");
+  });
+});
+
+describe("buildDownloadOpts", () => {
+  const rows = [
+    { cookies: "c_user=1;", twofakey: "K".repeat(10), uid: "1", status: "good", check_status: "eligible" },
+    { cookies: "c_user=2;", twofakey: "K".repeat(10), uid: "2", status: "good", check_status: "" },
+    { cookies: "c_user=3;", twofakey: "", uid: "3", status: "good", check_status: "" },
+    { cookies: "", twofakey: "K".repeat(10), uid: "", status: "good", check_status: "" },
+    { cookies: "c_user=5;", twofakey: "", uid: "5", status: "bad", check_status: "" },
+    { cookies: "", twofakey: "", uid: "", status: "" },
+  ];
+  const byKey = Object.fromEntries(buildDownloadOpts(rows, COLS).map((o) => [o.key, o]));
+
+  it("counts every live segment", () => {
+    expect(byKey.all.count).toBe(5);
+    expect(byKey.valid.count).toBe(4);
+    expect(byKey.combo.count).toBe(2);
+    expect(byKey.onlycookie.count).toBe(1);
+    expect(byKey.only2fa.count).toBe(1);
+    expect(byKey.check.count).toBe(1);
+    expect(byKey["valid-nocheck"].count).toBe(3);
+    expect(byKey.dead.count).toBe(1);
+  });
+
+  it("omits zero-count segments", () => {
+    const keys = buildDownloadOpts([{ cookies: "c_user=1;", status: "good" }], COLS).map((o) => o.key);
+    expect(keys).toContain("all");
+    expect(keys).toContain("valid");
+    expect(keys).not.toContain("dead");
+    expect(keys).not.toContain("check");
+  });
+
+  it("filters select exactly the rows they count", () => {
+    for (const opt of buildDownloadOpts(rows, COLS)) {
+      if (!opt.filter) continue;
+      expect(rows.filter(opt.filter).length).toBe(opt.count);
+    }
+  });
+
+  it("returns no options for an empty sheet", () => {
+    expect(buildDownloadOpts([], COLS)).toEqual([]);
+  });
+});
+
+describe("downloadSheetRows / hydrateCheckCache", () => {
+  it("downloadSheetRows returns false without touching fs when nothing is downloadable", async () => {
+    expect(await downloadSheetRows([{ cookies: "", twofakey: "", uid: "" }], COLS, "x")).toBe(false);
+    expect(await downloadSheetRows([], COLS, "x")).toBe(false);
+  });
+
+  it("hydrateCheckCache fills eligible/ineligible rows from the cache", async () => {
+    checkHarness.throw = false;
+    checkHarness.cache = {
+      "1": { status: "eligible", banReason: null, pageName: "P", linkedNumber: "N" },
+      "2": { status: "ineligible", banReason: "b", pageName: null, linkedNumber: null },
+      "3": { status: "unknown" },
+    };
+    const rows = [
+      { cookies: "", uid: "1", check_status: "" },
+      { cookies: "c_user=2;", uid: "", check_status: "" },
+      { cookies: "c_user=3;", uid: "", check_status: "" },
+    ];
+    await hydrateCheckCache(rows);
+    expect(rows[0].check_status).toBe("eligible");
+    expect(rows[0].check_page_name).toBe("P");
+    expect(rows[1].check_status).toBe("ineligible");
+    expect(rows[1].check_ban_reason).toBe("b");
+    expect(rows[2].check_status).toBe("");
+  });
+
+  it("hydrateCheckCache swallows cache failures and leaves rows untouched", async () => {
+    checkHarness.throw = true;
+    const rows = [{ cookies: "c_user=1;", uid: "1", check_status: "" }];
+    await hydrateCheckCache(rows);
+    expect(rows[0].check_status).toBe("");
+    checkHarness.throw = false;
+  });
+});
+
+describe("genId / todayStr", () => {
+  it("genId yields non-empty ids", () => {
+    expect(genId().length).toBeGreaterThan(0);
+    expect(todayStr().length).toBeGreaterThan(0);
+  });
+});
