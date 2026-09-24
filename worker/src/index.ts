@@ -4,6 +4,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { compress } from "hono/compress";
 import { etag } from "hono/etag";
 import type { Env } from "./lib/shared";
+import { API_VERSION } from "./lib/version";
 import { requireAuth, isAdmin, cookie, verifySession, evictSessions } from "./lib/session";
 import { rpc } from "./lib/do";
 import { rateLimit } from "./lib/redis";
@@ -23,8 +24,6 @@ import { signSession as signSessionFn } from "./lib/session";
 import { logEvent, newReqId } from "./lib/log";
 
 export const app = new Hono<{ Bindings: Env; Variables: { uid: string; logCtx?: Record<string, unknown> } }>();
-// ponytail: manual bump on any backend route change — lets health checks confirm a deploy landed
-export const API_VERSION = "2.0.37";
 // ponytail: repository errors are plain Errors — map known client failures to typed
 // 4xx JSON instead of masking everything as 500. Unknown (incl. SQL internals) stays masked.
 const CLIENT_ERRORS: [RegExp, ContentfulStatusCode][] = [
