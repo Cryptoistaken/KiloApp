@@ -176,43 +176,20 @@ class SmsMenuOverlay(
         panelLp.height = panelHeight
         panel.layoutParams = panelLp
 
-        // Same smart 4-side positioning as the proxy popup.
         val margin8 = dp(8f)
-        val bx = bubbleCenterX - bubbleSizePx / 2
-        val by = bubbleCenterY - bubbleSizePx / 2
-        val right = bounds.right - (bx + bubbleSizePx) - margin8
-        val left = bx - bounds.left - margin8
-        val bottom = bounds.bottom - (by + bubbleSizePx) - margin8
-        val top = by - bounds.top - margin8
+        val placement = BubblePopupPlacer.place(
+            bounds = bounds,
+            bubbleCenterX = bubbleCenterX,
+            bubbleCenterY = bubbleCenterY,
+            bubbleSizePx = bubbleSizePx,
+            panelWidth = panelWidth,
+            panelHeight = panelHeight,
+            marginPx = margin8
+        )
+        val side = placement.side
 
-        fun fitsH(s: Int) = s >= panelWidth
-        fun fitsV(s: Int) = s >= panelHeight
-
-        val hOptions = listOf("right" to right, "left" to left).filter { fitsH(it.second) }
-        val vOptions = listOf("bottom" to bottom, "top" to top).filter { fitsV(it.second) }
-
-        val side = when {
-            hOptions.isNotEmpty() -> hOptions.maxByOrNull { it.second }!!.first
-            vOptions.isNotEmpty() -> vOptions.maxByOrNull { it.second }!!.first
-            else -> listOf("right" to right, "left" to left, "bottom" to bottom, "top" to top)
-                .maxByOrNull { it.second }!!.first
-        }
-
-        var panelX = when (side) {
-            "right" -> bx + bubbleSizePx + margin8
-            "left" -> bx - panelWidth - margin8
-            else -> bx + bubbleSizePx / 2 - panelWidth / 2
-        }
-        var panelY = when (side) {
-            "bottom" -> by + bubbleSizePx + margin8
-            "top" -> by - panelHeight - margin8
-            else -> by + bubbleSizePx / 2 - panelHeight / 2
-        }
-        panelX = panelX.coerceIn(bounds.left + margin8, bounds.right - panelWidth - margin8)
-        panelY = panelY.coerceIn(bounds.top + margin8, bounds.bottom - panelHeight - margin8)
-
-        panelLp.leftMargin = panelX
-        panelLp.topMargin = panelY
+        panelLp.leftMargin = placement.x
+        panelLp.topMargin = placement.y
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,

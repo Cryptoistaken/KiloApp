@@ -7,6 +7,16 @@ const val ARCHIVE_KEEP_DAYS = 30
 const val LOVE_PASSWORD = "Love@12345"
 const val DGD_PASSWORD = "dgddigital"
 
+// Display-only value written by the Sheet bubble when a row has no 2FA key.
+// It remains in the local database, is excluded from duplicate checks, and
+// is never treated as a real Base32 secret.
+const val NO_2FA = "No_2Fa"
+
+fun isNo2Fa(value: String?): Boolean = value == NO_2FA
+
+fun isValidTwoFaValue(raw: String): Boolean =
+    isNo2Fa(raw) || isValidTwoFaKey(raw)
+
 enum class SheetPreset(val title: String, val desc: String) {
     COOKIE("Cookie", "cookies and uid"),
     COMBO("2fa", "cookies and 2fa and uid"),

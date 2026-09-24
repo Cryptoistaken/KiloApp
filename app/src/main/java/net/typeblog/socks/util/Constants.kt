@@ -63,6 +63,10 @@ object Constants {
     const val CIRCLE_RIGHT = "line-right"
     const val CIRCLE_LEFT = "line-left"
     const val PREF_CIRCLE_SIZE = "circle_size"
+    // File UUID selected once from the full Sheet file-card menu for the
+    // floating Sheet bubble. It is a pointer only; sheet.db remains the source
+    // of truth for the file and rows.
+    const val PREF_SHEET_BUBBLE_FILE_ID = "sheet_bubble_file_id"
     const val CIRCLE_SIZE_DEFAULT = 48
     const val CIRCLE_SIZE_MIN = 36
     const val CIRCLE_SIZE_MAX = 72

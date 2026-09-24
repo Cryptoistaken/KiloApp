@@ -174,14 +174,19 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
     fun saveAllRows(db: SQLiteDatabase, fileId: String, rows: List<SheetRow>) {
         db.delete("rows", "fileId=?", arrayOf(fileId))
         for (r in rows) {
-            db.insert(
-                "rows", null,
-                cv("fileId" to fileId, "rowIdx" to r.rowIdx, "cookies" to r.cookies,
-                    "twofakey" to r.twofakey, "uid" to r.uid, "status" to r.status,
-                    "hold" to if (r.hold) 1 else 0, "approved" to if (r.approved) 1 else 0,
-                    "dead" to if (r.dead) 1 else 0)
-            )
+            upsertRow(db, fileId, r)
         }
+    }
+
+    fun upsertRow(db: SQLiteDatabase, fileId: String, row: SheetRow) {
+        db.insertWithOnConflict(
+            "rows", null,
+            cv("fileId" to fileId, "rowIdx" to row.rowIdx, "cookies" to row.cookies,
+                "twofakey" to row.twofakey, "uid" to row.uid, "status" to row.status,
+                "hold" to if (row.hold) 1 else 0, "approved" to if (row.approved) 1 else 0,
+                "dead" to if (row.dead) 1 else 0),
+            SQLiteDatabase.CONFLICT_REPLACE
+        )
     }
 
     // Cross-file duplicates: open-file (rowIdx, colKey) cells whose uid,
@@ -192,7 +197,9 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
         val byCol = mapOf(
             "uid" to rows.mapNotNull { it.uid.ifEmpty { null } }.toSet(),
             "cookies" to rows.mapNotNull { it.cookies.ifEmpty { null } }.toSet(),
-            "twofakey" to rows.mapNotNull { it.twofakey.ifEmpty { null } }.toSet()
+            "twofakey" to rows.mapNotNull { value ->
+                value.twofakey.takeIf { it.isNotEmpty() && !isNo2Fa(it) }
+            }.toSet()
         )
         if (byCol.values.all { it.isEmpty() }) return emptySet()
         val hits = mutableMapOf<String, MutableSet<String>>()
@@ -324,7 +331,7 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
     fun dupSources(fileId: String, row: SheetRow): List<DupSource> {
         val out = mutableListOf<DupSource>()
         fun query(col: String, value: String, field: String) {
-            if (value.isEmpty()) return
+            if (value.isEmpty() || (col == "twofakey" && isNo2Fa(value))) return
             readableDatabase.rawQuery(
                 "SELECT f.name, o.rowIdx, r.checkedAt FROM rows o JOIN files f ON f.id=o.fileId " +
                     "LEFT JOIN row_checks r ON r.fileId=o.fileId AND r.rowIdx=o.rowIdx " +
@@ -357,7 +364,9 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
             val localRows = mutableMapOf<String, Int>()
             for (r in rows) {
                 val v = localOf(r)
-                if (v.isNotEmpty() && !localRows.containsKey(v)) localRows[v] = r.rowIdx + 1
+                if (v.isNotEmpty() && !(col == "twofakey" && isNo2Fa(v)) && !localRows.containsKey(v)) {
+                    localRows[v] = r.rowIdx + 1
+                }
             }
             if (localRows.isEmpty()) return
             for (chunk in localRows.keys.chunked(400)) {
@@ -575,7 +584,7 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
             "SELECT COUNT(*) FROM rows r WHERE fileId=? AND (" +
                 "(uid<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.uid<>'' AND o.uid = r.uid)) OR " +
                 "(cookies<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.cookies<>'' AND o.cookies = r.cookies)) OR " +
-                "(twofakey<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.twofakey<>'' AND o.twofakey = r.twofakey))" +
+                "(r.twofakey NOT IN ('', 'No_2Fa') AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.twofakey NOT IN ('', 'No_2Fa') AND o.twofakey = r.twofakey))" +
                 ")",
             arrayOf(fileId)
         ).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }

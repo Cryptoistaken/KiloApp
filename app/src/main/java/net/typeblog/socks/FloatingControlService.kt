@@ -68,6 +68,15 @@ import net.typeblog.socks.util.Constants.PREF_SMS_LAST_RANGE
 import net.typeblog.socks.util.SMS_EXPIRE_SEC
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ClipDescription
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import net.typeblog.socks.util.sheet.SheetBubbleCoordinator
 import net.typeblog.socks.util.NamesRepo
 import net.typeblog.socks.util.SmsWatcher
 import net.typeblog.socks.util.Constants.PREF_BUBBLE_STYLE
@@ -179,7 +188,14 @@ class FloatingControlService : Service() {
     private var longPressFired = false
     private var menuOverlay: BubbleMenuOverlay? = null
     private var smsOverlay: SmsMenuOverlay? = null
+    private var sheetOverlay: SheetMenuOverlay? = null
     private var circleMenu: CircleBubbleMenu? = null
+    private val sheetBubbleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var sheetBubbleJob: Job? = null
+    private var sheetBubbleGeneration = 0
+    private var pendingSheetFileId: String? = null
+    private var pendingSheetSkipNo2Fa = false
+    private val sheetBubbleCoordinator by lazy { SheetBubbleCoordinator(this) }
     // Single source of truth for the trigger glyph (Menu vs X). Never infer
     // from window attach state: remove/add cycles and animator timing made
     // that inference strand the wrong glyph and skip the blur.
@@ -303,6 +319,15 @@ class FloatingControlService : Service() {
             onGenerate = { digits -> provisionSmsNumber(range = digits) },
             onDismissed = { longPressFired = false }
         )
+        sheetOverlay = SheetMenuOverlay(
+            this,
+            onOpened = { processPendingSheetBubbleOpen() },
+            onDismissed = {
+                longPressFired = false
+                sheetBubbleGeneration++
+                sheetBubbleJob?.cancel()
+            }
+        )
         circleMenu = CircleBubbleMenu(
             this,
             onProxyTap = { circleMenu?.hide(); handleTap() },
@@ -310,7 +335,8 @@ class FloatingControlService : Service() {
             onSmsTap = { circleMenu?.hide(); provisionSmsNumber(openPopup = true) },
             onSmsDoubleTap = { circleMenu?.hide(); provisionSmsNumber(forceNew = true, openPopup = true) },
             onSmsLongPress = { circleMenu?.hide(); openSmsPopup() },
-            onSheetTap = { circleMenu?.hide(); toast("Coming soon") },
+            onSheetTap = { circleMenu?.hide(); openSheetPopup(markNo2Fa = false) },
+            onSheetLongPress = { circleMenu?.hide(); openSheetPopup(markNo2Fa = true) },
             onNameTap = { copyRandomName() },
             onDismissed = {
                 circleMenuOpen = false
@@ -380,6 +406,7 @@ class FloatingControlService : Service() {
                 updateBubbleUi(state)
                 menuOverlay?.refreshTheme()
                 smsOverlay?.hide()
+                sheetOverlay?.hide()
             }
         }
         PreferenceManager.getDefaultSharedPreferences(this).registerOnSharedPreferenceChangeListener(prefListener)
@@ -400,6 +427,7 @@ class FloatingControlService : Service() {
         refreshWindowManager()
         menuOverlay?.onConfigurationChanged()
         smsOverlay?.onConfigurationChanged()
+        sheetOverlay?.onConfigurationChanged()
         circleMenu?.hideNow()
         reClampBubblePosition()
         val nightYes = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
@@ -444,6 +472,9 @@ class FloatingControlService : Service() {
     }
 
     private fun recreateBubbleForStyleChange(newStyle: String, preserveCenter: Boolean = false, applyClearance: Boolean = true) {
+        menuOverlay?.hide()
+        smsOverlay?.hide()
+        sheetOverlay?.hide()
         bubbleStyle = newStyle
         val oldX = params?.x
         val oldY = params?.y
@@ -510,6 +541,9 @@ class FloatingControlService : Service() {
         longPressHandler.removeCallbacks(longPressRunnable)
         menuOverlay?.hide()
         smsOverlay?.hide()
+        sheetOverlay?.hide()
+        sheetBubbleJob?.cancel()
+        sheetBubbleScope.cancel()
         circleMenu?.hideNow()
         persistBubblePosition()
         removeFlagPillFromWindow()
@@ -1658,6 +1692,8 @@ class FloatingControlService : Service() {
     }
 
     private fun openCountryMenu() {
+        smsOverlay?.hide()
+        sheetOverlay?.hide()
         if (menuOverlay == null) {
             menuOverlay = BubbleMenuOverlay(
                 this,
@@ -1794,9 +1830,66 @@ class FloatingControlService : Service() {
         return null
     }
 
+    private fun openSheetPopup(markNo2Fa: Boolean) {
+        // Only one full-screen transient popup may be active at a time.
+        menuOverlay?.hide()
+        smsOverlay?.hide()
+        sheetOverlay?.hide()
+        sheetBubbleGeneration++
+        val generation = sheetBubbleGeneration
+        pendingSheetSkipNo2Fa = markNo2Fa
+        pendingSheetFileId = PreferenceManager.getDefaultSharedPreferences(this)
+            .getString(Constants.PREF_SHEET_BUBBLE_FILE_ID, null)
+        val x = params?.x ?: 0
+        val y = params?.y ?: 0
+        sheetOverlay?.show(
+            x + bubbleWindowSizePx / 2,
+            y + bubbleWindowSizePx / 2,
+            bubbleSizePx
+        )
+        // The overlay invokes processPendingSheetBubbleOpen() after its window
+        // is attached, so the clipboard is read during the user gesture.
+        if (generation != sheetBubbleGeneration) return
+    }
+
+    private fun processPendingSheetBubbleOpen() {
+        val generation = sheetBubbleGeneration
+        val fileId = pendingSheetFileId
+        val markNo2Fa = pendingSheetSkipNo2Fa
+        sheetBubbleJob?.cancel()
+        sheetBubbleJob = sheetBubbleScope.launch {
+            val initial = withContext(Dispatchers.IO) {
+                if (fileId == null) null else sheetBubbleCoordinator.load(fileId)
+            }
+            if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
+            sheetOverlay?.render(initial)
+            val clipboard = readSheetClipboard()
+            val result = withContext(Dispatchers.IO) {
+                if (fileId == null) null else sheetBubbleCoordinator.capture(fileId, clipboard, markNo2Fa)
+            }
+            if (generation == sheetBubbleGeneration && sheetOverlay?.isShowing() == true) {
+                sheetOverlay?.render(result?.snapshot)
+            }
+        }
+    }
+
+    private fun readSheetClipboard(): String? {
+        return try {
+            val manager = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val clip = manager?.primaryClip ?: return null
+            if (!clip.description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) return null
+            val item = clip.getItemAt(0)
+            val text = item.text?.toString() ?: item.coerceToText(this).toString()
+            text.trim().take(32_000).ifEmpty { null }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     // SMS long-press: same proxy-style panel, anchored at the bubble —
     // range bar plus appending number rows.
     private fun openSmsPopup() {
+        sheetOverlay?.hide()
         try {
             longPressFired = true
             bubbleView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)

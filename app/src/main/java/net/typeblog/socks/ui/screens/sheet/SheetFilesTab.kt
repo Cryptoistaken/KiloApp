@@ -83,6 +83,7 @@ private fun ViewSwitchButton(
 fun SheetFilesTab(
     onOpenFile: (String) -> Unit = {},
     onSelectionModeChange: (Boolean) -> Unit = {},
+    onUseWithBubble: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -116,6 +117,13 @@ fun SheetFilesTab(
 
     fun io(block: suspend () -> Unit) {
         scope.launch { withContext(Dispatchers.IO) { block() } }
+    }
+
+    val chooseBubbleFile: (String) -> Unit = onUseWithBubble ?: { id ->
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { store.selectBubbleFile(id) }
+            toast(appCtx, if (ok) "Sheet file selected." else "Unable to select Sheet file.")
+        }
     }
 
     // "Send a copy": builds the xlsx in the background, drops it in cache
@@ -276,6 +284,7 @@ fun SheetFilesTab(
                                 renameText = f.name
                             },
                             onArchive = { archiveTarget = f },
+                            onUseWithBubble = { chooseBubbleFile(f.id) },
                             list = true
                         )
                     }
@@ -313,7 +322,8 @@ fun SheetFilesTab(
                                 renameTarget = f
                                 renameText = f.name
                             },
-                            onArchive = { archiveTarget = f }
+                            onArchive = { archiveTarget = f },
+                            onUseWithBubble = { chooseBubbleFile(f.id) }
                         )
                     }
                 }

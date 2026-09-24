@@ -1,6 +1,8 @@
 package net.typeblog.socks.util.sheet
 
 import android.content.Context
+import androidx.preference.PreferenceManager
+import net.typeblog.socks.util.Constants.PREF_SHEET_BUBBLE_FILE_ID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -8,14 +10,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 
 // In-memory working state over SheetDb. Every mutation writes the DB first
 // (local-first), then refreshes the exposed flows. Undo/redo is per open
 // file and persisted in undo_hist/redo_hist, so it survives app restarts.
 class SheetStore private constructor(context: Context) {
     private val db = SheetDb(context.applicationContext)
+    private val bubbleFilePrefs = PreferenceManager.getDefaultSharedPreferences(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val files = MutableStateFlow<List<SheetFile>>(emptyList())
@@ -53,6 +54,31 @@ class SheetStore private constructor(context: Context) {
             archive.value = db.listFiles(true)
             balance.value = db.walletBalance()
             txs.value = db.walletTxs()
+        }
+    }
+
+    /** Select the one active file exposed by the floating Sheet bubble. */
+    fun selectBubbleFile(id: String): Boolean {
+        val file = db.getFile(id) ?: return false
+        if (file.archived) return false
+        bubbleFilePrefs.edit().putString(PREF_SHEET_BUBBLE_FILE_ID, id).apply()
+        return true
+    }
+
+    /** Re-resolve the remembered file on every use and clear stale pointers. */
+    fun getActiveBubbleFile(): SheetFile? {
+        val id = bubbleFilePrefs.getString(PREF_SHEET_BUBBLE_FILE_ID, null) ?: return null
+        val file = db.getFile(id)
+        if (file == null || file.archived) {
+            bubbleFilePrefs.edit().remove(PREF_SHEET_BUBBLE_FILE_ID).apply()
+            return null
+        }
+        return file
+    }
+
+    fun clearBubbleFileIfSelected(id: String) {
+        if (bubbleFilePrefs.getString(PREF_SHEET_BUBBLE_FILE_ID, null) == id) {
+            bubbleFilePrefs.edit().remove(PREF_SHEET_BUBBLE_FILE_ID).apply()
         }
     }
 
@@ -158,6 +184,7 @@ class SheetStore private constructor(context: Context) {
             )
             db.recordOp(d, id, if (toArchive) "archive" else "restore")
         }
+        if (toArchive) clearBubbleFileIfSelected(id)
         if (openFile.value?.id == id && toArchive) closeFile()
         refresh()
     }
@@ -167,6 +194,7 @@ class SheetStore private constructor(context: Context) {
             db.deleteFileAll(d, id)
             db.recordOp(d, id, "purge")
         }
+        clearBubbleFileIfSelected(id)
         if (openFile.value?.id == id) closeFile()
         refresh()
     }
@@ -243,7 +271,23 @@ class SheetStore private constructor(context: Context) {
         openCheckReqs.value = emptyMap()
     }
 
-    fun closeFile() {
+    /** Refresh editor flows only when a file-scoped background write targeted the open file. */
+    fun reloadOpenFileIfMatches(fileId: String): Boolean {
+        if (openFile.value?.id != fileId) return false
+        val file = db.getFile(fileId) ?: return false
+        val rows = topUp(db.loadRows(fileId).ifEmpty { emptyPad(file.preset) }, file.preset)
+        openFile.value = file
+        openRows.value = rows
+        openStyles.value = db.loadStyles(fileId)
+        openHidden.value = db.loadHidden(fileId)
+        openChecks.value = db.loadRowChecks(fileId)
+        openCheckReqs.value = db.loadCheckReqs(fileId)
+        openCrossDups.value = try { db.crossDupCells(fileId, rows) } catch (_: Exception) { emptySet() }
+        return true
+    }
+
+    fun closeFile(expectedFileId: String? = null) {
+        if (expectedFileId != null && openFile.value?.id != expectedFileId) return
         openFile.value = null
         openRows.value = emptyList()
         openStyles.value = emptyMap()
@@ -331,10 +375,11 @@ class SheetStore private constructor(context: Context) {
         if (colKey == "uid" && cur.cookies.isNotEmpty()) {
             return "UID comes from the cookie."
         }
-        if (colKey == "twofakey" && value.isNotEmpty() && !isValidTwoFaKey(value)) {
+        if (colKey == "twofakey" && value.isNotEmpty() && !isValidTwoFaValue(value)) {
             return "Invalid 2fa key."
         }
         if ((colKey == "uid" || colKey == "cookies" || colKey == "twofakey") && value.isNotEmpty() &&
+            !(colKey == "twofakey" && isNo2Fa(value)) &&
             rows.any { it.rowIdx != rowIdx && it.cell(colKey) == value }
         ) {
             return "Duplicate " + when (colKey) {
@@ -484,11 +529,12 @@ class SheetStore private constructor(context: Context) {
                 pasted++
                 continue
             }
-            if (t.ck == "twofakey" && t.value.isNotEmpty() && !isValidTwoFaKey(t.value)) {
+            if (t.ck == "twofakey" && t.value.isNotEmpty() && !isValidTwoFaValue(t.value)) {
                 skipped++
                 continue
             }
             if ((t.ck == "cookies" || t.ck == "twofakey") && t.value.isNotEmpty() &&
+                !(t.ck == "twofakey" && isNo2Fa(t.value)) &&
                 w.any { it.rowIdx != t.ri && it.cell(t.ck) == t.value }
             ) {
                 noteDup(t.ck)
@@ -833,35 +879,9 @@ class SheetStore private constructor(context: Context) {
         }
     }
 
-    private fun rowsToJson(rows: List<SheetRow>): String {
-        val a = JSONArray()
-        for (r in rows) {
-            a.put(
-                JSONObject()
-                    .put("cookies", r.cookies).put("twofakey", r.twofakey)
-                    .put("uid", r.uid).put("status", r.status)
-                    .put("hold", r.hold).put("approved", r.approved).put("dead", r.dead)
-            )
-        }
-        return a.toString()
-    }
+    private fun rowsToJson(rows: List<SheetRow>): String = encodeSheetRows(rows)
 
-    private fun rowsFromJson(data: String): List<SheetRow> {
-        val out = mutableListOf<SheetRow>()
-        val a = JSONArray(data)
-        for (i in 0 until a.length()) {
-            val o = a.getJSONObject(i)
-            out.add(
-                SheetRow(
-                    rowIdx = i, cookies = o.optString("cookies"),
-                    twofakey = o.optString("twofakey"), uid = o.optString("uid"),
-                    status = o.optString("status"), hold = o.optBoolean("hold"),
-                    approved = o.optBoolean("approved"), dead = o.optBoolean("dead")
-                )
-            )
-        }
-        return out
-    }
+    private fun rowsFromJson(data: String): List<SheetRow> = decodeSheetRows(data)
 }
 
 fun maskAccount(account: String): String {

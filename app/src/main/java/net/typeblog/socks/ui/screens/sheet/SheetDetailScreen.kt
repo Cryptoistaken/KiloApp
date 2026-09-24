@@ -415,7 +415,7 @@ fun SheetDetailScreen(
         val job = scope.launch(Dispatchers.IO) { store.open(fileId) }
         onDispose {
             job.cancel()
-            store.closeFile()
+            store.closeFile(fileId)
         }
     }
 

@@ -46,7 +46,8 @@ object SheetXlsx {
             r++
             sb.append("<row r=\"$r\">")
             for ((i, c) in columns.withIndex()) {
-                sb.append(cell(colName(i) + r, row.cell(c.key)))
+                val value = if (c.key == "twofakey" && isNo2Fa(row.cell(c.key))) "" else row.cell(c.key)
+                sb.append(cell(colName(i) + r, value))
             }
             sb.append("</row>")
         }

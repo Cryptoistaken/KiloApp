@@ -91,6 +91,7 @@ git revert <commit-hash>                  # undo a specific commit
 | `pre-split-include-only` | `9ead889` | 2026-09-17 | Before single-mode Include-only split tunneling rework (KiloProxy only; migration wipes split config, keeps profiles). |
 | `pre-home-country-recents` | `8709388` | 2026-09-19 | Before Home country selector (Proton-style location row) + Recents list at the bottom of Home. |
 | `pre-admin-removal` | `695c984` | 2026-09-24 | Before removing `admin/` (ex-`sheetsubmit/`) web copy. Restore: `git checkout -b restore-admin pre-admin-removal`. |
+| `pre-sheet-bubble` | `6bdb005` | 2026-09-25 | Before adding the native floating Sheet bubble and read-only Sheet popup. |
 
 > **One-time (do before the notification/dot pass):** done 2026-09-09 — tag `pre-notif-and-dot-fixes` created and pushed, table updated.
 
@@ -181,6 +182,7 @@ codebase stays clean without future cleanups:
 | `monitor-build.go` | CI waiter (stdlib only): `go run ./monitor-build.go [run-id]` polls the Actions run every 5s with a live job table + log tail, dumps failed logs at the end, exits 0 on success / 1 on failure. Always use this after pushing; never fixed sleeps. **Keep it updated:** when CI-wait requirements change, update the script AND this row in the same commit. |
 | `sms core/` | Go SMS gateway (stdlib only, Railway-deployed): `gateway.go` (public API `/v1/feed|numbers|otp|meta`, SSE push `/v1/stream`, + `/v1/admin/*`), `providers.go` (sole upstream contact: VoltX/MNIT/Zenex pool, bot-exact app/method labels), `cli/` (admin CLI), `Dockerfile` (multi-stage build). Test: `go vet ./... && go build ./...` inside. Secrets via env, never committed. |
 | `.railway/` | Railway IaC (`railway.ts` + SDK `package.json`): owns the `kilosms-gateway` service (source = this repo @master, Root Directory = `sms core`). Android `/app` is NOT built by Railway. |
+| `sheet-bubble.html` | Standalone interactive HTML reference for the native Circle Sheet bubble: Cookie/2fa/Page modes, clipboard capture, Skip 2FA, read-only 230dp popup, outside-tap close |
 | `protonvpn-settings.html` | Settings mock reference (tracked; `design/` docs were deleted) |
 | `build.gradle` | Root Gradle build (plugins: android.application, Kotlin compose) |
 | `settings.gradle` / `gradle.properties` / `gradle/wrapper/gradle-wrapper.properties` | Gradle config (Gradle 9.4.1, AGP 9.2.1, Kotlin 2.2.10, Java 17) |
@@ -204,9 +206,11 @@ codebase stays clean without future cleanups:
 | `MainActivity.kt` | Compose host activity, entry point, launcher |
 | `SocksApplication.kt` | Application class (init, context wiring) + one-time single-mode split migration (wipes global/per-profile split config, keeps proxy profiles, split starts OFF) |
 | `SocksVpnService.kt` | **Engine** — VpnService + tun2socks/pdnsd spawn, tunnelling, notifications, stats, IP check. NEVER modify for UI. Split is Include-only: `configure()` forces allow-list, skips own UID, falls back to full tunnel on empty effective list; `onStartCommand` logs `bypass` + app count. |
-| `FloatingControlService.kt` | Floating bubble (60dp) + flag pill overlays, long-press popup; WindowManager, SYSTEM_ALERT_WINDOW. Circle style shares lock visuals; long-press opens CircleBubbleMenu (Proxy tap toggles, Proxy long-press opens country menu, SMS provisions+copies, Name copies, Sheet placeholder) |
+| `FloatingControlService.kt` | Floating bubble (60dp) + flag pill overlays, long-press popup; WindowManager, SYSTEM_ALERT_WINDOW. Circle style shares lock visuals; long-press opens CircleBubbleMenu (Proxy tap toggles, Proxy long-press opens country menu, SMS provisions+copies, Name copies, Sheet opens the read-only file popup) |
 | `BubbleMenuOverlay.kt` | Popup overlay shown near bubble: country list, search, positioning; window params/IME handling |
-| `CircleBubbleMenu.kt` | Circle-menu overlay: Proxy/SMS/Sheet/Name bubbles around the anchor, alignment + size from prefs, scrim dismiss |
+| `BubblePopupPlacer.kt` | Shared smart four-side placement for country, SMS, and read-only Sheet popup shells |
+| `CircleBubbleMenu.kt` | Circle-menu overlay: Proxy/SMS/Sheet/Name bubbles around the anchor, alignment + size from prefs, scrim dismiss; Sheet long press applies Skip 2FA |
+| `SheetMenuOverlay.kt` | Native 230dp x 280dp read-only Sheet file popup: existing popup shell, smart placement, outside-tap close, no editable controls |
 | `BootReceiver.kt` | BOOT_COMPLETED + MY_PACKAGE_REPLACED auto-start receiver (restores VPN for auto-connect profiles and the floating bubble after reboot and after in-app updates) |
 | `System.kt` | JNI bridge (sendfd) |
 
@@ -229,10 +233,13 @@ Notes on the merged notification/dot pass:
 | `SocksTester.kt` | SOCKS5 liveness/health probe |
 | `ServiceRebind.kt` | Shared AIDL rebind backoff ladder (200/1000/3000ms by attempt) |
 | `SplitTunnel.kt` | Split-tunnel list parse/format + include-empty guard (single home for UI + engine guards) |
-| `sheet/SheetModels.kt` | Sheet local-first models: presets/columns, file/row/style/wallet types, auto-naming, archive days-left |
+| `sheet/SheetModels.kt` | Sheet local-first models: presets/columns, file/row/style/wallet types, auto-naming, archive days-left, No_2Fa marker validation |
+| `sheet/SheetBubbleRules.kt` | Pure Sheet bubble clipboard classification, 2FA normalization, preset-aware completion and active-row rules |
+| `sheet/SheetBubbleCoordinator.kt` | File-scoped Sheet bubble snapshot/atomic row writes; never publishes global open-file state |
+| `sheet/SheetRowsJson.kt` | Shared row snapshot/undo JSON encoding |
 | `sheet/SheetDb.kt` | Sheet SQLite store (source of truth, app-private): files/rows/styles/hidden/journal/snapshots/wallet/outbox; uninstall wipes it, SAF export survives |
 | `sheet/SheetCsv.kt` | Sheet CSV/TSV builders for SAF export and clipboard copy-all |
-| `sheet/SheetStore.kt` | Sheet working state over SheetDb: flows, undo/redo, create/rename/archive/restore/purge, cell edits with dup guard, compact/delete-dead, snapshot restore, offline check, wallet withdraw |
+| `sheet/SheetStore.kt` | Sheet working state over SheetDb: flows, undo/redo, create/rename/archive/restore/purge, cell edits with dup guard, compact/delete-dead, snapshot restore, offline check, wallet withdraw, remembered bubble-file selection |
 | `SmsGateway.kt` | Go SMS gateway client (`sms core/`): feed/meta/numbers/otp over HTTPS with `BuildConfig` URL + global app key (stdlib + org.json, no new deps) |
 | `SmsWatcher.kt` | App-scoped SMS state (my/expired numbers, feed, countries, 1s ticker, 7-min expiry sweep, SSE push stream with 5s-OTP-poll fallback, 60s feed refresh); fires OTP notifications, outlives the SMS tab |
 | `SmsNotify.kt` | OTP arrival notifications (code in title + Copy action); plain ASCII |
@@ -249,7 +256,7 @@ Notes on the merged notification/dot pass:
   - `ProfileDetailSheet.kt` — Bottom sheet opened by tapping a card: icon + name + sub, Provider/Type + Used/Server(no port) facts, Copy (clipboard `host:port:user:pass`, flips to bold Copied with icon hidden, no Toast) / Test (SocksTester + Toast) / Edit / Duplicate (`duplicateProfile` in ProxiesScreen, `Profile.copyTo`, no engine change) / Delete rows with `ic_sheet_*` icons (`lucide_copy` for Copy). Delete reuses the existing confirm dialog. Opens fully expanded (`skipPartiallyExpanded`).
 - `navigation/AppNavigation.kt` — NavHost destinations (incl. `theme` route)
 - `screens/` — BubbleSettingsScreen (Lock/Classic/Circle styles; Circle gates alignment options each with a live 4-icon preview + button-size slider + full preview), CountriesScreen, RecentsScreen (full recents list from Home See all; taps select AND connect via `VpnViewModel.pickAndConnectCountry`, bottom bar hidden), SmsScreen (SMS tab: mockup port — main/numbers/live/activity pages + country/confirm/item sheets, state in `SmsWatcher`, OTP notifications with Copy action), DebugLogsScreen, ProxiesScreen (list + swipe + dialogs + FAB; form lives in AddEditProxySheet; Home pick mode keeps full functionality, only tap selects + returns), AddEditProxySheet (add/edit form + proxy-string parse), SettingsScreen, SplitTunnelingScreen, StatusScreen (Home: Profile picker field + hero ConnectionCard with country selector + Data used + Connection details + Recents at the bottom; home country picks return via `VpnViewModel.pickCountry`), ThemeScreen, AdvancedSettingsScreen
-- `screens/sheet/` — Sheet tab port (user-only, same for admins in-app; no admin views): SheetScreen (My Files / Wallet / Archive tabs + open-file routing + BackHandler), SheetUi (site-exact status colors, StatusDot, PresetIcon, PasswordBadge, empty state), SheetFilesTab + SheetFileCard + SheetCreateDialogs (cards, FAB create, type/password picks, rename, SAF xlsx download, share-a-copy xlsx via system sheet, dep-free xlsx import), SheetArchiveTab (restore/delete-forever, days-left), SheetWalletTab (balance USD/BDT, withdraw form, history), SheetDetailScreen (toolbar, grid, QuickEditBar, selection bar, archived viewer)
+- `screens/sheet/` — Sheet tab port (user-only, same for admins in-app; no admin views): SheetScreen (My Files / Wallet / Archive tabs + open-file routing + BackHandler), SheetUi (site-exact status colors, StatusDot, PresetIcon, PasswordBadge, empty state), SheetFilesTab + SheetFileCard + SheetCreateDialogs (cards, FAB create, type/password picks, rename, SAF xlsx download, share-a-copy xlsx via system sheet, dep-free xlsx import; active cards expose one-time Use with bubble selection), SheetArchiveTab (restore/delete-forever, days-left), SheetWalletTab (balance USD/BDT, withdraw form, history), SheetDetailScreen (toolbar, grid, QuickEditBar, selection bar, archived viewer)
   - `AdvancedSettingsScreen.kt` — Advanced Settings page (Accelerator master + Primary checker + Checker mode + Cache last IP + Proxy health probe + Recheck interval + Cache proxy DNS). Engine honors prefs only while master is ON.
   - `ThemeScreen.kt` — Theme picker page: Light / Dark / Device theme cards with mini phone previews; writes PREF_THEME_MODE.
   - `SplitTunnelingScreen.kt` — Include-only single mode: feature header + toggle card (enabling jumps to Included page) + Included-apps row. Three pages: main, Included (dedicated list + FAB to add, empty state, minus to remove), Add apps (searchable full list, + flips to check). Same engine prefs minus bypass (`PREF_ADV_PER_APP` / `PREF_ADV_APP_LIST`; legacy `PREF_ADV_APP_BYPASS` ignored, removed from `settings.xml`). Picker hides own package, prunes stale entries on open, auto-turns split OFF when leaving with zero effective apps. IP-address rows skipped: engine has no IP split-tunneling support. Included page opens directly via `startOnApps` arg (refuse-to-connect link).
@@ -291,7 +298,7 @@ Notes on the merged notification/dot pass:
 
 ### Resources — `app/src/main/res/`
 - `assets/` — names.txt (circle-menu Name pool); NetShield blocklists were removed — NetShield is now cloud-only
-- `layout/` — `app_item.xml`, `bubble_menu.xml` (bubble popup panel), `bubble_country_row.xml`, `notification_action.xml` (RemoteViews layout for the notification Connect/Disconnect pill)
+- `layout/` — `app_item.xml`, `bubble_menu.xml` (country popup), `bubble_sheet_menu.xml` (230dp x 280dp read-only Sheet file window), `bubble_country_row.xml`, `notification_action.xml` (RemoteViews layout for the notification Connect/Disconnect pill)
 - `drawable/` — lucide_* icons, menu_panel_bg, search_input_bg, signal_dot, logo_*, launcher, notification_pill, notification icons (pill button background)
 - `font/` — Geist family TTFs (bold/medium/mono/pixel etc.)
 - `mipmap-*/` — legacy + adaptive launcher icons

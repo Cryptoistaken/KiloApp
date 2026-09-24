@@ -59,6 +59,7 @@ class CircleBubbleMenu(
     private val onSmsDoubleTap: () -> Unit = {},
     private val onSmsLongPress: () -> Unit = {},
     private val onSheetTap: () -> Unit,
+    private val onSheetLongPress: () -> Unit = {},
     private val onNameTap: () -> Unit,
     private val onDismissed: () -> Unit = {},
     private val onCloseAnim: () -> Unit = {}
@@ -320,9 +321,18 @@ class CircleBubbleMenu(
                         onProxyLongPress()
                         true
                     }
-                } else if (i == 2 || i == 3) {
-                    // Sheet / Name have no long-press action: still give
-                    // long-press haptic so no bubble feels dead.
+                } else if (i == 2) {
+                    setOnLongClickListener {
+                        try {
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        } catch (_: Exception) {
+                        }
+                        onSheetLongPress()
+                        true
+                    }
+                } else if (i == 3) {
+                    // Name has no long-press action: still give haptic so the
+                    // bubble does not feel dead.
                     setOnLongClickListener {
                         try {
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)

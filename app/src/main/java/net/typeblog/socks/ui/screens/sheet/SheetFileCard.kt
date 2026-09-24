@@ -49,6 +49,7 @@ fun SheetFileCard(
     onSendCopy: () -> Unit = {},
     onRename: () -> Unit = {},
     onArchive: () -> Unit = {},
+    onUseWithBubble: (() -> Unit)? = null,
     list: Boolean = false,
     daysLeft: Int? = null,
     onRestore: (() -> Unit)? = null,
@@ -179,6 +180,13 @@ fun SheetFileCard(
                             SheetMenuItem(icon = R.drawable.ic_ss_download, label = "Download", onClick = { menuOpen = false; onDownload() })
                             SheetMenuItem(icon = R.drawable.ic_ss_send, label = "Send a copy", onClick = { menuOpen = false; onSendCopy() })
                             SheetMenuItem(icon = R.drawable.ic_ss_rename, label = "Rename", onClick = { menuOpen = false; onRename() })
+                            onUseWithBubble?.let { callback ->
+                                SheetMenuItem(
+                                    icon = R.drawable.ic_tab_sheet,
+                                    label = "Use with bubble",
+                                    onClick = { menuOpen = false; callback() }
+                                )
+                            }
                             SheetMenuItem(icon = R.drawable.ic_ss_archive_sel, label = "Archive", onClick = { menuOpen = false; onArchive() })
                         }
                     }
