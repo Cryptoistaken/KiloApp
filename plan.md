@@ -62,7 +62,7 @@ req/day) fits with ~100x headroom.
    `sync_files(user_id, file_id, rev, seq, hash, meta JSONB, data TEXT,
    updated_at, deleted)` + per-user rev counter. Tombstones purged after 30d.
 3. Auth (Telegram, both clients): bot claim flow ported from
-   `admin/backend/src/index.ts:184` (`device/claim`) — client gets
+   `admin/backend/src/index.ts:184` (removed with `admin/`; see tag `pre-admin-removal`) (`device/claim`) — client gets
    claim token, user opens bot `?start=claim_<tok>`, webhook binds telegram
    id, client polls claim → Bearer session (30d). App stores it in
    `EncryptedSharedPreferences`. Admin = id in `ADMIN_IDS`.

@@ -55,7 +55,7 @@ import kotlin.math.roundToInt
 
 /**
  * Port of the website SlideToConfirmButton
- * (admin/Pages/src/components/ui/slide-to-confirm-button.tsx):
+ * (formerly admin/Pages/src/components/ui/slide-to-confirm-button.tsx):
  * 48dp pill track, 40dp knob, drag to the end to confirm. No tap-to-confirm:
  * only a full drag (or Enter/Space on the focused knob) fires [onConfirm].
  * Pass a changing [resetKey] (like the website key={slideKey}) to snap back

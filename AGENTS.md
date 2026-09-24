@@ -90,6 +90,7 @@ git revert <commit-hash>                  # undo a specific commit
 | `pre-android-parity` | `816486d` | 2026-09-13 | Before Android 15/16 parity fixes (16 KB ELF alignment, setMetered(false), always-on VPN start, stale-notification cleanup). |
 | `pre-split-include-only` | `9ead889` | 2026-09-17 | Before single-mode Include-only split tunneling rework (KiloProxy only; migration wipes split config, keeps profiles). |
 | `pre-home-country-recents` | `8709388` | 2026-09-19 | Before Home country selector (Proton-style location row) + Recents list at the bottom of Home. |
+| `pre-admin-removal` | `695c984` | 2026-09-24 | Before removing `admin/` (ex-`sheetsubmit/`) web copy. Restore: `git checkout -b restore-admin pre-admin-removal`. |
 
 > **One-time (do before the notification/dot pass):** done 2026-09-09 — tag `pre-notif-and-dot-fixes` created and pushed, table updated.
 
@@ -152,11 +153,6 @@ codebase stays clean without future cleanups:
   get the same Sheet UI: My Files / Wallet / Archive tabs, file cards, sheet
   grid, withdraw form. No admin views (pools, approvals, settings, tools,
   analysis, user detail) exist in the app, for anyone.
-- **Website copy (`admin/`) is admin-login-only.** It is a copy of the
-  SheetSubmit web project living in this repo. The backend refuses to mint
-  sessions for non-admin Telegram identities (`admin_only`), and the frontend
-  gates on `isAdmin`. Regular users cannot sign in to the website at all,
-  neither as user nor as admin.
 - **Local-first storage (app).** `util/sheet/` (SQLite `sheet.db`) is the
   source of truth: files/rows/styles/columns/journal/snapshots/wallet/outbox.
   Every mutation writes here first; online sync (when added) only backs it up.
@@ -274,13 +270,6 @@ Notes on the merged notification/dot pass:
 ### Icon sourcing (applies to every new icon in this project)
 - Source priority: https://keylineicons.com (fill style) first, https://allsvgicons.com second. Never add an icon library/font dependency for single icons.
 - Convert the 24px `currentColor` SVG to `res/drawable/ic_ss_*.xml`: 24dp viewport, `#000000` fills/strokes, tinted at the use site (same pattern as the existing set).
-
-### `admin/` — admin-only website copy (no separate git history)
-- Copy of the SheetSubmit web project (Pages + backend + worker, minus
-  node_modules/dist/.git/.github/android). Backend refuses non-admin Telegram
-  identities at verify/test-login (`admin_only` 403, API 2.0.38); `RequireAuth`
-  walls non-admin sessions; login page states admin-only. Regular users cannot
-  sign in here at all; they use the Android app.
 
 ### Native C — `app/src/main/jni/`
 | Area | Purpose |
