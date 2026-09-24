@@ -450,11 +450,9 @@ fun SheetDetailScreen(
     var dotRowIdx by remember { mutableStateOf<Int?>(null) }
     var dotWide by remember { mutableStateOf(false) }
     var dotTab by remember { mutableStateOf(0) }
-    var dotJump by remember { mutableStateOf<Int?>(null) }
     var dotDups by remember { mutableStateOf<List<net.typeblog.socks.util.sheet.DupSource>>(emptyList()) }
     LaunchedEffect(fileId, dotRowIdx) {
         dotTab = 0
-        dotJump = null
         dotWide = false
         val ri = dotRowIdx
         dotDups = emptyList()
@@ -1644,7 +1642,6 @@ fun SheetDetailScreen(
                                         check = openChecks[row.rowIdx],
                                         reqs = openCheckReqs[row.rowIdx] ?: emptyList(),
                                         dupSources = dotDups,
-                                        isDup = crossDups.any { it.first == row.rowIdx },
                                         fileName = openFile?.name ?: "",
                                         presetLabel = openFile?.preset?.name ?: "",
                                         rowNo = row.rowIdx + 1,
@@ -1653,9 +1650,7 @@ fun SheetDetailScreen(
                                         onToggleWide = { dotWide = true },
                                         showHeader = false,
                                         tab = dotTab,
-                                        onTabChange = { dotTab = it },
-                                        jumpReq = dotJump,
-                                        onJumpReq = { dotJump = it }
+                                        onTabChange = { dotTab = it }
                                     )
                                 }
                             }
@@ -1846,15 +1841,12 @@ fun SheetDetailScreen(
                 }
             }
             FilePopup(
-                fileName = f.name,
                 preset = f.preset,
                 rows = rows,
                 checks = openChecks,
                 reqs = openCheckReqs,
                 fileDups = inspectorDups,
                 checking = checking,
-                createdAt = f.createdAt,
-                updatedAt = f.updatedAt,
                 onDismiss = { filePopupOpen = false }
             )
         }
@@ -1923,7 +1915,6 @@ fun SheetDetailScreen(
                 check = openChecks[dotIdx],
                 reqs = openCheckReqs[dotIdx] ?: emptyList(),
                 dupSources = dotDups,
-                isDup = crossDups.any { it.first == dotIdx },
                 onDismiss = { dotRowIdx = null },
                 fileName = openFile?.name ?: "",
                 presetLabel = openFile?.preset?.name ?: "",
@@ -1932,9 +1923,7 @@ fun SheetDetailScreen(
                 startWide = true,
                 onDock = { dotWide = false },
                 tab = dotTab,
-                onTabChange = { dotTab = it },
-                jumpReq = dotJump,
-                onJumpReq = { dotJump = it }
+                onTabChange = { dotTab = it }
             )
         }
     }

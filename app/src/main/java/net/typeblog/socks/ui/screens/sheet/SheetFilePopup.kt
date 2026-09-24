@@ -6,23 +6,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,10 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import net.typeblog.socks.util.sheet.CheckReq
@@ -43,45 +34,30 @@ import net.typeblog.socks.util.sheet.RowCheck
 import net.typeblog.socks.util.sheet.SheetPreset
 import net.typeblog.socks.util.sheet.SheetRow
 
-// File Inspector: the dot popup chrome applied to the whole file.
-// Opened from the file ... menu. Header (dot + FILE / name / preset +
-// verdict + name copy + expand), aggregate UID / SIM / ADV / DUP strip,
-// Details / Log / Req / Dup tabs over file-wide data.
+// File Inspector: the dot popup's compact card applied to the whole file.
+// Opened from the file ... menu. It starts with the shared check strip and
+// tabs, without the file-name header used by the row-level popup.
 @Composable
 fun FilePopup(
-    fileName: String,
     preset: SheetPreset,
     rows: List<SheetRow>,
     checks: Map<Int, RowCheck>,
     reqs: Map<Int, List<CheckReq>>,
     fileDups: List<FileDup>,
     checking: Boolean,
-    createdAt: Long,
-    updatedAt: Long,
     onDismiss: () -> Unit
 ) {
-    var wide by remember { mutableStateOf(true) }
+    var wide by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(0) }
-    var jumpReq by remember { mutableStateOf<Int?>(null) }
 
     val totalRows = rows.size
     val alive = rows.count { it.status == "good" || it.status == "done" || it.status == "eligible" }
     val dead = rows.count { it.status == "bad" || it.dead }
     val pageRows = rows.count { it.status == "eligible" }
-    val hasDup = fileDups.isNotEmpty()
-
-    val verdict = when {
-        checks.isEmpty() && !checking -> VerdictKind.IDLE
-        checking && checks.isEmpty() -> VerdictKind.RUN
-        dead > 0 -> VerdictKind.DEAD
-        checking -> VerdictKind.RUN
-        else -> VerdictKind.LIVE
+    val visibleFileDups = fileDups.filter {
+        it.field.equals("cookie", ignoreCase = true) || it.field.equals("2fa", ignoreCase = true)
     }
-    val dotColor = when (verdict) {
-        VerdictKind.DEAD, VerdictKind.CHALLENGE -> DeadRed
-        VerdictKind.IDLE -> MaterialTheme.colorScheme.outlineVariant
-        else -> AliveGreen
-    }
+    val hasDup = visibleFileDups.isNotEmpty()
 
     val uidVals = checks.values.mapNotNull { it.uidOk }
     val uidState = when {
@@ -118,12 +94,11 @@ fun FilePopup(
             list.map { ri to it }
         }.sortedBy { it.second.at }.take(200)
     }
-    // Log lines over the flat list: reqIdx is the flat position so a tap
-    // jumps to the right request (per-row indices would misfire).
-    val flatLines = remember(checks, reqs, flatReqs) {
-        flatReqs.mapIndexed { fi, (ri, q) ->
+    // Build a file-wide timeline from the recorded request metadata.
+    val flatLines = remember(checks, flatReqs) {
+        flatReqs.map { (ri, q) ->
             logLines(checks[ri], listOf(q)).firstOrNull()?.let { l ->
-                l.copy(text = "R${ri + 1} ${l.text}", reqIdx = fi)
+                l.copy(text = "R${ri + 1} ${l.text}")
             }
         }.filterNotNull().sortedBy { it.at }.take(200)
     }
@@ -150,29 +125,20 @@ fun FilePopup(
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
             ) {
-                PopupHeader(
-                    dotColor = dotColor,
-                    where = "FILE / ${fileName.uppercase()} / ${preset.name}",
-                    showDup = hasDup,
-                    verdict = verdict,
-                    copyText = fileName,
-                    wide = wide,
-                    onToggleWide = { wide = !wide }
-                )
                 CheckStrip(
                     states = listOf(uidState, simState, advState, dupState),
-                    onStripTap = { tab = 2 },
-                    onDupTap = { tab = 3 },
+                    onStripTap = { tab = 1 },
+                    onDupTap = { tab = 2 },
                     wide = wide,
                     onToggleWide = { wide = !wide },
-                    showExpand = false
+                    divider = false,
+                    showExpand = true
                 )
                 PopupTabBar(
                     tabs = listOf(
                         "Details" to 0,
                         "Log" to 0,
-                        "Req" to flatReqs.size,
-                        "Dup" to fileDups.size
+                        "Dup" to visibleFileDups.size
                     ),
                     selected = tab,
                     onSelect = { tab = it }
@@ -180,8 +146,7 @@ fun FilePopup(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f, fill = false)
-                        .heightIn(max = if (wide) 520.dp else 320.dp)
+                        .height(if (wide) 420.dp else 260.dp)
                 ) {
                     when (tab) {
                         0 -> FileDetailsPane(
@@ -189,50 +154,16 @@ fun FilePopup(
                             totalRows = totalRows,
                             alive = alive,
                             dead = dead,
-                            dupRows = fileDups.map { it.localRow }.distinct().size,
+                            dupRows = visibleFileDups.map { it.localRow }.distinct().size,
                             pageRows = pageRows,
-                            checkedRows = checks.size,
-                            createdAt = createdAt,
-                            updatedAt = updatedAt
+                            checkedRows = checks.size
                         )
-                        1 -> FileLogsPane(lines = flatLines, onJump = { tab = 2; jumpReq = it })
-                        2 -> FileRequestsPane(reqs = flatReqs, jumpReq = jumpReq, onJumped = { jumpReq = null })
-                        else -> FileDupPane(dups = fileDups)
+                        1 -> FileLogsPane(lines = flatLines)
+                        else -> FileDupPane(dups = visibleFileDups)
                     }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun FileStatLine(color: Color, label: String, value: Int) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(androidx.compose.foundation.shape.CircleShape)
-                .background(color)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = label,
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = value.toString(),
-            fontSize = 11.sp,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface
-        )
     }
 }
 
@@ -244,98 +175,39 @@ private fun FileDetailsPane(
     dead: Int,
     dupRows: Int,
     pageRows: Int,
-    checkedRows: Int,
-    createdAt: Long,
-    updatedAt: Long
+    checkedRows: Int
 ) {
     LazyColumn(modifier = Modifier.padding(vertical = 8.dp)) {
         item {
-            FileStatLine(color = rowsIndicatorColor(), label = "total.rows", value = totalRows)
-            FileStatLine(color = AliveGreen, label = "alive", value = alive)
-            FileStatLine(color = DeadRed, label = "dead", value = dead)
-            FileStatLine(color = StatusYellow, label = "duplicates", value = dupRows)
+            InspectorDataLine(color = rowsIndicatorColor(), label = "total.rows", value = totalRows.toString())
+            InspectorDataLine(color = AliveGreen, label = "alive", value = alive.toString())
+            InspectorDataLine(color = DeadRed, label = "dead", value = dead.toString())
+            InspectorDataLine(color = StatusYellow, label = "duplicates", value = dupRows.toString())
             if (preset == SheetPreset.PAGE) {
-                FileStatLine(color = PageBlue, label = "page.eligible", value = pageRows)
+                InspectorDataLine(color = PageBlue, label = "page.eligible", value = pageRows.toString())
             }
-            FileStatLine(
+            InspectorDataLine(
                 color = MaterialTheme.colorScheme.primary,
                 label = "checked.rows",
-                value = checkedRows
+                value = checkedRows.toString()
             )
-        }
-        item {
-            Spacer(modifier = Modifier.size(8.dp))
-            DetailRow("Created", fmtDate(createdAt).ifEmpty { "-" })
-            DetailRow("Updated", fmtDate(updatedAt).ifEmpty { "-" })
         }
     }
 }
 
 @Composable
-private fun FileLogsPane(lines: List<LogLine>, onJump: (Int) -> Unit) {
-    if (lines.isEmpty()) {
-        EmptyPane("No activity for this file.")
-        return
-    }
-    Column {
-        LogSummary(lines)
-        LogTimeline(lines = lines, onJump = onJump)
-    }
-}
-
-@Composable
-private fun FileRequestsPane(
-    reqs: List<Pair<Int, CheckReq>>,
-    jumpReq: Int?,
-    onJumped: () -> Unit
-) {
-    if (reqs.isEmpty()) {
-        EmptyPane("No requests for this file.")
-        return
-    }
-    var openIdx by remember(reqs) { mutableStateOf<Int?>(null) }
-    val listState = rememberLazyListState()
-    LaunchedEffect(jumpReq) {
-        if (jumpReq != null && jumpReq in reqs.indices) {
-            openIdx = jumpReq
-            try {
-                listState.scrollToItem(jumpReq)
-            } catch (e: Exception) {
-                // List not laid out yet; the open highlight still applies.
+private fun FileLogsPane(lines: List<LogLine>) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            if (lines.isEmpty()) {
+                EmptyPane("No activity for this file.")
+            } else {
+                LogTimeline(lines = lines)
             }
-            onJumped()
-        } else if (jumpReq != null) {
-            onJumped()
-        }
-    }
-    val totalMs = reqs.sumOf { it.second.durationMs }
-    val nBad = reqs.count {
-        it.second.error != null ||
-            (it.second.status != 0 && it.second.status !in 200..299)
-    }
-    LazyColumn(state = listState, modifier = Modifier.padding(vertical = 4.dp)) {
-        itemsIndexed(reqs, key = { i, _ -> i }) { i, (ri, q) ->
-            RequestRow(
-                q = q,
-                open = openIdx == i,
-                rowTag = "R${ri + 1}",
-                onToggle = { openIdx = if (openIdx == i) null else i }
-            )
-        }
-        item {
-            val foot = buildString {
-                append("${reqs.size} requests")
-                val t = fmtDur(totalMs)
-                if (t.isNotEmpty()) append(" · $t total")
-                if (nBad > 0) append(" · $nBad failed")
-            }
-            Text(
-                text = foot.uppercase(),
-                fontSize = 10.sp,
-                letterSpacing = 1.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
-            )
         }
     }
 }
@@ -343,44 +215,45 @@ private fun FileRequestsPane(
 @Composable
 private fun FileDupPane(dups: List<FileDup>) {
     if (dups.isEmpty()) {
-        EmptyPane("No duplicates for this file.")
+        EmptyPane("No cookie or 2FA duplicates for this file.")
         return
     }
     LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
-        itemsIndexed(dups, key = { i, _ -> i }) { _, s ->
-            val at = fmtTime(s.at)
-            Row(
+        itemsIndexed(
+            dups,
+            key = { i, s -> "$i:${s.field}:${s.fileName}:${s.rowNo}:${s.localRow}" }
+        ) { _, s ->
+            val cell = when (s.field.lowercase()) {
+                "cookie" -> "Cookie"
+                "2fa" -> "2FA"
+                else -> s.field
+            }
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(vertical = 4.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(StatusYellow)
+                InspectorDataLine(
+                    color = StatusYellow,
+                    label = "Cell",
+                    value = cell,
+                    valueColor = StatusYellow
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = s.field.uppercase(),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.size(2.dp))
-                    Text(
-                        text = "row " + s.localRow + " · " + s.fileName + " · row " + s.rowNo +
-                            if (at.isNotEmpty()) " · $at" else "",
-                        fontSize = 10.sp,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                InspectorDataLine(
+                    color = Color.Transparent,
+                    label = "File",
+                    value = s.fileName
+                )
+                InspectorDataLine(
+                    color = Color.Transparent,
+                    label = "This row",
+                    value = s.localRow.toString()
+                )
+                InspectorDataLine(
+                    color = Color.Transparent,
+                    label = "Other row",
+                    value = s.rowNo.toString()
+                )
             }
         }
     }

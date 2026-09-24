@@ -10,7 +10,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,19 +18,16 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,9 +58,8 @@ import net.typeblog.socks.util.sheet.SheetRow
 // Dot popup: port of the HTML mock (sheet-dot-popup-model.html).
 // Header (dot + where + DUP/verdict stamps + UID copy + expand),
 // check strip (UID / SIM / ADV / DUP with ok/bad/warn/mute/skip/run),
-// Details / Log / Req / Dup tabs, expandable request inspector, log
-// entries that jump to their request. Request bodies and cookie values
-// are never stored, so the inspector shows masked summaries only.
+// Details / Log / Dup tabs, with log entries derived from the recorded
+// check metadata. Request inspection is intentionally not shown.
 
 // ── shared strip/log states (mock .chk classes) ──
 internal enum class StripState { OK, BAD, WARN, MUTE, SKIP, RUN }
@@ -78,7 +74,6 @@ internal fun DotPopup(
     check: RowCheck?,
     reqs: List<CheckReq>,
     dupSources: List<DupSource>,
-    isDup: Boolean,
     onDismiss: () -> Unit,
     fileName: String = "",
     presetLabel: String = "",
@@ -87,13 +82,10 @@ internal fun DotPopup(
     startWide: Boolean = false,
     onDock: (() -> Unit)? = null,
     tab: Int? = null,
-    onTabChange: ((Int) -> Unit)? = null,
-    jumpReq: Int? = null,
-    onJumpReq: ((Int?) -> Unit)? = null
+    onTabChange: ((Int) -> Unit)? = null
 ) {
     var wide by remember(startWide) { mutableStateOf(startWide) }
     var innerTab by remember { mutableStateOf(0) }
-    var innerJump by remember { mutableStateOf<Int?>(null) }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -110,7 +102,6 @@ internal fun DotPopup(
                 check = check,
                 reqs = reqs,
                 dupSources = dupSources,
-                isDup = isDup,
                 fileName = fileName,
                 presetLabel = presetLabel,
                 rowNo = rowNo,
@@ -119,9 +110,7 @@ internal fun DotPopup(
                 onToggleWide = { if (wide && onDock != null) onDock() else wide = !wide },
                 showHeader = true,
                 tab = tab ?: innerTab,
-                onTabChange = onTabChange ?: { innerTab = it },
-                jumpReq = jumpReq ?: innerJump,
-                onJumpReq = onJumpReq ?: { innerJump = it }
+                onTabChange = onTabChange ?: { innerTab = it }
             )
         }
     }
@@ -135,7 +124,6 @@ internal fun DotPopupCard(
     check: RowCheck?,
     reqs: List<CheckReq>,
     dupSources: List<DupSource>,
-    isDup: Boolean,
     fileName: String = "",
     presetLabel: String = "",
     rowNo: Int = row.rowIdx + 1,
@@ -144,11 +132,12 @@ internal fun DotPopupCard(
     onToggleWide: () -> Unit = {},
     showHeader: Boolean = true,
     tab: Int = 0,
-    onTabChange: (Int) -> Unit = {},
-    jumpReq: Int? = null,
-    onJumpReq: (Int?) -> Unit = {}
+    onTabChange: (Int) -> Unit = {}
 ) {
-    val hasDup = dupSources.isNotEmpty() || isDup
+    val visibleDupSources = dupSources.filter {
+        it.field.equals("cookie", ignoreCase = true) || it.field.equals("2fa", ignoreCase = true)
+    }
+    val hasDup = visibleDupSources.isNotEmpty()
     val verdict = verdictFor(row, check, checking)
     val dotColor = when (verdict) {
         VerdictKind.DEAD, VerdictKind.CHALLENGE -> DeadRed
@@ -211,8 +200,8 @@ internal fun DotPopupCard(
         // Check strip: expand + UID / SIM / ADV / DUP.
         CheckStrip(
             states = listOf(uidState, simState, advState, dupState),
-            onStripTap = { onTabChange(2) },
-            onDupTap = { onTabChange(3) },
+            onStripTap = { onTabChange(1) },
+            onDupTap = { onTabChange(2) },
             wide = wide,
             onToggleWide = onToggleWide,
             divider = showHeader,
@@ -222,8 +211,7 @@ internal fun DotPopupCard(
             tabs = listOf(
                 "Details" to 0,
                 "Log" to 0,
-                "Req" to reqs.size,
-                "Dup" to dupSources.size
+                "Dup" to visibleDupSources.size
             ),
             selected = tab,
             onSelect = onTabChange
@@ -231,22 +219,14 @@ internal fun DotPopupCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = if (wide) 520.dp else 320.dp)
+                .height(if (wide) 340.dp else 220.dp)
         ) {
             when (tab) {
                 0 -> DetailsPane(check)
-                1 -> LogsPane(
-                    check = check,
-                    reqs = reqs,
-                    onJump = { idx ->
-                        onJumpReq(idx)
-                        onTabChange(2)
-                    }
-                )
-                2 -> RequestsPane(reqs = reqs, jumpReq = jumpReq, onJumped = { onJumpReq(null) })
+                1 -> LogsPane(check = check, reqs = reqs)
                 else -> DuplicatesPane(
-                    dupSources = dupSources,
-                    fallbackAt = check?.checkedAt ?: 0
+                    dupSources = visibleDupSources,
+                    localRow = rowNo
                 )
             }
         }
@@ -255,6 +235,10 @@ internal fun DotPopupCard(
 
 internal fun verdictFor(row: SheetRow, check: RowCheck?, checking: Boolean): VerdictKind {
     if (check == null && !checking) return VerdictKind.IDLE
+    if (check?.uidOk == false) {
+        val err = (check.advError ?: "") + " " + (check.simpleError ?: "")
+        return if (err.contains("2FA", ignoreCase = true) || err.contains("challenge", ignoreCase = true)) VerdictKind.CHALLENGE else VerdictKind.DEAD
+    }
     if (row.dead || row.status == "bad") {
         val err = (check?.advError ?: "") + " " + (check?.simpleError ?: "")
         return if (err.contains("2FA", ignoreCase = true) || err.contains("challenge", ignoreCase = true)) VerdictKind.CHALLENGE else VerdictKind.DEAD
@@ -311,7 +295,7 @@ internal fun ExpandBtn(wide: Boolean, onToggle: () -> Unit) {
         Image(
             painter = painterResource(if (wide) R.drawable.ic_ss_collapse else R.drawable.ic_ss_expand),
             contentDescription = if (wide) "Dock" else "Expand",
-            modifier = Modifier.size(16.dp),
+            modifier = Modifier.size(12.dp),
             colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurfaceVariant)
         )
     }
@@ -496,13 +480,9 @@ internal fun StripDot(state: StripState) {
     when (state) {
         StripState.SKIP -> Box(
             modifier = Modifier
-                .size(7.dp)
+                .size(10.dp)
                 .clip(androidx.compose.foundation.shape.CircleShape)
-                .border(
-                    1.5.dp,
-                    MaterialTheme.colorScheme.outlineVariant,
-                    androidx.compose.foundation.shape.CircleShape
-                )
+                .background(MaterialTheme.colorScheme.outlineVariant)
         )
         StripState.MUTE -> Box(
             modifier = Modifier
@@ -710,6 +690,7 @@ internal fun DetailsPane(check: RowCheck?) {
         return
     }
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
+        check.uidOk?.let { ResRow("uid.status", if (it) "valid" else "dead") }
         check.simplePage?.let { ResRow("simple.page", it) }
         check.simpleNumber?.let { ResRow("simple.number", it) }
         if (check.simpleError != null && check.simplePage == null) {
@@ -734,42 +715,65 @@ internal fun fmtTime(at: Long): String {
     return java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(at))
 }
 
-internal fun fmtDur(ms: Long): String {
-    if (ms <= 0) return ""
-    return if (ms < 1000) "${ms}ms" else "%.1fs".format(ms / 1000.0)
-}
-
-internal data class LogLine(val text: String, val cls: LogCls, val at: Long, val reqIdx: Int)
+internal data class LogLine(val text: String, val cls: LogCls, val at: Long)
 
 internal fun logLines(check: RowCheck?, reqs: List<CheckReq>): List<LogLine> {
     val out = mutableListOf<LogLine>()
-    for ((i, t) in reqs.withIndex()) {
+    for (t in reqs) {
         if (t.status == 0 && t.error == null) {
             val label = when (t.kind) {
-                "uid" -> "UID check running."
-                "simple" -> "Simple check running."
-                "advanced" -> "Page check running."
-                else -> "Advanced check running."
+                "uid" -> "UID running."
+                "simple" -> "Simple running."
+                "advanced" -> "Page running."
+                else -> "Advanced running."
             }
-            out.add(LogLine(label, LogCls.RUN, t.at, i))
+            out.add(LogLine(label, LogCls.RUN, t.at))
             continue
         }
+        // A successful trace means the checker request completed. Account or
+        // page eligibility is a separate result and is shown in the message.
         when (t.kind) {
             "uid" -> {
-                val ok = t.resNote == "valid"
-                out.add(LogLine(if (ok) "UID check passed." else "UID check failed.", if (ok) LogCls.OK else LogCls.BAD, t.at, i))
+                val requestOk = t.error == null && t.status in 200..299
+                val alive = t.resNote.equals("valid", ignoreCase = true)
+                val text = when {
+                    !requestOk -> "UID failed."
+                    alive -> "UID alive."
+                    t.resNote.isNullOrBlank() -> "UID unknown."
+                    else -> "UID dead."
+                }
+                out.add(LogLine(text, if (requestOk && alive) LogCls.OK else LogCls.BAD, t.at))
             }
             "simple" -> {
-                val ok = check?.simpleError == null && check?.simplePage != null
-                out.add(LogLine(if (ok) "Simple check passed." else "Simple check failed.", if (ok) LogCls.OK else LogCls.BAD, t.at, i))
+                val requestOk = t.error == null && t.status in 200..299
+                val text = when {
+                    !requestOk -> "Simple failed."
+                    check?.simplePage?.isNotBlank() == true -> "Simple page found."
+                    else -> "Simple no page."
+                }
+                out.add(LogLine(text, if (requestOk) LogCls.OK else LogCls.BAD, t.at))
             }
             "advanced" -> {
-                val ok = t.error == null
-                out.add(LogLine(if (ok) "Page check passed." else "Page check failed.", if (ok) LogCls.OK else LogCls.BAD, t.at, i))
+                val requestOk = t.error == null && t.status in 200..299
+                val advError = check?.advError?.takeIf { it.isNotBlank() }
+                val text = when {
+                    !requestOk -> "Page failed."
+                    advError == null -> "Page loaded."
+                    advError.contains("not eligible", ignoreCase = true) ||
+                        advError.contains("permission", ignoreCase = true) -> "Page not eligible."
+                    else -> "Page error."
+                }
+                out.add(LogLine(text, if (requestOk) LogCls.OK else LogCls.BAD, t.at))
             }
             "graphql" -> {
-                val ok = check?.advEligible == true
-                out.add(LogLine(if (ok) "Advanced check passed." else "Advanced check failed.", if (ok) LogCls.OK else LogCls.BAD, t.at, i))
+                val requestOk = t.error == null && t.status in 200..299
+                val eligible = check?.advEligible == true || t.resNote.equals("Eligible", ignoreCase = true)
+                val text = when {
+                    !requestOk -> "Advanced failed."
+                    eligible -> "Page eligible."
+                    else -> "Page not eligible."
+                }
+                out.add(LogLine(text, if (requestOk) LogCls.OK else LogCls.BAD, t.at))
             }
         }
     }
@@ -777,55 +781,7 @@ internal fun logLines(check: RowCheck?, reqs: List<CheckReq>): List<LogLine> {
 }
 
 @Composable
-internal fun LogSummary(lines: List<LogLine>) {
-    val nOk = lines.count { it.cls == LogCls.OK }
-    val nBad = lines.count { it.cls == LogCls.BAD }
-    val nRun = lines.count { it.cls == LogCls.RUN }
-    val bits = mutableListOf("$nOk passed")
-    if (nBad > 0) bits.add("$nBad failed")
-    if (nRun > 0) bits.add("$nRun running")
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-    ) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                text = (nOk + nBad + nRun).toString(),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = "events · " + bits.joinToString(" · "),
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Spacer(modifier = Modifier.size(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp)),
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            if (nOk > 0) Box(modifier = Modifier.weight(nOk.toFloat()).background(AliveGreen).height(4.dp))
-            if (nBad > 0) Box(modifier = Modifier.weight(nBad.toFloat()).background(DeadRed).height(4.dp))
-            if (nRun > 0) Box(modifier = Modifier.weight(nRun.toFloat()).background(MaterialTheme.colorScheme.primary).height(4.dp))
-        }
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant)
-    )
-}
-
-@Composable
-internal fun LogTimeline(lines: List<LogLine>, onJump: (Int) -> Unit) {
+internal fun LogTimeline(lines: List<LogLine>) {
     LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
         itemsIndexed(lines, key = { i, _ -> i }) { idx, l ->
             val dot = when (l.cls) {
@@ -836,7 +792,6 @@ internal fun LogTimeline(lines: List<LogLine>, onJump: (Int) -> Unit) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onJump(l.reqIdx) }
                     .padding(horizontal = 12.dp, vertical = 0.dp),
                 verticalAlignment = Alignment.Top
             ) {
@@ -905,372 +860,107 @@ internal fun LogTimeline(lines: List<LogLine>, onJump: (Int) -> Unit) {
 }
 
 @Composable
-internal fun LogsPane(check: RowCheck?, reqs: List<CheckReq>, onJump: (Int) -> Unit, prefix: (Int) -> String? = { null }) {
-    val base = remember(check, reqs) { logLines(check, reqs) }
-    if (base.isEmpty()) {
-        EmptyPane("No activity for this row.")
-        return
-    }
-    val lines = base.map { l ->
-        val p = prefix(l.reqIdx)
-        if (p == null) l else l.copy(text = "$p ${l.text}")
-    }
-    Column {
-        LogSummary(lines)
-        LogTimeline(lines = lines, onJump = onJump)
+internal fun LogsPane(check: RowCheck?, reqs: List<CheckReq>) {
+    val lines = remember(check, reqs) { logLines(check, reqs) }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            if (lines.isEmpty()) {
+                EmptyPane("No activity for this row.")
+            } else {
+                LogTimeline(lines = lines)
+            }
+        }
     }
 }
 
 @Composable
-internal fun RequestsPane(
-    reqs: List<CheckReq>,
-    jumpReq: Int?,
-    onJumped: () -> Unit,
-    rowLabel: (Int) -> String? = { null }
+internal fun InspectorDataLine(
+    color: Color,
+    label: String,
+    value: String,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
-    if (reqs.isEmpty()) {
-        EmptyPane("No requests for this row.")
-        return
-    }
-    var openIdx by remember(reqs) { mutableStateOf<Int?>(null) }
-    val listState = rememberLazyListState()
-    LaunchedEffect(jumpReq) {
-        if (jumpReq != null && jumpReq in reqs.indices) {
-            openIdx = jumpReq
-            try {
-                listState.scrollToItem(jumpReq)
-            } catch (e: Exception) {
-                // List not laid out yet; the open highlight still applies.
-            }
-            onJumped()
-        } else if (jumpReq != null) {
-            onJumped()
-        }
-    }
-    val totalMs = reqs.sumOf { it.durationMs }
-    val nBad = reqs.count { it.error != null || (it.status != 0 && it.status !in 200..299) }
-    val nRun = reqs.count { it.status == 0 && it.error == null }
-    LazyColumn(state = listState, modifier = Modifier.padding(vertical = 4.dp)) {
-        itemsIndexed(reqs, key = { i, _ -> i }) { i, q ->
-            RequestRow(
-                q = q,
-                open = openIdx == i,
-                rowTag = rowLabel(i),
-                onToggle = { openIdx = if (openIdx == i) null else i }
-            )
-        }
-        item {
-            val foot = buildString {
-                append("${reqs.size} requests")
-                val t = fmtDur(totalMs)
-                if (t.isNotEmpty()) append(" · $t total")
-                if (nBad > 0) append(" · $nBad failed")
-                if (nRun > 0) append(" · $nRun running")
-            }
-            Text(
-                text = foot.uppercase(),
-                fontSize = 10.sp,
-                letterSpacing = 1.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
-            )
-        }
-    }
-}
-
-@Composable
-internal fun RequestRow(q: CheckReq, open: Boolean, rowTag: String?, onToggle: () -> Unit) {
-    // 0 Request, 1 Response, 2 Headers, 3 Timing (mock sub-tab order).
-    var sub by remember(q) { mutableStateOf(0) }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                if (open) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                else Color.Transparent
-            )
-            .clickable { onToggle() }
-            .padding(horizontal = 12.dp, vertical = 7.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "›",
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .width(12.dp)
-                    .alpha(if (open) 1f else 0.7f)
-            )
-            if (rowTag != null) {
-                Text(
-                    text = rowTag,
-                    fontSize = 10.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.width(30.dp)
-                )
-            }
-            val pending = q.status == 0 && q.error == null
-            Text(
-                text = when {
-                    q.error != null -> "ERR"
-                    pending -> "…"
-                    else -> q.status.toString()
-                },
-                fontSize = 11.sp,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                color = when {
-                    pending -> MaterialTheme.colorScheme.onSurfaceVariant
-                    q.error != null -> DeadRed
-                    q.status in 200..299 -> AliveGreen
-                    else -> DeadRed
-                },
-                modifier = Modifier.width(36.dp)
-            )
-            Text(
-                text = q.method,
-                fontSize = 11.sp,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.width(44.dp)
-            )
-            Text(
-                text = q.url,
-                fontSize = 11.sp,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = fmtDur(q.durationMs),
-                fontSize = 10.sp,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (open) {
-            Spacer(modifier = Modifier.size(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                for ((si, label) in listOf("Request", "Response", "Headers", "Timing").withIndex()) {
-                    val on = sub == si
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = label.uppercase(),
-                            fontSize = 10.sp,
-                            letterSpacing = 1.sp,
-                            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (on) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .clickable { sub = si }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .width(32.dp)
-                                .height(2.dp)
-                                .background(if (on) MaterialTheme.colorScheme.primary else Color.Transparent)
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.size(2.dp))
-            when (sub) {
-                0 -> {
-                    ReqSecCopy(label = "Request", text = "${q.method} ${q.url}")
-                    DetailRow("Method", q.method)
-                    DetailRow("URL", q.url)
-                    q.reqNote?.let { DetailRow("Cookie", it) }
-                }
-                1 -> {
-                    if (q.error != null && q.resNote == null) {
-                        ReqSecCopy(label = "Error", text = null)
-                        Text(
-                            text = q.error,
-                            fontSize = 11.sp,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold,
-                            color = DeadRed,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                        )
-                    } else {
-                        ResponseBody(q = q)
-                    }
-                }
-                2 -> {
-                    ReqSecCopy(label = "Headers", text = null)
-                    DetailRow("Request URL", "https://" + q.url)
-                    DetailRow("Request Method", q.method)
-                    DetailRow(
-                        "Status Code",
-                        if (q.error != null) "error" else q.status.toString(),
-                        if (q.error != null || (q.status != 0 && q.status !in 200..299)) DeadRed else AliveGreen
-                    )
-                    DetailRow("Cookie", q.reqNote ?: "-")
-                }
-                else -> {
-                    ReqSecCopy(label = "Timing", text = null)
-                    DetailRow("Total", fmtDur(q.durationMs).ifEmpty { "-" })
-                    val at = fmtTime(q.at)
-                    if (at.isNotEmpty()) DetailRow("At", at)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun ReqSecCopy(label: String, text: String?) {
-    val clipboard = LocalClipboardManager.current
-    var morphed by remember(text) { mutableStateOf(false) }
-    LaunchedEffect(morphed) {
-        if (morphed) {
-            kotlinx.coroutines.delay(1200)
-            morphed = false
-        }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = label.uppercase(),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .background(color)
         )
-        if (text != null) {
-            Text(
-                text = if (morphed) "COPIED" else "COPY",
-                fontSize = 10.sp,
-                letterSpacing = 1.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(2.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        clipboard.setText(AnnotatedString(text))
-                        morphed = true
-                    }
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
-            )
-        }
-    }
-}
-
-@Composable
-internal fun ResponseBody(q: CheckReq) {
-    // Filtered / Raw mini-tabs, like the mock. Bodies are never stored,
-    // so both views render the recorded masked summary.
-    var mini by remember(q) { mutableStateOf(0) }
-    ReqSecCopy(label = "Response", text = q.resNote)
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        for ((mi, label) in listOf("Filtered", "Raw").withIndex()) {
-            val on = mini == mi
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = label.uppercase(),
-                    fontSize = 10.sp,
-                    letterSpacing = 1.sp,
-                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (on) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .clickable { mini = mi }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-                Box(
-                    modifier = Modifier
-                        .width(32.dp)
-                        .height(2.dp)
-                        .background(if (on) MaterialTheme.colorScheme.primary else Color.Transparent)
-                )
-            }
-        }
-    }
-    if (q.resNote != null) {
-        if (mini == 0) {
-            DetailRow("Result", q.resNote)
-        } else {
-            Text(
-                text = q.resNote,
-                fontSize = 11.sp,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-        }
-    } else {
-        EmptyPane("Empty body.")
-    }
-    q.error?.let {
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = it,
+            text = label,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.width(110.dp)
+        )
+        Text(
+            text = value,
             fontSize = 11.sp,
             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            color = DeadRed,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            fontWeight = FontWeight.SemiBold,
+            color = valueColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
         )
     }
 }
 
 @Composable
-internal fun DuplicatesPane(dupSources: List<DupSource>, fallbackAt: Long) {
+internal fun DuplicatesPane(dupSources: List<DupSource>, localRow: Int) {
     if (dupSources.isEmpty()) {
-        EmptyPane("No duplicates for this row.")
+        EmptyPane("No cookie or 2FA duplicates for this row.")
         return
     }
     LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
-        itemsIndexed(dupSources, key = { i, _ -> i }) { _, s ->
-            val at = fmtTime(if (s.at > 0) s.at else fallbackAt)
-            Row(
+        itemsIndexed(
+            dupSources,
+            key = { i, s -> "$i:${s.field}:${s.fileName}:${s.rowNo}" }
+        ) { _, s ->
+            val cell = when (s.field.lowercase()) {
+                "cookie" -> "Cookie"
+                "2fa" -> "2FA"
+                else -> s.field
+            }
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(vertical = 4.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(StatusYellow)
+                InspectorDataLine(
+                    color = StatusYellow,
+                    label = "Cell",
+                    value = cell,
+                    valueColor = StatusYellow
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = s.field.uppercase(),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.size(2.dp))
-                    Text(
-                        text = s.fileName + " · row " + s.rowNo +
-                            if (at.isNotEmpty()) " · $at" else "",
-                        fontSize = 10.sp,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                InspectorDataLine(
+                    color = Color.Transparent,
+                    label = "File",
+                    value = s.fileName
+                )
+                InspectorDataLine(
+                    color = Color.Transparent,
+                    label = "This row",
+                    value = localRow.toString()
+                )
+                InspectorDataLine(
+                    color = Color.Transparent,
+                    label = "Other row",
+                    value = s.rowNo.toString()
+                )
             }
         }
     }
