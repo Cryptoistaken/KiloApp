@@ -40,7 +40,6 @@ object Constants {
     // accelerator master toggle is ON. Defaults preserve stock behavior.
     const val PREF_ACCEL_PRIMARY = "accel_primary"
     const val ACCEL_PRIMARY_TRACE = "trace"
-    const val ACCEL_PRIMARY_KILOIP = "kiloip"
     const val PREF_ACCEL_MODE = "accel_mode"
     const val ACCEL_MODE_BOTH = "both"
     const val ACCEL_MODE_SINGLE = "single"

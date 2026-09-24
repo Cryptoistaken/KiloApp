@@ -40,7 +40,6 @@ import net.typeblog.socks.ui.components.ProtonDialogRadioRow
 import net.typeblog.socks.ui.components.ProtonSwitch
 import net.typeblog.socks.ui.components.SettingsItem
 import net.typeblog.socks.ui.components.rememberPref
-import net.typeblog.socks.util.Constants.ACCEL_PRIMARY_KILOIP
 import net.typeblog.socks.util.Constants.ACCEL_PRIMARY_TRACE
 import net.typeblog.socks.util.Constants.PREF_ACCEL_CACHE_IP
 import net.typeblog.socks.util.Constants.PREF_ACCEL_DNS_CACHE
@@ -67,7 +66,9 @@ fun AdvancedSettingsScreen(
         it.getBoolean(PREF_VPN_ACCELERATOR, false)
     }
     var primary by rememberPref(prefs, PREF_ACCEL_PRIMARY) {
-        it.getString(PREF_ACCEL_PRIMARY, ACCEL_PRIMARY_TRACE) ?: ACCEL_PRIMARY_TRACE
+        // Legacy "kiloip" values (custom checker removed) coerce to trace.
+        it.getString(PREF_ACCEL_PRIMARY, ACCEL_PRIMARY_TRACE)?.takeIf { v -> v == ACCEL_PRIMARY_TRACE }
+            ?: ACCEL_PRIMARY_TRACE
     }
     var cacheIp by rememberPref(prefs, PREF_ACCEL_CACHE_IP) {
         it.getBoolean(PREF_ACCEL_CACHE_IP, false)
@@ -93,7 +94,7 @@ fun AdvancedSettingsScreen(
         )
     }
 
-    val primaryLabel = if (primary == ACCEL_PRIMARY_KILOIP) "Kilo IP" else "Trace"
+    val primaryLabel = "Trace"
 
     Scaffold(
         modifier = modifier,
@@ -274,13 +275,6 @@ private fun PrimaryDialog(
                     description = "Fast IP and country lookup for a quick connect display.",
                     selected = primary == ACCEL_PRIMARY_TRACE,
                     onClick = { onSelect(ACCEL_PRIMARY_TRACE) }
-                )
-                DialogHairline()
-                ProtonDialogRadioRow(
-                    title = "Kilo IP",
-                    description = "Full location and network details for the status display.",
-                    selected = primary == ACCEL_PRIMARY_KILOIP,
-                    onClick = { onSelect(ACCEL_PRIMARY_KILOIP) }
                 )
             }
         }

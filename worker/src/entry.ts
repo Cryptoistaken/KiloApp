@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { sms, refreshSmsFeed } from "./routes/sms";
-import { check } from "./routes/check";
 import { reads } from "./routes/reads";
 import type { EdgeEnv } from "./lib/edge";
 
@@ -36,7 +35,6 @@ app.use("/api/*", async (c, next) => {
 });
 
 app.route("/v1", sms);
-app.route("/v1", check);
 app.route("/", reads);
 
 app.notFound((c) => {

@@ -22,7 +22,6 @@ import net.typeblog.socks.util.Constants.INTENT_PASSWORD
 import net.typeblog.socks.util.Constants.INTENT_UDP_GW
 import net.typeblog.socks.util.Constants.PREF_ADV_APP_LIST
 import net.typeblog.socks.util.Constants.PREF_ADV_PER_APP
-import net.typeblog.socks.util.Constants.ACCEL_PRIMARY_KILOIP
 
 import java.io.BufferedReader
 import java.io.File
@@ -217,19 +216,18 @@ object Utility {
 
     @JvmStatic
     fun checkPublicIp(server: String?, port: Int, username: String?, password: String?): IpInfo? {
-        // Stock behavior: ip-api first (fast + rich geo), then kiloip, then
-        // trace. A throttled (429) or failed ip-api answer parses to null and
-        // falls through automatically, so the rate limit can never break
-        // verification while a fallback checker is reachable.
+        // Stock behavior: ip-api first (fast + rich geo), then trace. A
+        // throttled (429) or failed ip-api answer parses to null and falls
+        // through automatically, so the rate limit can never break
+        // verification while the fallback checker is reachable.
         fetchIpApi(server, port, username, password)?.let { return it }
-        return checkWith(server, port, username, password, ACCEL_PRIMARY_KILOIP, true)
+        return fetchTrace(server, port, username, password)
     }
 
     /**
-     * Checker with Advanced Settings selection. primary is ACCEL_PRIMARY_*
-     * ("trace" = fast IP and country at connect time, "kiloip" = full
-     * details). both = run the other one after: as enrichment when the
-     * primary succeeds, as fallback when it fails.
+     * Checker with Advanced Settings selection. Only "trace" remains (the
+     * custom kiloip checker was removed): primary/both are accepted for
+     * pref compat but every path runs trace.
      */
     @JvmStatic
     fun checkWith(
@@ -240,17 +238,8 @@ object Utility {
         primary: String,
         both: Boolean
     ): IpInfo? {
-        val first: (String?, Int, String?, String?) -> IpInfo? =
-            if (primary == ACCEL_PRIMARY_KILOIP) ::fetchKiloIp else ::fetchTrace
-        val second: (String?, Int, String?, String?) -> IpInfo? =
-            if (primary == ACCEL_PRIMARY_KILOIP) ::fetchTrace else ::fetchKiloIp
-        first(server, port, username, password)?.let { return it }
-        if (!both) return null
-        return second(server, port, username, password)
+        return fetchTrace(server, port, username, password)
     }
-
-    private fun fetchKiloIp(server: String?, port: Int, username: String?, password: String?): IpInfo? =
-        fetchCheckText(KILO_IP_URL, "kiloip", server, port, username, password, ::parseKiloIp)
 
     private fun fetchTrace(server: String?, port: Int, username: String?, password: String?): IpInfo? =
         fetchCheckText(TRACE_URL, "trace", server, port, username, password, ::parseTrace)
@@ -300,27 +289,6 @@ object Utility {
         }
     }
 
-    private fun parseKiloIp(text: String): IpInfo? {
-        return try {
-            val obj = JSONObject(text)
-            val ip = obj.optString("ip")
-            if (ip.isEmpty()) return null
-            IpInfo(
-                ip = ip,
-                countryCode = obj.optString("countryCode"),
-                country = obj.optString("country"),
-                regionName = obj.optString("regionName"),
-                city = obj.optString("city"),
-                isp = obj.optString("isp"),
-                org = obj.optString("org"),
-                asName = obj.optString("asName"),
-                timezone = obj.optString("timezone")
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
-
     private fun parseTrace(text: String): IpInfo? {
         return try {
             var ip = ""
@@ -362,7 +330,6 @@ object Utility {
         }
     }
 
-    private const val KILO_IP_URL = "https://kiloproxy.traderspopy.workers.dev/"
     private const val TRACE_URL = "https://www.cloudflare.com/cdn-cgi/trace"
     // Free tier is HTTP-only; the fetch still rides inside the SOCKS tunnel.
     // Slim fields keeps the answer near ~150B with everything IpInfo holds.

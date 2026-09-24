@@ -397,7 +397,7 @@ class SocksVpnService : VpnService() {
                             }
                         }
                     }
-                    // Master OFF keeps stock selection: kiloip first, trace
+                    // Master OFF keeps stock selection: ip-api first, trace
                     // fallback. Master ON honors the Advanced Settings page.
                     val info = if (mAccel) {
                         Utility.checkWith(server, port, username, password, mAccelPrimary, mAccelBoth)
