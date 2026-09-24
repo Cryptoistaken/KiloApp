@@ -1,6 +1,6 @@
 # Sheet DB hardening + smart data plan
 
-Status: proposed (1 helper `isEmptyRow()` landed in `SheetModels.kt`, rest pending; edge stage 1 landed in `worker/`: sms `/v1/*` + `/v1/check` + safe reads on Workers via Neon HTTP, writes stay on Railway — `wrangler.toml` + `src/entry.ts`).
+Status: proposed (1 helper `isEmptyRow()` landed in `SheetModels.kt`, rest pending; edge stage 1 code lives in history only — `worker/` + `Pages/` emptied for a fresh copy, see tag `pre-worker-pages-empty`).
 Skills read: `durable-objects`, `workers-best-practices`, `tdd`, `github-actions-hardening`.
 
 ## A. SheetModels.kt — single homes
