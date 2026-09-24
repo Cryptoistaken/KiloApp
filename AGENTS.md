@@ -152,7 +152,7 @@ codebase stays clean without future cleanups:
   get the same Sheet UI: My Files / Wallet / Archive tabs, file cards, sheet
   grid, withdraw form. No admin views (pools, approvals, settings, tools,
   analysis, user detail) exist in the app, for anyone.
-- **Website copy (`sheetsubmit/`) is admin-login-only.** It is a copy of the
+- **Website copy (`admin/`) is admin-login-only.** It is a copy of the
   SheetSubmit web project living in this repo. The backend refuses to mint
   sessions for non-admin Telegram identities (`admin_only`), and the frontend
   gates on `isAdmin`. Regular users cannot sign in to the website at all,
@@ -275,7 +275,7 @@ Notes on the merged notification/dot pass:
 - Source priority: https://keylineicons.com (fill style) first, https://allsvgicons.com second. Never add an icon library/font dependency for single icons.
 - Convert the 24px `currentColor` SVG to `res/drawable/ic_ss_*.xml`: 24dp viewport, `#000000` fills/strokes, tinted at the use site (same pattern as the existing set).
 
-### `sheetsubmit/` — admin-only website copy (no separate git history)
+### `admin/` — admin-only website copy (no separate git history)
 - Copy of the SheetSubmit web project (Pages + backend + worker, minus
   node_modules/dist/.git/.github/android). Backend refuses non-admin Telegram
   identities at verify/test-login (`admin_only` 403, API 2.0.38); `RequireAuth`

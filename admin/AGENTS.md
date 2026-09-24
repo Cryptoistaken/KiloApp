@@ -1,6 +1,6 @@
 # SheetSubmit — Agent Rules (ADMIN WEBSITE COPY inside KiloApp)
 
-> Lives at `sheetsubmit/` in the KiloApp repo (copied from the standalone
+> Lives at `admin/` in the KiloApp repo (copied from the standalone
 > SheetSubmit project; no separate git history — commits go through KiloApp).
 > **Admin-login-only:** the backend refuses non-admin Telegram identities at
 > verify/test-login (`admin_only` 403) and `RequireAuth` renders an access wall

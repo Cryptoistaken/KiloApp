@@ -6,8 +6,8 @@ import java.net.URL
 import java.net.URLEncoder
 import org.json.JSONObject
 
-// Direct port of the sheetsubmit backend worker checks
-// (sheetsubmit/worker/index.ts) so the app verifies rows on-device with
+// Direct port of the admin backend worker checks
+// (admin/worker/index.ts) so the app verifies rows on-device with
 // no backend proxy in the middle:
 //
 //   1. UID liveness  -> POST check.fb.tools/api/check/facebook (NDJSON)
