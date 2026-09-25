@@ -2,7 +2,6 @@ package net.typeblog.socks
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
-import android.animation.ArgbEvaluator
 import android.animation.ValueAnimator
 import android.app.Notification
 import android.app.NotificationChannel
@@ -17,6 +16,7 @@ import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -30,6 +30,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import android.view.Choreographer
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -131,6 +132,9 @@ class FloatingControlService : Service() {
     // the breathing/pop animations; the transparent outer container (bubbleView)
     // stays fixed-sized so the grown circle is never clipped by the square window.
     private var bubbleVisualView: FrameLayout? = null
+    // Retained across the state crossfade so the animation paints into one
+    // drawable instead of allocating a GradientDrawable per frame.
+    private var bubbleGradientDrawable: GradientDrawable? = null
     private var iconView: ImageView? = null
     private var progressBar: ProgressBar? = null
     private var timerView: TextView? = null
@@ -172,9 +176,12 @@ class FloatingControlService : Service() {
     private fun isLightMode(): Boolean = !ThemeMode.isDarkTheme(this)
     // Status colors stay fixed in every theme; only the spinner and the
     // "Connecting" label flip between black and white.
-    private fun lockGreen(): Int = Color.parseColor("#1C9C7C")
-    private fun lockErr(): Int = Color.parseColor("#CC2D4F")
-    private fun lockSpin(): Int = if (isLightMode()) Color.parseColor("#0C0C14") else Color.WHITE
+    // Pre-parsed @ColorInt constants. These used to call Color.parseColor on
+    // every invocation, and the helpers are hit from updateBubbleUi /
+    // updateStatusLabel / the lock flash sequence — all on the UI thread.
+    private fun lockGreen(): Int = COLOR_LOCK_GREEN
+    private fun lockErr(): Int = COLOR_LOCK_ERR
+    private fun lockSpin(): Int = if (isLightMode()) COLOR_SPIN_LIGHT else Color.WHITE
 
     private var bubbleSizePx = 0
     // Reserve extra window space around the visual circle so scale animations
@@ -201,6 +208,32 @@ class FloatingControlService : Service() {
     // from window attach state: remove/add cycles and animator timing made
     // that inference strand the wrong glyph and skip the blur.
     private var circleMenuOpen = false
+
+    // --- Drag-frame scratch state -------------------------------------------
+    // Reused Rects for the per-frame bounds/inset math. currentDragBounds()
+    // and currentSystemBarInsets() are each called up to twice per ACTION_MOVE
+    // (via the clamp and the two follower-position updates), so these used to
+    // allocate ~6 Rects per touch frame.
+    private val dragBoundsRect = Rect()
+    private val systemBarInsetsRect = Rect()
+
+    // resources.getIdentifier() is a string-keyed resource-table lookup — far
+    // too slow for a per-frame path. Resolved once in onCreate.
+    private var systemStatusBarHeightId = 0
+    private var systemNavBarHeightId = 0
+
+    // Cached circle-menu prefs + the clearance derived from them. The clamp
+    // runs on every drag frame and used to hit SharedPreferences (which takes
+    // the SharedPreferencesImpl monitor and can block on the load latch) plus
+    // allocate a fresh IntArray each time. Refreshed from prefListener and on
+    // configuration change instead.
+    private var cachedCircleAlign: String? = null
+    private var cachedCircleSizeDp = -1
+    private val clearancePx = IntArray(4)
+
+    // Gesture timings come from ViewConfiguration rather than hard-coded
+    // literals, which had drifted apart across the three gesture handlers.
+    private var longPressTimeoutMs = 480L
 
     private val longPressRunnable = Runnable { openBubbleMenu() }
 
@@ -288,6 +321,13 @@ class FloatingControlService : Service() {
             Configuration.UI_MODE_NIGHT_YES
         createNotificationChannel()
         touchSlop = ViewConfiguration.get(this).scaledTouchSlop
+        longPressTimeoutMs = ViewConfiguration.getLongPressTimeout().toLong()
+        // Resolve the system-bar dimen ids once: getIdentifier() is a
+        // string-keyed resource lookup and this feeds the per-drag-frame
+        // inset math on the legacy (< API 30) path.
+        systemStatusBarHeightId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        systemNavBarHeightId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+        refreshCirclePrefCache()
         // Use display context for WindowManager so overlay is a top-level system window,
         // not attached to the service's window token.
         refreshWindowManager()
@@ -361,6 +401,8 @@ class FloatingControlService : Service() {
                     recreateBubbleForStyleChange(newStyle)
                 }
             } else if (key == PREF_CIRCLE_SIZE) {
+                // The clamp reads the cached clearance, so refresh it first.
+                refreshCirclePrefCache()
                 // Slider grows the trigger AND the 4 open menu items together:
                 // rebuild the trigger live, then resize the open menu in
                 // place (no collapse needed). Trigger stays on top after its
@@ -390,6 +432,7 @@ class FloatingControlService : Service() {
                     }
                 }
             } else if (key == PREF_CIRCLE_ALIGN) {
+                refreshCirclePrefCache()
                 // Alignment switch moves the open menu bubbles live on screen
                 // (circle <-> up/down/left/right) — no collapse needed. When
                 // closed, nudge the parked trigger inside the new clearance
@@ -430,6 +473,8 @@ class FloatingControlService : Service() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         refreshWindowManager()
+        // Density may have changed, so the cached clearance is stale.
+        refreshCirclePrefCache()
         menuOverlay?.onConfigurationChanged()
         smsOverlay?.onConfigurationChanged()
         sheetOverlay?.onConfigurationChanged()
@@ -883,8 +928,13 @@ class FloatingControlService : Service() {
         }
         // The pill may not be measured yet (height == 0) when it was just made
         // visible — re-run once it is laid out so its geometry is correct.
-        if (flagPillView?.height ?: 0 == 0) {
-            flagPillView?.post { updateFlagPillPosition() }
+        // Guard on VISIBLE: a GONE view (the normal state in circle style)
+        // never gains a height, so the old unconditional re-post spun forever,
+        // one updateViewLayout IPC per frame. Note the old expression also had
+        // an operator-precedence bug: `a?.height ?: 0 == 0` parses as
+        // `a?.height ?: (0 == 0)`, not `(a?.height ?: 0) == 0`.
+        if (pill != null && pill.visibility == View.VISIBLE && pill.height == 0) {
+            pill.post { updateFlagPillPosition() }
         }
     }
 
@@ -990,26 +1040,73 @@ class FloatingControlService : Service() {
      * circle style is off. Mirrors CircleBubbleMenu's layout math.
      */
     private fun menuClearancePx(): IntArray {
-        if (!isCircleStyle()) return intArrayOf(0, 0, 0, 0)
-        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
-        val align = prefs.getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL
-        val sizeDp = prefs.getInt(PREF_CIRCLE_SIZE, Constants.CIRCLE_SIZE_DEFAULT)
-            .coerceIn(Constants.CIRCLE_SIZE_MIN, Constants.CIRCLE_SIZE_MAX)
+        if (!isCircleStyle()) {
+            clearancePx[0] = 0
+            clearancePx[1] = 0
+            clearancePx[2] = 0
+            clearancePx[3] = 0
+            return clearancePx
+        }
+        val align = cachedCircleAlign ?: CIRCLE_SMALL
+        val sizeDp = cachedCircleSizeDp.takeIf { it > 0 } ?: Constants.CIRCLE_SIZE_DEFAULT
         val density = resources.displayMetrics.density
         val slotMargin = (sizeDp * density / 2 - density + 8 * density).toInt()
         val gap = (58 * density).toInt()
         val off = (62 * density).toInt()
         val r = (68.75f * density).toInt()
         val reach = off + 3 * gap
-        return when (align) {
-            CIRCLE_UP -> intArrayOf(slotMargin, reach + slotMargin, slotMargin, slotMargin)
-            CIRCLE_DOWN -> intArrayOf(slotMargin, slotMargin, slotMargin, reach + slotMargin)
-            CIRCLE_RIGHT -> intArrayOf(slotMargin, slotMargin, reach + slotMargin, slotMargin)
-            CIRCLE_LEFT -> intArrayOf(reach + slotMargin, slotMargin, slotMargin, slotMargin)
+        val cl = clearancePx
+        when (align) {
+            CIRCLE_UP -> {
+                cl[0] = slotMargin
+                cl[1] = reach + slotMargin
+                cl[2] = slotMargin
+                cl[3] = slotMargin
+            }
+            CIRCLE_DOWN -> {
+                cl[0] = slotMargin
+                cl[1] = slotMargin
+                cl[2] = slotMargin
+                cl[3] = reach + slotMargin
+            }
+            CIRCLE_RIGHT -> {
+                cl[0] = slotMargin
+                cl[1] = slotMargin
+                cl[2] = reach + slotMargin
+                cl[3] = slotMargin
+            }
+            CIRCLE_LEFT -> {
+                cl[0] = reach + slotMargin
+                cl[1] = slotMargin
+                cl[2] = slotMargin
+                cl[3] = slotMargin
+            }
             else -> {
                 val c = r + slotMargin
-                intArrayOf(c, c, c, c)
+                cl[0] = c
+                cl[1] = c
+                cl[2] = c
+                cl[3] = c
             }
+        }
+        return cl
+    }
+
+    /**
+     * Re-reads the two circle-menu prefs that feed [menuClearancePx] and drops
+     * the cached clearance. Called from the pref listener and on configuration
+     * change (density may differ), never from a touch frame.
+     */
+    private fun refreshCirclePrefCache() {
+        try {
+            val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+            cachedCircleAlign = prefs.getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL)
+                ?: CIRCLE_SMALL
+            cachedCircleSizeDp = prefs.getInt(PREF_CIRCLE_SIZE, Constants.CIRCLE_SIZE_DEFAULT)
+                .coerceIn(Constants.CIRCLE_SIZE_MIN, Constants.CIRCLE_SIZE_MAX)
+        } catch (_: Exception) {
+            cachedCircleAlign = CIRCLE_SMALL
+            cachedCircleSizeDp = Constants.CIRCLE_SIZE_DEFAULT
         }
     }
 
@@ -1121,7 +1218,10 @@ class FloatingControlService : Service() {
             }
         }
         try { if (statusLabelView?.isAttachedToWindow == true) windowManager?.updateViewLayout(statusLabelView, lp) } catch (e: Exception) { Log.e(TAG, "update status label pos failed", e) }
-        if (statusLabelView?.height ?: 0 == 0) statusLabelView?.post { updateStatusLabelPosition() }
+        val label = statusLabelView
+        if (label != null && label.visibility == View.VISIBLE && label.height == 0) {
+            label.post { updateStatusLabelPosition() }
+        }
     }
 
     private fun buildLayoutParams(): WindowManager.LayoutParams {
@@ -1171,54 +1271,106 @@ class FloatingControlService : Service() {
             .apply()
     }
 
+    /**
+     * Writes the system-bar insets into [systemBarInsetsRect] and returns it.
+     *
+     * The returned Rect is a shared, reused instance: this is called up to
+     * twice per drag frame, and the old version allocated a fresh Rect (plus
+     * the WindowMetrics/WindowInsets the platform allocates internally) on
+     * every call. Callers must consume the values before the next call —
+     * they all do, they only read it immediately.
+     */
     private fun currentSystemBarInsets(): Rect {
+        val out = systemBarInsetsRect
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 val insets = windowManager?.currentWindowMetrics?.windowInsets
                     ?.getInsets(WindowInsets.Type.systemBars())
                 if (insets != null) {
-                    return Rect(insets.left, insets.top, insets.right, insets.bottom)
+                    out.set(insets.left, insets.top, insets.right, insets.bottom)
+                    return out
                 }
             } catch (e: Exception) {
             }
         }
+        // getIdentifier is a string-keyed resource-table lookup (one of the
+        // slowest resource APIs), so resolve both ids once and reuse.
         val statusBarHeight = try {
-            resources.getDimensionPixelSize(
-                resources.getIdentifier("status_bar_height", "dimen", "android")
-            )
+            resources.getDimensionPixelSize(systemStatusBarHeightId)
         } catch (e: Exception) {
             0
         }
         val navBarHeight = try {
-            resources.getDimensionPixelSize(
-                resources.getIdentifier("navigation_bar_height", "dimen", "android")
-            )
+            resources.getDimensionPixelSize(systemNavBarHeightId)
         } catch (e: Exception) {
             0
         }
-        return Rect(0, statusBarHeight, 0, navBarHeight)
+        out.set(0, statusBarHeight, 0, navBarHeight)
+        return out
     }
 
     /**
      * Visible content area for the bubble/pill: the full display bounds minus ALL
      * four system-bar/cutout insets (API 30+ via currentWindowMetrics, else
      * display metrics minus status/navigation bar dimensions).
+     *
+     * Writes into [dragBoundsRect] and returns it — a shared instance, see
+     * [currentSystemBarInsets]. It is deliberately a *different* Rect from the
+     * insets one because callers hold both at once.
      */
     private fun currentDragBounds(): Rect {
+        val out = dragBoundsRect
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 val metrics = windowManager?.currentWindowMetrics
                 if (metrics != null) {
                     val b = metrics.bounds
                     val insets = metrics.windowInsets.getInsets(WindowInsets.Type.systemBars())
-                    return Rect(insets.left, insets.top, b.width() - insets.right, b.height() - insets.bottom)
+                    out.set(insets.left, insets.top, b.width() - insets.right, b.height() - insets.bottom)
+                    return out
                 }
             } catch (e: Exception) {
             }
         }
         val dm = resources.displayMetrics
         val insets = currentSystemBarInsets()
-        return Rect(insets.left, insets.top, dm.widthPixels - insets.right, dm.heightPixels - insets.bottom)
+        out.set(insets.left, insets.top, dm.widthPixels - insets.right, dm.heightPixels - insets.bottom)
+        return out
+    }
+
+    // Drag position is computed on every MotionEvent but applied once per
+    // frame; see the ACTION_MOVE branch. pendingDragX/Y hold the newest
+    // clamped target, dragFramePosted guards against stacking callbacks.
+    private var pendingDragX = 0
+    private var pendingDragY = 0
+    private var dragFramePosted = false
+    private val dragFrameCallback = Choreographer.FrameCallback {
+        dragFramePosted = false
+        applyPendingDragPosition()
+    }
+
+    /** Applies the newest pending drag position and moves the two followers. */
+    private fun applyPendingDragPosition() {
+        val v = bubbleView ?: return
+        val lp = params ?: return
+        lp.x = pendingDragX
+        lp.y = pendingDragY
+        try {
+            if (v.isAttachedToWindow) windowManager?.updateViewLayout(v, lp)
+            updateFlagPillPosition()
+            updateStatusLabelPosition()
+        } catch (e: Exception) {
+            Log.e(TAG, "updateViewLayout failed", e)
+        }
+    }
+
+    /** Drops any queued frame callback and applies the position right now. */
+    private fun flushDragPosition() {
+        if (dragFramePosted) {
+            Choreographer.getInstance().removeFrameCallback(dragFrameCallback)
+            dragFramePosted = false
+        }
+        applyPendingDragPosition()
     }
 
     private fun createTouchListener(): View.OnTouchListener {
@@ -1232,7 +1384,7 @@ class FloatingControlService : Service() {
                     initialRawY = event.rawY
                     dragging = false
                     longPressFired = false
-                    longPressHandler.postDelayed(longPressRunnable, 480)
+                    longPressHandler.postDelayed(longPressRunnable, longPressTimeoutMs)
                     bubbleVisualView?.let {
                         it.animate().scaleX(0.92f).scaleY(0.92f).setDuration(120).start()
                     } ?: v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(120).start()
@@ -1254,14 +1406,18 @@ class FloatingControlService : Service() {
                             initialX + (event.rawX - initialRawX).toInt(),
                             initialY + (event.rawY - initialRawY).toInt()
                         )
-                        lp.x = nx
-                        lp.y = ny
-                        try {
-                            windowManager?.updateViewLayout(v, lp)
-                            updateFlagPillPosition()
-                            updateStatusLabelPosition()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "updateViewLayout failed", e)
+                        // Coalesce onto the frame clock. Touch events arrive
+                        // at display rate (90-120Hz) and every
+                        // updateViewLayout is a synchronous binder
+                        // round-trip that forces a full relayout of the
+                        // overlay, so applying per MotionEvent cost up to
+                        // four of them per frame. Record the target and let
+                        // one Choreographer callback apply it.
+                        pendingDragX = nx
+                        pendingDragY = ny
+                        if (!dragFramePosted) {
+                            dragFramePosted = true
+                            Choreographer.getInstance().postFrameCallback(dragFrameCallback)
                         }
                     }
                 }
@@ -1280,6 +1436,13 @@ class FloatingControlService : Service() {
                         if (isCircleStyle()) toggleCircleMenu() else handleTap()
                     }
                     val wasDragging = dragging
+                    // Apply any position still queued on the frame clock
+                    // before we persist, otherwise the last few pixels of
+                    // travel are dropped. Flushed while `dragging` is still
+                    // true so updateStatusLabelPosition keeps skipping its
+                    // nav-bar overflow nudge, exactly as the per-event path
+                    // did.
+                    if (wasDragging) flushDragPosition()
                     dragging = false
                     if (wasDragging) {
                         persistBubblePosition()
@@ -1287,6 +1450,10 @@ class FloatingControlService : Service() {
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     longPressHandler.removeCallbacks(longPressRunnable)
+                    // Only if a drag actually started: pendingDragX/Y are 0
+                    // until the first ACTION_MOVE, so flushing unconditionally
+                    // would snap the bubble to the top-left corner.
+                    if (dragging) flushDragPosition()
                     bubbleVisualView?.let {
                         it.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
                     } ?: v.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
@@ -1350,7 +1517,12 @@ class FloatingControlService : Service() {
     }
 
     private fun startAsForeground() {
-        val notification = buildForegroundNotification()
+        val fitted = NotifText.fit(text)
+        val notification = buildForegroundNotification(fitted)
+        // Seed the dedupe so the first poll tick does not rebuild and re-issue
+        // a notification startForeground() has just posted.
+        lastNotificationText = fitted
+        lastNotificationState = state.name
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -1360,17 +1532,35 @@ class FloatingControlService : Service() {
 
     private fun updateForegroundNotification() {
         val manager = getSystemService(NOTIFICATION_SERVICE) as? NotificationManager ?: return
-        // Rebuild lazily so we can compare against the last-issued content.
-        val notification = buildForegroundNotification()
-        val latestText = notification.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        // Compare BEFORE building. pollRunnable calls this once a second
+        // (5x/second while connecting) and the old order built the whole
+        // Notification first -- decoding the large-icon bitmap and making
+        // three PendingIntent calls on every tick -- only to discard it
+        // because the text had not changed.
+        val latestText = NotifText.fit(text)
         val latestState = state.name
         if (latestText == lastNotificationText && latestState == lastNotificationState) return
-        manager.notify(NOTIFICATION_ID, notification)
+        manager.notify(NOTIFICATION_ID, buildForegroundNotification(latestText))
         lastNotificationText = latestText
         lastNotificationState = latestState
     }
 
-    private fun buildForegroundNotification(): Notification {
+    // The launcher icon is a fixed resource, so decode it once instead of
+    // once per notification rebuild. BitmapFactory has no cache of its own
+    // and decoded at full resource resolution every time.
+    private val notifLargeIcon: Bitmap? by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        try {
+            // Plain-drawable copy of the launcher PNG: R.mipmap.ic_launcher
+            // resolves to the adaptive-icon XML on API 26+, which
+            // BitmapFactory cannot decode (returns null), leaving a stale or
+            // missing large icon in the notification shade.
+            BitmapFactory.decodeResource(resources, R.drawable.app_icon)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun buildForegroundNotification(latestText: String): Notification {
         val connectIntent = Intent(ACTION_START_VPN).apply { setPackage(packageName) }
         val connectPending = PendingIntent.getBroadcast(
             this, 1, connectIntent,
@@ -1425,13 +1615,9 @@ class FloatingControlService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
-            .setContentText(NotifText.fit(text))
+            .setContentText(latestText)
             .setSmallIcon(R.drawable.ic_notification_transparent)
-            // Plain-drawable copy of the launcher PNG: R.mipmap.ic_launcher
-            // resolves to the adaptive-icon XML on API 26+, which
-            // BitmapFactory cannot decode (returns null), leaving a stale or
-            // missing large icon in the notification shade.
-            .setLargeIcon(BitmapFactory.decodeResource(resources, R.drawable.app_icon))
+            .setLargeIcon(notifLargeIcon)
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -2440,22 +2626,21 @@ class FloatingControlService : Service() {
     private fun animateGradientTransition(oldState: BubbleState, newState: BubbleState) {
         if (isCircleStyle()) return
         if (bubbleVisualView == null && bubbleView == null) return
-        val (oldStart, oldEnd) = stateGradient(oldState)
-        val (newStart, newEnd) = stateGradient(newState)
+        val (oldStart, _) = stateGradient(oldState)
+        val (newStart, _) = stateGradient(newState)
 
         colorAnimator?.cancel()
-        val evaluator = ArgbEvaluator()
-        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+        // ofArgb keeps the color in the primitive int path; the old
+        // ofFloat + ArgbEvaluator allocated two boxed Integers and one
+        // IntArray per frame, and then a whole new GradientDrawable.
+        val animator = ValueAnimator.ofArgb(oldStart, newStart).apply {
             duration = 260
             addUpdateListener { anim ->
-                val fraction = anim.animatedValue as Float
-                val start = evaluator.evaluate(fraction, oldStart, newStart) as Int
-                val end = evaluator.evaluate(fraction, oldEnd, newEnd) as Int
-                applyGradientColors(intArrayOf(start, end))
+                applyGradientColor(anim.animatedValue as Int)
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    applyGradientColors(intArrayOf(newStart, newEnd))
+                    applyGradientColor(newStart)
                 }
             })
         }
@@ -2464,18 +2649,25 @@ class FloatingControlService : Service() {
     }
 
     /**
-     * Rebuilds the bubble's gradient background with the given colors.
+     * Paints the bubble background a single flat color, reusing one retained
+     * [GradientDrawable] instead of constructing a new one (plus its
+     * GradientState) on every animation frame.
      *
-     * [GradientDrawable.setColors] (the mutable in-place setter) only exists on
-     * API 24+, but this app supports minSdk 21, so a fresh [GradientDrawable] is
-     * constructed each time instead — cheap enough for a ~260ms crossfade.
+     * A flat [GradientDrawable.setColor] is API 1, so this is safe on minSdk
+     * 21 — the old comment justified per-frame allocation on
+     * [GradientDrawable.setColors] being API 24+, but [stateGradient] always
+     * returns start == end, so the gradient was already rendering flat.
      */
-    private fun applyGradientColors(colors: IntArray) {
+    private fun applyGradientColor(color: Int) {
         if (isCircleStyle()) return
         val view = bubbleVisualView ?: bubbleView ?: return
-        val drawable = GradientDrawable(GradientDrawable.Orientation.TL_BR, colors)
-        drawable.shape = GradientDrawable.OVAL
-        view.background = drawable
+        var drawable = bubbleGradientDrawable
+        if (drawable == null) {
+            drawable = GradientDrawable().apply { shape = GradientDrawable.OVAL }
+            bubbleGradientDrawable = drawable
+        }
+        if (view.background !== drawable) view.background = drawable
+        drawable.setColor(color)
     }
 
     private fun getConnectedSince(): Long {
@@ -2517,9 +2709,6 @@ class FloatingControlService : Service() {
         }
         if (isLockStyle()) {
             view.setTextColor(Color.BLACK)
-            view.textSize = 11f
-            view.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            view.letterSpacing = 0.02f
         }
         view.text = formatElapsed(elapsed)
     }
@@ -2708,6 +2897,14 @@ class FloatingControlService : Service() {
 
     companion object {
         private const val TAG = "FloatingControlService"
+
+        // Pre-parsed status colors. Kept as @ColorInt constants so no
+        // Color.parseColor (string validation + hex parse) ever runs on the
+        // UI thread, least of all inside onDraw.
+        private const val COLOR_LOCK_GREEN = 0xFF1C9C7C.toInt()
+        private const val COLOR_LOCK_ERR = 0xFFCC2D4F.toInt()
+        private const val COLOR_SPIN_LIGHT = 0xFF0C0C14.toInt()
+
         private const val POLL_INTERVAL = 1000L
         private const val CONNECTING_POLL_INTERVAL = 200L
         private const val TIMER_INTERVAL = 1000L
