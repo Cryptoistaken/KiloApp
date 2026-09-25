@@ -163,6 +163,5 @@
                 android:textSize="11sp"
                 android:visibility="gone" />
         </FrameLayout>
-        </LinearLayout>
     </LinearLayout>
 </FrameLayout>
