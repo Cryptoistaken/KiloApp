@@ -134,7 +134,7 @@ internal object SheetBackupXlsx {
         // same transform is replayed over the Files names to rebuild the
         // name -> SheetFile mapping instead of trusting the visible label.
         val used = mutableSetOf<String>()
-        val dataNames = files.map { safeName(it.name.ifBlank { it.preset.title }, used) }
+        val dataNames = files.map { SheetXlsx.safeSheetName(it.name.ifBlank { it.preset.title }, used) }
         val gridByName = named.associate { it.first to it.second }
         val fileByName = dataNames.withIndex().associate { (i, n) -> n to files[i] }
 
@@ -292,22 +292,6 @@ internal object SheetBackupXlsx {
             )
         }
         return out
-    }
-
-    /** Excel caps a sheet name at 31 chars and rejects : \ / ? * [ ]; file
-     *  names are user supplied, so mirror the writer's transform exactly. */
-    private fun safeName(raw: String, used: MutableSet<String>): String {
-        val cleaned = raw.map { if (it in ILLEGAL_NAME_CHARS || it.code < 0x20) '_' else it }
-            .joinToString("").trim().ifEmpty { "Sheet" }
-        val base = cleaned.take(31)
-        if (used.add(base.lowercase())) return base
-        var n = 2
-        while (true) {
-            val suffix = " $n"
-            val candidate = base.take(31 - suffix.length) + suffix
-            if (used.add(candidate.lowercase())) return candidate
-            n++
-        }
     }
 
     private fun boolText(v: Boolean): String = if (v) "1" else ""

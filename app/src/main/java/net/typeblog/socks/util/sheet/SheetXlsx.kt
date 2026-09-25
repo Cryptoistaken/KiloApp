@@ -52,8 +52,10 @@ object SheetXlsx {
 
     // Excel caps a sheet name at 31 chars and rejects : \ / ? * [ ]. File
     // names are user-supplied, so sanitize and de-duplicate rather than
-    // emitting a workbook that refuses to open.
-    private fun safeSheetName(raw: String, used: MutableSet<String>): String {
+    // emitting a workbook that refuses to open. SheetBackupXlsx replays this
+    // when reading a workbook back, so the two must stay in step: a reader
+    // that derived labels differently would fail to match worksheets to files.
+    internal fun safeSheetName(raw: String, used: MutableSet<String>): String {
         val cleaned = raw.map { if (it in ILLEGAL_NAME_CHARS || it.code < 0x20) '_' else it }
             .joinToString("").trim().ifEmpty { "Sheet" }
         val base = cleaned.take(31)
