@@ -48,6 +48,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.withTimeoutOrNull
 import net.typeblog.socks.ui.screens.sheet.SheetGrid
 import net.typeblog.socks.ui.theme.KiloProxyTheme
 import net.typeblog.socks.util.ThemeMode
@@ -69,9 +70,9 @@ import net.typeblog.socks.util.sheet.SheetPreset
  * (20) row window at first paint and grows it as data is saved (and when
  * scrolled near its end); inside the window LazyColumn virtualizes, so
  * the tap never freezes. Scroll targets the last data row (never the
- * empty capture slot) and recenters only on first paint and newly
- * landed data; undo/redo/check re-renders stay put.
- * undo/redo/check re-renders stay put.
+ * empty capture slot) and only moves when that row is NOT already on
+ * screen: a file that fits shows row 1 with no jump, an overflowing
+ * list reveals a newly-saved row. undo/redo/check re-renders stay put.
  */
 class SheetMenuOverlay(
     private val context: Context,
@@ -235,10 +236,30 @@ class SheetMenuOverlay(
                     val gen = scrollGenState.intValue
                     LaunchedEffect(gen) {
                         if (gen > 0) {
+                            // Wait for the list to measure so the visibility
+                            // check below is accurate (empty on frame 0).
+                            withTimeoutOrNull(300) {
+                                snapshotFlow {
+                                    gridListState.layoutInfo.visibleItemsInfo.isNotEmpty()
+                                }.first { it }
+                            }
                             val n = rowWindowState.intValue
                             if (n > 0) {
                                 try {
-                                    gridListState.scrollToItem(scrollTarget.coerceIn(0, n - 1))
+                                    // Sticky header occupies Lazy index 0, so
+                                    // row k lives at index k + 1.
+                                    val targetLazy =
+                                        (scrollTarget + 1).coerceIn(1, n)
+                                    val alreadyVisible = gridListState
+                                        .layoutInfo.visibleItemsInfo
+                                        .any { it.index == targetLazy }
+                                    // Only scroll when the newest row is NOT
+                                    // already on screen: a file that fits shows
+                                    // row 1 (no jump); an overflowing list
+                                    // reveals the newly-saved row.
+                                    if (!alreadyVisible) {
+                                        gridListState.scrollToItem(targetLazy)
+                                    }
                                 } catch (_: Exception) {
                                 }
                             }
