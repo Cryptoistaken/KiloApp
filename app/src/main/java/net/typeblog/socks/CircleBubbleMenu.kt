@@ -156,12 +156,12 @@ class CircleBubbleMenu(
         val icons = listOf(
             Triple(
                 if (proxyConnected) R.drawable.ic_proton_lock_filled else R.drawable.ic_proton_lock_open_filled_2,
-                if (proxyConnected) Color.parseColor("#1C9C7C") else Color.parseColor("#CC2D4F"),
+                if (proxyConnected) TINT_LOCKED else TINT_UNLOCKED,
                 0.58f
             ),
-            Triple(R.drawable.ic_tab_sms, Color.parseColor("#18181B"), 0.4f),
-            Triple(sheetIconRes, Color.parseColor("#18181B"), 0.4f),
-            Triple(R.drawable.ic_name_person, Color.parseColor("#18181B"), 0.4f)
+            Triple(R.drawable.ic_tab_sms, TINT_INK, 0.4f),
+            Triple(sheetIconRes, TINT_INK, 0.4f),
+            Triple(R.drawable.ic_name_person, TINT_INK, 0.4f)
         )
         val taps = listOf(onProxyTap, onSmsTap, onSheetTap, onNameTap)
         val metrics = context.resources.displayMetrics
@@ -213,7 +213,7 @@ class CircleBubbleMenu(
             val btn = FrameLayout(context).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#F4F4F5"))
+                    setColor(ITEM_FILL)
                 }
                 val iv = ImageView(context).apply {
                     setImageResource(icon)
@@ -544,10 +544,14 @@ class CircleBubbleMenu(
                 } catch (_: Exception) {
                 }
                 val glyph = (itemSize * fracs[i]).toInt().coerceAtLeast(1)
+                // Mutate the existing LayoutParams in place. Reassigning the
+                // same instance back onto the child (as this used to) calls
+                // View.setLayoutParams -> requestLayout() for every button,
+                // three times over, walking the parent chain and setting
+                // PFLAG_FORCE_LAYOUT on every ancestor each time.
                 (btn.getChildAt(0)?.layoutParams as? FrameLayout.LayoutParams)?.let { glp ->
                     glp.width = glyph
                     glp.height = glyph
-                    btn.getChildAt(0)?.layoutParams = glp
                 }
                 if (i == 1) {
                     smsRing?.let { ring ->
@@ -555,7 +559,6 @@ class CircleBubbleMenu(
                         (ring.layoutParams as? FrameLayout.LayoutParams)?.let { rlp ->
                             rlp.width = ringPx
                             rlp.height = ringPx
-                            ring.layoutParams = rlp
                         }
                     }
                 }
@@ -570,7 +573,6 @@ class CircleBubbleMenu(
                     blp.height = itemSize
                     blp.leftMargin = lx.toInt()
                     blp.topMargin = ly.toInt()
-                    btn.layoutParams = blp
                 }
                 btn.translationX = 0f
                 btn.translationY = 0f
@@ -583,12 +585,15 @@ class CircleBubbleMenu(
                     proxyCy = ly + itemSize / 2
                 }
             }
+            // One traversal for the whole pass, instead of the three
+            // requestLayout()s per button the in-place mutations above
+            // replaced. `box` is the parent of every resized view.
+            box.requestLayout()
             slots = newDeltas
             proxySubView?.let { sub ->
                 (sub.layoutParams as? FrameLayout.LayoutParams)?.let { slp ->
                     slp.leftMargin = proxyCx.toInt()
                     slp.topMargin = (proxyCy + itemSize / 2 + (2 * density).toInt()).toInt()
-                    sub.layoutParams = slp
                 }
                 sub.post { sub.translationX = -sub.width / 2f }
             }
@@ -671,21 +676,17 @@ class CircleBubbleMenu(
             // Lines: no spin, no layer fade — just let the items fly home.
             handler.postDelayed({ finishRemove() }, totalMs + 200L)
         } else {
-            // HTML closeAnimationCallback: the layer spins -360 with a 1px
-            // blur while the items spring inside (blur on API 31+).
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    box.setRenderEffect(
-                        android.graphics.RenderEffect.createBlurEffect(
-                            1f, 1f, android.graphics.Shader.TileMode.CLAMP
-                        )
-                    )
-                }
-            } catch (_: Exception) {
-            }
+            // HTML closeAnimationCallback: the layer spins -360 while the items
+            // spring inside. The 1px RenderEffect blur that used to ride along
+            // is gone: a 1px radius is below the perceptual threshold but still
+            // forces an offscreen render target and a blur shader on every one
+            // of the ~420ms of rotation. withLayer() promotes the rotating
+            // subtree to a hardware layer for the animation instead, and
+            // restores LAYER_TYPE_NONE when it ends.
             box.animate()
                 .rotation(-360f)
                 .setDuration(totalMs)
+                .withLayer()
                 .withEndAction { finishRemove() }
                 .start()
             // Failsafe: never trap the window if an animator is cancelled.
@@ -775,7 +776,7 @@ class CircleBubbleMenu(
         var leftSec: Long = SMS_EXPIRE_SEC
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            color = Color.parseColor("#E4E4E7")
+            color = RING_TRACK
         }
         private val fgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -789,29 +790,55 @@ class CircleBubbleMenu(
             )
         }
         private val oval = RectF()
+        // Baseline offset for vertically centred text, computed in
+        // onSizeChanged. Recomputing descent()/ascent() every draw was part of
+        // the per-frame cost this view is drawn on.
+        private var textBaselineOffset = 0f
+        // Reused so the countdown does not allocate a Formatter +
+        // StringBuilder + boxed Longs on every drawn frame.
+        private val label = StringBuilder(5)
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            val f = w.toFloat()
+            val sw = f * 0.097f
+            bgPaint.strokeWidth = sw
+            fgPaint.strokeWidth = sw
+            // Setting textSize invalidates the Paint's internal text
+            // measurement cache, so it belongs here (once per resize), not in
+            // onDraw.
+            textPaint.textSize = f * 0.22f
+            textBaselineOffset = -(textPaint.descent() + textPaint.ascent()) / 2f
+        }
 
         override fun onDraw(c: Canvas) {
             super.onDraw(c)
             val w = width.toFloat()
             if (w <= 0) return
             val sw = w * 0.097f
-            bgPaint.strokeWidth = sw
-            fgPaint.strokeWidth = sw
             val pad = sw / 2 + 1f
             oval.set(pad, pad, w - pad, w - pad)
             c.drawArc(oval, 0f, 360f, false, bgPaint)
             val frac = (leftSec.toFloat() / SMS_EXPIRE_SEC).coerceIn(0f, 1f)
+            // Pre-parsed @ColorInt constants: this used to call
+            // Color.parseColor three ways inside onDraw.
             val col = when {
-                leftSec < 60 -> Color.parseColor("#CC2D4F")
-                leftSec < 180 -> Color.parseColor("#F59E0B")
-                else -> Color.parseColor("#16A34A")
+                leftSec < 60 -> RING_RED
+                leftSec < 180 -> RING_AMBER
+                else -> RING_GREEN
             }
             fgPaint.color = col
             textPaint.color = col
-            textPaint.textSize = w * 0.22f
             c.drawArc(oval, -90f, 360f * frac, false, fgPaint)
-            val label = "%02d:%02d".format(leftSec / 60, leftSec % 60)
-            c.drawText(label, w / 2, w / 2 - (textPaint.descent() + textPaint.ascent()) / 2, textPaint)
+            val minutes = leftSec / 60
+            val seconds = leftSec % 60
+            label.setLength(0)
+            label.append((minutes / 10).toInt())
+            label.append((minutes % 10).toInt())
+            label.append(':')
+            label.append((seconds / 10).toInt())
+            label.append((seconds % 10).toInt())
+            c.drawText(label, 0, label.length, w / 2, w / 2 + textBaselineOffset, textPaint)
         }
     }
 
@@ -825,10 +852,18 @@ class CircleBubbleMenu(
             val lastBorn = SmsWatcher.mine.maxOfOrNull { it.born } ?: 0L
             val alive = lastBorn > 0 && now - lastBorn < SMS_EXPIRE_SEC * 1000
             if (alive) {
-                ring.leftSec = ((lastBorn + SMS_EXPIRE_SEC * 1000 - now) / 1000).coerceAtLeast(0)
+                val leftSec: Long =
+                    ((lastBorn + SMS_EXPIRE_SEC * 1000 - now) / 1000).coerceAtLeast(0L)
                 if (ring.visibility != View.VISIBLE) ring.visibility = View.VISIBLE
                 if (icon.visibility != View.GONE) icon.visibility = View.GONE
-                ring.invalidate()
+                // Only re-record the view when the displayed second actually
+                // changed. The arc sweep and the mm:ss label both derive from
+                // leftSec, so an unchanged second means an identical frame and
+                // the invalidate can be skipped.
+                if (ring.leftSec != leftSec) {
+                    ring.leftSec = leftSec
+                    ring.invalidate()
+                }
             } else {
                 if (ring.visibility != View.GONE) ring.visibility = View.GONE
                 if (icon.visibility != View.VISIBLE) icon.visibility = View.VISIBLE
@@ -844,4 +879,17 @@ class CircleBubbleMenu(
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
+
+    private companion object {
+        // Pre-parsed @ColorInt values. Every one of these used to be a
+        // Color.parseColor call, including three inside ExpiryRingView.onDraw.
+        private const val RING_TRACK = 0xFFE4E4E7.toInt()
+        private const val RING_RED = 0xFFCC2D4F.toInt()
+        private const val RING_AMBER = 0xFFF59E0B.toInt()
+        private const val RING_GREEN = 0xFF16A34A.toInt()
+        private const val TINT_LOCKED = 0xFF1C9C7C.toInt()
+        private const val TINT_UNLOCKED = 0xFFCC2D4F.toInt()
+        private const val TINT_INK = 0xFF18181B.toInt()
+        private const val ITEM_FILL = 0xFFF4F4F5.toInt()
+    }
 }
