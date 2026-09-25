@@ -372,7 +372,6 @@ object SmsWatcher {
                 o.put("display", n.display)
                 o.put("full", n.full)
                 o.put("country", n.country)
-                o.put("flag", n.flag)
                 o.put("range", n.range)
                 o.put("born", n.born)
                 o.put("svc", n.svc)
@@ -397,13 +396,17 @@ object SmsWatcher {
             val loaded = mutableListOf<SmsNum>()
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
+                val range = o.optString("range")
                 val n = SmsNum(
                     id = o.optLong("id", nextId++),
                     display = o.optString("display").replace(" ", ""),
                     full = o.optString("full"),
                     country = o.optString("country"),
-                    flag = o.optString("flag"),
-                    range = o.optString("range"),
+                    // The flag is derived from the range, never read back
+                    // from disk: an older build stored the plain ISO code
+                    // and that value would otherwise persist forever.
+                    flag = smsCountryForPrefix(range.filter { it.isDigit() }).second,
+                    range = range,
                     born = o.optLong("born"),
                     svc = o.optString("svc"),
                     code = o.optString("code").ifEmpty { null },

@@ -204,7 +204,7 @@ internal fun MineRow(
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = n.flag, fontSize = 20.sp, modifier = Modifier.width(28.dp))
+            Text(text = n.flag, fontSize = 20.sp, modifier = Modifier.width(28.dp), maxLines = 1)
             Column(Modifier.weight(1f)) {
                 Text(
                     text = n.display,
