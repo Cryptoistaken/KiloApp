@@ -118,8 +118,8 @@
                     android:layout_height="18dp"
                     android:background="?android:attr/selectableItemBackgroundBorderless"
                     android:contentDescription="Check options"
-                    android:padding="6dp"
-                    android:src="@drawable/ic_ss_check_arrow" />
+                    android:padding="4dp"
+                    android:src="@drawable/ic_ss_check_arrow_triangle" />
             </LinearLayout>
         </LinearLayout>
 
