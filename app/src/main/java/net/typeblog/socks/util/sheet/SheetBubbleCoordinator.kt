@@ -18,7 +18,14 @@ class SheetBubbleCoordinator(context: Context) {
             return null
         }
         val rows = rowsFor(fileId)
-        return SheetBubbleSnapshot(file, rows, findBubbleActiveRow(rows, file.preset))
+        return SheetBubbleSnapshot(
+            file,
+            rows,
+            findBubbleActiveRow(rows, file.preset),
+            dups = try { db.crossDupCells(fileId, rows) } catch (_: Exception) { emptySet() },
+            styles = try { db.loadStyles(fileId) } catch (_: Exception) { emptyMap() },
+            hidden = try { db.loadHidden(fileId) } catch (_: Exception) { emptySet() }
+        )
     }
 
     fun capture(

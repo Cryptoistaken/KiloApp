@@ -2,6 +2,7 @@ package net.typeblog.socks
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -15,7 +16,6 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -24,20 +24,24 @@ import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import net.typeblog.socks.util.ThemeMode
 import net.typeblog.socks.util.sheet.NO_2FA
 import net.typeblog.socks.util.sheet.SheetBubbleSnapshot
+import net.typeblog.socks.util.sheet.SheetColumn
 import net.typeblog.socks.util.sheet.SheetPreset
 import net.typeblog.socks.util.sheet.SheetRow
 import net.typeblog.socks.util.sheet.isNo2Fa
 
 /**
- * Sheet file window for the floating Circle menu. It is the same shell as
- * the proxy/SMS popups: a fixed 230x280dp panel on menu_panel_bg, the same
- * 44dp top bar (identity left, shared exit icon right), the same smart
- * four-side bubble-edge placement and grow-in, and the same scrim-tap/X to
- * close. The body mirrors the in-app file grid (preset columns, row
- * numbers, site status-dot colors). The service only opens this when a
- * bubble file is configured and captures the clipboard into the active row
- * on open, so a null snapshot means the file vanished mid-open and the
- * shell closes instead of showing an empty popup.
+ * Sheet file window for the floating Circle menu. Same shell as the
+ * proxy/SMS popups: fixed 230x280dp panel on menu_panel_bg, the same 44dp
+ * top bar (file identity only — no close or "..." buttons, a tap outside
+ * dismisses), the same smart four-side placement and grow-in.
+ *
+ * The body is the in-app file grid at small size: fixed header row plus a
+ * scrollable window of up to [WINDOW_ROWS] data rows ending at the active
+ * row, 36dp rows, 36dp row-number/dot rails, 13sp centered monospace
+ * cells, site status colors, approved/hold fills, dup marks, per-cell
+ * styles, and hidden columns — all from the same snapshot rules as
+ * SheetDetailScreen. After every render the list scrolls to the active
+ * row, so newly captured clipboard data is always on screen.
  */
 class SheetMenuOverlay(
     private val context: Context,
@@ -47,12 +51,14 @@ class SheetMenuOverlay(
     private var windowManager: WindowManager = createWindowManager()
     private val handler = Handler(Looper.getMainLooper())
     private var rootView: FrameLayout? = null
+    private var headerView: LinearLayout? = null
     private var rowsView: LinearLayout? = null
     private var scrollView: ScrollView? = null
     private var emptyView: TextView? = null
     private var iconView: ImageView? = null
     private var nameView: TextView? = null
     private var descriptionView: TextView? = null
+    private var scrolledOnce = false
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
 
@@ -70,27 +76,28 @@ class SheetMenuOverlay(
             return
         }
         val panel = root.findViewById<LinearLayout>(R.id.bubble_sheet_panel) ?: return
+        val header = root.findViewById<LinearLayout>(R.id.bubble_sheet_header_row) ?: return
         val rows = root.findViewById<LinearLayout>(R.id.bubble_sheet_rows) ?: return
         val scroll = root.findViewById<ScrollView>(R.id.bubble_sheet_scroll)
         val empty = root.findViewById<TextView>(R.id.bubble_sheet_empty) ?: return
         val icon = root.findViewById<ImageView>(R.id.bubble_sheet_icon)
         val name = root.findViewById<TextView>(R.id.bubble_sheet_name)
         val description = root.findViewById<TextView>(R.id.bubble_sheet_description)
-        val close = root.findViewById<ImageButton>(R.id.bubble_sheet_close) ?: return
         rootView = root
+        headerView = header
         rowsView = rows
         scrollView = scroll
         emptyView = empty
         iconView = icon
         nameView = name
         descriptionView = description
+        scrolledOnce = false
         // Placeholder identity until the service renders the loaded snapshot
         // right after attach (DB load + clipboard capture).
         icon?.setImageResource(R.drawable.ic_tab_sheet)
         name?.text = "Sheet"
         description?.text = ""
         empty.visibility = View.GONE
-        close.setOnClickListener { hide() }
 
         val bounds = contentBounds()
         val margin = dp(8f)
@@ -163,28 +170,54 @@ class SheetMenuOverlay(
             hide()
             return
         }
+        val header = headerView ?: return
         val rows = rowsView ?: return
         val empty = emptyView ?: return
+        val scroll = scrollView
+        header.removeAllViews()
         rows.removeAllViews()
         val file = snapshot.file
         iconView?.setImageResource(iconFor(file.preset))
         nameView?.text = file.name
         descriptionView?.text = file.preset.desc
-        val dataRows = snapshot.rows.filter { it.isData(file.preset.columns) }
-        val hasData = dataRows.isNotEmpty()
-        empty.visibility = if (hasData) View.GONE else View.VISIBLE
-        scrollView?.visibility = if (hasData) View.VISIBLE else View.GONE
-        if (!hasData) return
-        rows.addView(headerRow(file))
-        // Mirror the in-app grid order: every stored data row, active row
-        // highlighted, capped so the small window stays scrollable.
-        var shown = 0
-        snapshot.rows.forEachIndexed { index, row ->
-            if (shown >= 40) return@forEachIndexed
-            if (row.isData(file.preset.columns)) {
-                rows.addView(dataRow(file, row, index == snapshot.activeRow))
-                shown++
+        val cols = file.preset.columns.filter { !snapshot.hidden.contains(it.key) }
+        val dataIdx = snapshot.rows.mapIndexedNotNull { index, row ->
+            if (row.isData(file.preset.columns)) index else null
+        }
+        when {
+            cols.isEmpty() -> {
+                empty.text = "All columns hidden. Use the menu."
+                empty.visibility = View.VISIBLE
+                scroll?.visibility = View.GONE
+                return
             }
+            dataIdx.isEmpty() -> {
+                empty.text = "No rows yet"
+                empty.visibility = View.VISIBLE
+                scroll?.visibility = View.GONE
+                return
+            }
+        }
+        empty.visibility = View.GONE
+        scroll?.visibility = View.VISIBLE
+        header.addView(headerRow(cols))
+        // Window of up to WINDOW_ROWS data rows ending at the active row, so
+        // the row holding freshly captured data is always on screen.
+        val endPos = dataIdx.indexOf(snapshot.activeRow)
+            .let { if (it < 0) dataIdx.size else it + 1 }
+        val startPos = (endPos - WINDOW_ROWS).coerceAtLeast(0)
+        for (pos in startPos until endPos) {
+            val index = dataIdx[pos]
+            snapshot.rows.getOrNull(index)?.let { row ->
+                rows.addView(dataRow(snapshot, cols, row, index == snapshot.activeRow))
+            }
+        }
+        val activePos = (endPos - startPos - 1).coerceAtLeast(0)
+        scroll?.post {
+            if (!isShowing()) return@post
+            val y = activePos * dp(36f)
+            if (scrolledOnce) scroll.smoothScrollTo(0, y) else scroll.scrollTo(0, y)
+            scrolledOnce = true
         }
     }
 
@@ -203,6 +236,7 @@ class SheetMenuOverlay(
     }
 
     private fun clearReferences() {
+        headerView = null
         rowsView = null
         scrollView = null
         emptyView = null
@@ -211,67 +245,115 @@ class SheetMenuOverlay(
         descriptionView = null
     }
 
-    private fun headerRow(file: net.typeblog.socks.util.sheet.SheetFile): LinearLayout {
+    private fun headerRow(cols: List<SheetColumn>): LinearLayout {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f))
-            background = colorDrawable(headerColor(), gridLineColor())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(36f))
+            setBackgroundColor(headerColor())
         }
-        row.addView(cellView("", 26f, 0f, true))
-        file.preset.columns.forEach { column ->
-            row.addView(cellView(column.label, 0f, 1f, true))
-        }
-        row.addView(cellView("", 24f, 0f, true))
+        row.addView(headerCell("", RAIL_DP))
+        cols.forEach { column -> row.addView(headerCell(column.label, 0f, 1f)) }
+        row.addView(headerCell("", RAIL_DP))
         return row
     }
 
-    private fun dataRow(file: net.typeblog.socks.util.sheet.SheetFile, row: SheetRow, active: Boolean): LinearLayout {
+    private fun headerCell(value: String, widthDp: Float, weight: Float = 0f): TextView =
+        TextView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                if (widthDp > 0f) dp(widthDp) else 0,
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                weight
+            )
+            background = colorDrawable(headerColor(), gridLineColor())
+            text = value
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            setPadding(dp(8f), 0, dp(8f), 0)
+            textSize = 12f
+            setTextColor(headerTextColor())
+            typeface = Typeface.DEFAULT_BOLD
+        }
+
+    private fun dataRow(
+        snapshot: SheetBubbleSnapshot,
+        cols: List<SheetColumn>,
+        row: SheetRow,
+        active: Boolean
+    ): LinearLayout {
+        val statusFill: Int? = when {
+            row.dead || row.status == "bad" -> DeadRed
+            row.status == "eligible" -> PageBlue
+            row.status == "good" || row.status == "done" -> AliveGreen
+            else -> null
+        }
         val line = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(30f))
-            background = colorDrawable(if (active) activeRowColor() else surfaceColor(), gridLineColor())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(36f))
         }
-        line.addView(cellView((row.rowIdx + 1).toString(), 26f, 0f, false, rowNumber = true))
-        file.preset.columns.forEach { column ->
-            val value = if (column.key == "twofakey" && isNo2Fa(row.twofakey)) NO_2FA else row.cell(column.key)
-            line.addView(cellView(value, 0f, 1f, false))
+        // Row-number rail: surfaceVariant, status-filled when approved.
+        val numBg = if (row.approved && statusFill != null) statusFill else surfaceVariantColor()
+        line.addView(TextView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(RAIL_DP), LinearLayout.LayoutParams.MATCH_PARENT)
+            background = colorDrawable(numBg, gridLineColor())
+            text = (row.rowIdx + 1).toString()
+            maxLines = 1
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            textSize = 11f
+            setTextColor(mutedTextColor())
+            typeface = Typeface.DEFAULT
+        })
+        cols.forEach { column ->
+            val raw = if (column.key == "twofakey" && isNo2Fa(row.twofakey)) NO_2FA else row.cell(column.key)
+            val style = snapshot.styles["${row.rowIdx}:${column.key}"]
+            val customBg = parseHexColor(style?.bg)
+            val fg = parseHexColor(style?.color)
+            val isDup = snapshot.dups.contains(Pair(row.rowIdx, column.key))
+            // In-app fill order: custom style > dup tint > hold/approved
+            // status > transparent.
+            val fill = when {
+                customBg != null -> customBg
+                isDup -> dupTint()
+                (row.hold || row.approved) && statusFill != null -> statusFill
+                active -> activeRowColor()
+                else -> surfaceColor()
+            }
+            val border = when {
+                isDup -> DupYellow
+                else -> gridLineColor()
+            }
+            line.addView(TextView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+                background = colorDrawable(fill, border)
+                text = raw
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                includeFontPadding = false
+                gravity = Gravity.CENTER
+                setPadding(dp(8f), 0, dp(8f), 0)
+                textSize = 13f
+                setTextColor(fg ?: textColor())
+                typeface = if (style?.bold == true) Typeface.DEFAULT_BOLD else Typeface.MONOSPACE
+                if (row.approved) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+            })
         }
-        val dotCell = FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(24f), dp(30f))
-            setBackgroundColor(surfaceColor())
+        // Status rail: surface cell with the site status mark (rounded 8dp
+        // square, 2.5dp radius — never a circle).
+        line.addView(FrameLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(RAIL_DP), dp(36f))
+            background = colorDrawable(surfaceColor(), gridLineColor())
             addView(View(context).apply {
                 layoutParams = FrameLayout.LayoutParams(dp(8f), dp(8f), Gravity.CENTER)
                 background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(statusColor(row))
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dpF(2.5f)
+                    setColor(dotColor(row))
                 }
             })
-        }
-        line.addView(dotCell)
+        })
         return line
-    }
-
-    private fun cellView(
-        value: String,
-        width: Float,
-        weight: Float,
-        header: Boolean,
-        rowNumber: Boolean = false
-    ): TextView = TextView(context).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            if (width > 0f) dp(width) else 0,
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            weight
-        )
-        text = value
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        includeFontPadding = false
-        gravity = if (rowNumber) Gravity.CENTER else Gravity.CENTER_VERTICAL
-        setPadding(dp(4f), 0, dp(4f), 0)
-        textSize = if (header) 8f else 9f
-        setTextColor(if (header) headerTextColor() else if (rowNumber) mutedTextColor() else textColor())
-        typeface = if (header) Typeface.DEFAULT_BOLD else Typeface.MONOSPACE
     }
 
     private fun iconFor(preset: SheetPreset): Int = when (preset) {
@@ -280,23 +362,52 @@ class SheetMenuOverlay(
         SheetPreset.PAGE -> R.drawable.ic_ss_page
     }
 
-    // Site status tokens, same as the in-app grid (SheetUi).
-    private fun statusColor(row: SheetRow): Int = when {
-        row.dead || row.status == "bad" -> Color.rgb(0xE3, 0x3B, 0x2E)
-        row.status == "eligible" -> Color.rgb(0x25, 0x63, 0xEB)
-        row.status == "good" || row.status == "done" -> Color.rgb(0x22, 0x93, 0x42)
-        row.status == "pending" -> Color.rgb(0xF5, 0xA6, 0x23)
+    private fun dotColor(row: SheetRow): Int = when {
+        row.dead || row.status == "bad" -> DeadRed
+        row.status == "eligible" -> PageBlue
+        row.status == "good" || row.status == "done" -> AliveGreen
+        row.status == "pending" -> StatusYellow
         else -> gridLineColor()
     }
 
+    private fun parseHexColor(hex: String?): Int? {
+        if (hex == null) return null
+        var h = hex.trim().removePrefix("#")
+        if (h.length == 3) h = h.map { "$it$it" }.joinToString("")
+        if (h.length != 6) return null
+        return try {
+            Color.rgb(
+                h.substring(0, 2).toInt(16),
+                h.substring(2, 4).toInt(16),
+                h.substring(4, 6).toInt(16)
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // Exact app theme tokens (KiloProxyTheme monochrome); status colors are
+    // the shared site tokens from SheetUi.
     private fun isDark(): Boolean = ThemeMode.isDarkTheme(context)
-    private fun surfaceColor(): Int = if (isDark()) Color.rgb(0x27, 0x27, 0x2A) else Color.WHITE
-    private fun headerColor(): Int = if (isDark()) Color.rgb(0x3F, 0x3F, 0x46) else Color.rgb(0xF4, 0xF4, 0xF5)
+    private fun surfaceColor(): Int = if (isDark()) Color.rgb(0x0A, 0x0A, 0x0A) else Color.WHITE
+    private fun surfaceVariantColor(): Int = if (isDark()) Color.rgb(0x1A, 0x1A, 0x1A) else Color.rgb(0xF5, 0xF5, 0xF5)
+    private fun headerColor(): Int = surfaceVariantColor()
     private fun activeRowColor(): Int = if (isDark()) Color.rgb(0x14, 0x33, 0x2A) else Color.rgb(0xEC, 0xFD, 0xF5)
-    private fun gridLineColor(): Int = if (isDark()) Color.rgb(0x3F, 0x3F, 0x46) else Color.rgb(0xE4, 0xE4, 0xE7)
-    private fun textColor(): Int = if (isDark()) Color.rgb(0xED, 0xED, 0xED) else Color.rgb(0x18, 0x18, 0x1B)
-    private fun headerTextColor(): Int = if (isDark()) Color.rgb(0xD4, 0xD4, 0xD8) else Color.rgb(0x52, 0x52, 0x5B)
-    private fun mutedTextColor(): Int = if (isDark()) Color.rgb(0xA1, 0xA1, 0xAA) else Color.rgb(0x71, 0x71, 0x7A)
+    private fun gridLineColor(): Int = if (isDark()) Color.rgb(0x22, 0x22, 0x22) else Color.rgb(0xEE, 0xEE, 0xEE)
+    private fun textColor(): Int = if (isDark()) Color.WHITE else Color.BLACK
+    private fun headerTextColor(): Int = if (isDark()) Color.rgb(0xAA, 0xAA, 0xAA) else Color.rgb(0x55, 0x55, 0x55)
+    private fun mutedTextColor(): Int = if (isDark()) Color.argb(153, 0xAA, 0xAA, 0xAA) else Color.argb(153, 0x55, 0x55, 0x55)
+
+    private companion object {
+        const val RAIL_DP = 36f
+        const val WINDOW_ROWS = 10
+        val DeadRed = Color.rgb(0xE3, 0x3B, 0x2E)
+        val PageBlue = Color.rgb(0x25, 0x63, 0xEB)
+        val AliveGreen = Color.rgb(0x22, 0x93, 0x42)
+        val StatusYellow = Color.rgb(0xF5, 0xA6, 0x23)
+        val DupYellow = Color.rgb(0xF5, 0xA6, 0x23)
+        fun dupTint(): Int = Color.argb(38, 0xF5, 0xA6, 0x23)
+    }
 
     private fun colorDrawable(fill: Int, stroke: Int): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
@@ -336,4 +447,5 @@ class SheetMenuOverlay(
     }
 
     private fun dp(value: Float): Int = (value * context.resources.displayMetrics.density).toInt()
+    private fun dpF(value: Float): Float = value * context.resources.displayMetrics.density
 }

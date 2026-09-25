@@ -16,7 +16,12 @@ data class BubbleClipboardValue(
 data class SheetBubbleSnapshot(
     val file: SheetFile,
     val rows: List<SheetRow>,
-    val activeRow: Int
+    val activeRow: Int,
+    // In-app grid parity: cross-file dup cells (yellow), per-cell styles,
+    // and hidden columns, so the small window renders the file exactly.
+    val dups: Set<Pair<Int, String>> = emptySet(),
+    val styles: Map<String, CellStyle> = emptyMap(),
+    val hidden: Set<String> = emptySet()
 )
 
 /** The old bubble accepts Facebook cookies only when they look complete. */

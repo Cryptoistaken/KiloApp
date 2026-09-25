@@ -210,7 +210,7 @@ codebase stays clean without future cleanups:
 | `BubbleMenuOverlay.kt` | Popup overlay shown near bubble: country list, search, positioning; window params/IME handling |
 | `BubblePopupPlacer.kt` | Shared smart four-side placement for country, SMS, and Sheet popup shells |
 | `CircleBubbleMenu.kt` | Circle-menu overlay: Proxy/SMS/Sheet/Name bubbles around the anchor, alignment + size from prefs, scrim dismiss; Sheet long press applies Skip 2FA |
-| `SheetMenuOverlay.kt` | Native 230dp x 280dp Sheet file popup on the exact proxy/SMS shell (44dp bar with file identity + shared exit icon, smart placement, scrim/X close): mirrors the in-app grid of the configured bubble file, clipboard auto-captured into the active row on open |
+| `SheetMenuOverlay.kt` | Native 230dp x 280dp Sheet file popup on the exact proxy/SMS shell (44dp bar with file identity only — no close/"..." buttons, scrim-tap dismiss, smart placement, grow-in): exact in-app grid parity (36dp rows/rails, 13sp centered monospace cells, theme tokens, approved/hold fills, dup marks, cell styles, hidden columns), fixed header + 10-row window ending at the active row with auto-scroll to new data, clipboard auto-captured into the active row on open |
 | `BootReceiver.kt` | BOOT_COMPLETED + MY_PACKAGE_REPLACED auto-start receiver (restores VPN for auto-connect profiles and the floating bubble after reboot and after in-app updates) |
 | `System.kt` | JNI bridge (sendfd) |
 
