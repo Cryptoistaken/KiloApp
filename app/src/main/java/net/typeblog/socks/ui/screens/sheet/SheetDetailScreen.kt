@@ -1445,6 +1445,7 @@ if (!readOnly && row.locked) {
                                                     store.copyGrid(gridOf(row.rowIdx, "twofakey", v))
                                                     toast(appCtx, "Copied.")
                                                 }
+                                            }
                         },
                     onDotLongClick = { row ->
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
