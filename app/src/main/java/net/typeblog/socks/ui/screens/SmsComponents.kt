@@ -204,13 +204,13 @@ internal fun MineRow(
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = n.flag,
-                fontSize = 20.sp,
-                modifier = Modifier.width(28.dp),
-                textAlign = TextAlign.Center,
-                maxLines = 1
-            )
+            // Same flag cell as CountriesScreen/RecentsCard: a centred box
+            // then a 12dp gap. Without the spacer the number and country
+            // name sat flush against the flag.
+            Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                Text(text = n.flag, fontSize = 20.sp, maxLines = 1)
+            }
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = n.display,
@@ -273,15 +273,10 @@ internal fun ReceivedRow(
         ) {
             // Always reserve the flag slot: MineRow does, so a conditional
             // here would shift the number column between the two sections.
-            // Centered in the slot like every other flag in the app: start
-            // alignment left all the slack between the flag and the number.
-            Text(
-                text = n.flag,
-                fontSize = 20.sp,
-                modifier = Modifier.width(28.dp),
-                textAlign = TextAlign.Center,
-                maxLines = 1
-            )
+            Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                Text(text = n.flag, fontSize = 20.sp, maxLines = 1)
+            }
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = n.display,
@@ -387,13 +382,10 @@ internal fun CountrySheet(
                 modifier = Modifier.fillMaxWidth().clickable(onClick = { onPick(r.country) }).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = r.country.flag,
-                    fontSize = 24.sp,
-                    modifier = Modifier.width(36.dp),
-                    textAlign = TextAlign.Center,
-                    maxLines = 1
-                )
+                Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                    Text(text = r.country.flag, fontSize = 24.sp, maxLines = 1)
+                }
+                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = r.country.name,
@@ -461,13 +453,10 @@ internal fun ItemSheet(
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = num.flag,
-                fontSize = 30.sp,
-                modifier = Modifier.width(40.dp),
-                textAlign = TextAlign.Center,
-                maxLines = 1
-            )
+            Box(modifier = Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+                Text(text = num.flag, fontSize = 30.sp, maxLines = 1)
+            }
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = num.display,
