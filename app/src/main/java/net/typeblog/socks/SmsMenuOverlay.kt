@@ -454,11 +454,14 @@ class SmsMenuOverlay(
         }
         views.root.isClickable = true
         views.root.isFocusable = true
-        views.root.setOnClickListener { onNumberCopy(code ?: n.display) }
+        // Read n.code at click time, not from the render-time snapshot:
+        // applyOtp mutates the SmsNum in place and rows only re-bind on the
+        // next 1s tick, so a snapshot would copy the number, not the code.
+        views.root.setOnClickListener { onNumberCopy(n.code ?: n.display) }
         views.code.isClickable = code != null
         views.code.isFocusable = code != null
         views.code.contentDescription = if (code != null) "Copy code $code" else null
-        views.code.setOnClickListener { code?.let(onNumberCopy) }
+        views.code.setOnClickListener { n.code?.let(onNumberCopy) }
     }
 
     private fun elapsed(born: Long): String {

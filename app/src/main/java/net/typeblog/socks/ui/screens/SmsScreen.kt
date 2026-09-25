@@ -128,16 +128,22 @@ fun SmsScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    // Close the item sheet if its number just expired.
+    // Close the item sheet only when its number is gone from BOTH lists.
+    // mine and expired are disjoint, so testing mine alone made the sheet
+    // snap shut the instant it opened for an expired number.
     val open = (sheet as? Sheet.Item)?.num
     LaunchedEffect(mineSnapshot, expiredSnapshot, open?.id) {
-        if (open != null && mineSnapshot.none { it.id == open.id }) sheet = null
+        if (open != null &&
+            mineSnapshot.none { it.id == open.id } &&
+            expiredSnapshot.none { it.id == open.id }
+        ) sheet = null
     }
 
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (page) {
             0 -> MainPage(
-                now = now, mine = mineSnapshot, expired = expiredSnapshot,
+                now = now, revision = revision,
+                mine = mineSnapshot, expired = expiredSnapshot,
                 rangeText = rangeText,
                 onRange = {
                     rangeState.value = it
@@ -176,7 +182,8 @@ fun SmsScreen(modifier: Modifier = Modifier) {
             )
 
             2 -> FeedPage(
-                now = now, mine = mineSnapshot, expired = expiredSnapshot,
+                now = now, revision = revision,
+                mine = mineSnapshot, expired = expiredSnapshot,
                 onBack = { page = 0 },
                 onOpen = { sheet = Sheet.Item(it) },
                 onRegen = ::onRegen,

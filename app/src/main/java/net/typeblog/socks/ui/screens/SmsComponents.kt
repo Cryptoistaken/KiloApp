@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,10 +45,13 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,6 +109,7 @@ internal fun SwipeBox(
     onLeft: (() -> Unit)? = null,
     rightLabel: String = "Open",
     leftLabel: String = "New",
+    contentLabel: String? = "Open SMS number",
     padBottom: androidx.compose.ui.unit.Dp = 8.dp,
     content: @Composable () -> Unit,
 ) {
@@ -114,22 +119,28 @@ internal fun SwipeBox(
             .fillMaxWidth()
             .padding(bottom = padBottom)
             .clip(RoundedCornerShape(12.dp))
-            .semantics {
-                role = Role.Button
-                contentDescription = "Open SMS number"
-                onClick(label = "Open SMS number") {
-                    onRight()
-                    true
-                }
-                customActions = buildList {
-                    if (onLeft != null) {
-                        add(CustomAccessibilityAction("Regenerate number") {
-                            onLeft.invoke()
-                            true
-                        })
+            .then(
+                // Null for non-row content (e.g. the analysis tiles): the
+                // row-specific label and the Regenerate action would be
+                // wrong there. The swipe gesture is unaffected.
+                if (contentLabel == null) Modifier
+                else Modifier.semantics {
+                    role = Role.Button
+                    contentDescription = contentLabel
+                    onClick(label = contentLabel) {
+                        onRight()
+                        true
+                    }
+                    customActions = buildList {
+                        if (onLeft != null) {
+                            add(CustomAccessibilityAction("Regenerate number") {
+                                onLeft.invoke()
+                                true
+                            })
+                        }
                     }
                 }
-            }
+            )
     ) {
         if (dx != 0f) {
             Row(
@@ -254,9 +265,9 @@ internal fun ReceivedRow(
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (n.flag.isNotEmpty()) {
-                Text(text = n.flag, fontSize = 20.sp, modifier = Modifier.width(28.dp))
-            }
+            // Always reserve the flag slot: MineRow does, so a conditional
+            // here would shift the number column between the two sections.
+            Text(text = n.flag, fontSize = 20.sp, modifier = Modifier.width(28.dp), maxLines = 1)
             Column(Modifier.weight(1f)) {
                 Text(
                     text = n.display,
@@ -355,7 +366,9 @@ internal fun CountrySheet(
         )
     }
     LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-        items(rows, key = { it.country.prefix }) { r ->
+        // Index in the key: the gateway can repeat a prefix (or send a blank
+        // one), and a duplicate key throws out of LazyColumn.
+        itemsIndexed(rows, key = { index, r -> "${r.country.prefix}:$index" }) { _, r ->
             Row(
                 modifier = Modifier.fillMaxWidth().clickable(onClick = { onPick(r.country) }).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -428,7 +441,7 @@ internal fun ItemSheet(
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (num.flag.isNotEmpty()) Text(text = num.flag, fontSize = 30.sp, modifier = Modifier.width(40.dp))
+            Text(text = num.flag, fontSize = 30.sp, modifier = Modifier.width(40.dp), maxLines = 1)
             Column(Modifier.weight(1f)) {
                 Text(
                     text = num.display,
@@ -465,32 +478,36 @@ internal fun ItemSheet(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             )
         }
-        val msgs: List<Pair<String, String>> = num.msgs.map { it.code to it.text }
-        msgs.reversed().forEach { (c, t) ->
+        // One Text with a styled span. Splitting the sentence into separate
+        // composables broke the line in the middle of the message.
+        num.msgs.asReversed().forEach { msg ->
+            val c = msg.code
+            val t = msg.text
             Column(
                 Modifier.fillMaxWidth().padding(bottom = 8.dp)
                     .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp))
                     .clickable { onCopy(t) }
                     .padding(10.dp)
             ) {
-                if (c.isNotEmpty() && t.contains(c)) {
-                    val idx = t.indexOf(c)
-                    Row {
-                        Text(text = t.substring(0, idx), style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            text = c,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = CodeGreen,
-                            modifier = Modifier.clickable { onCopy(c) }
-                        )
-                    }
-                    if (idx + c.length < t.length) {
-                        Text(text = t.substring(idx + c.length), style = MaterialTheme.typography.bodyMedium)
-                    }
-                } else {
-                    Text(text = t, style = MaterialTheme.typography.bodyMedium)
-                }
+                val idx = if (c.isNotEmpty()) t.indexOf(c) else -1
+                Text(
+                    text = if (idx < 0) {
+                        buildAnnotatedString { append(t) }
+                    } else {
+                        buildAnnotatedString {
+                            append(t.substring(0, idx))
+                            withStyle(
+                                SpanStyle(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = CodeGreen
+                                )
+                            ) { append(c) }
+                            append(t.substring(idx + c.length))
+                        }
+                    },
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
         if (num.code != null) {

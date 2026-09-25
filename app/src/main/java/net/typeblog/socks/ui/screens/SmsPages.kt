@@ -179,6 +179,7 @@ private fun StatTile(label: String, value: String, mod: Modifier) {
 @Composable
 internal fun MainPage(
     now: Long,
+    revision: Long,
     mine: List<SmsNum>,
     expired: List<SmsNum>,
     rangeText: String,
@@ -193,8 +194,11 @@ internal fun MainPage(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    val all = remember(mine, expired) { mine + expired }
-    val recent = remember(all) { all.flatMap { n -> n.msgs.map { n to it } }.sortedByDescending { it.second.at } }
+    // Keyed on revision, not on the lists: SmsNum is a plain class, so an
+    // arriving OTP mutates the instance already inside the list and
+    // remember(mine, expired) never invalidates on equal contents.
+    val all = remember(revision) { mine + expired }
+    val recent = remember(revision) { all.flatMap { n -> n.msgs.map { n to it } }.sortedByDescending { it.second.at } }
     val otpCount = all.sumOf { it.msgs.size }
     val total = all.size
     val pct = if (total == 0) 0 else (mine.count { it.code != null } + expired.count { it.code != null }) * 100 / total
@@ -214,6 +218,7 @@ internal fun MainPage(
                 onLeft = onOpenStats,
                 rightLabel = "Open",
                 leftLabel = "Open",
+                contentLabel = null,
                 padBottom = 0.dp
             ) {
                 StatTiles(total, otpCount, pct, onOpenStats)
@@ -348,6 +353,7 @@ internal fun NumsPage(
 @Composable
 internal fun FeedPage(
     now: Long,
+    revision: Long,
     mine: List<SmsNum>,
     expired: List<SmsNum>,
     onBack: () -> Unit,
@@ -356,7 +362,7 @@ internal fun FeedPage(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    val received = remember(mine, expired) {
+    val received = remember(revision) {
         (mine + expired).flatMap { n -> n.msgs.map { n to it } }
             .sortedByDescending { it.second.at }
     }
