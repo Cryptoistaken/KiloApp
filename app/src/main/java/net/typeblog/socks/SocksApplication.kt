@@ -1,6 +1,7 @@
 package net.typeblog.socks
 
 import android.app.Application
+import android.os.Build
 import androidx.preference.PreferenceManager
 import net.typeblog.socks.util.Constants.PREF_ADV_APP_BYPASS
 import net.typeblog.socks.util.Constants.PREF_ADV_APP_LIST
@@ -24,6 +25,21 @@ class SocksApplication : Application() {
         // App-scoped SMS polling + OTP notifications (SMS tab state
         // outlives the tab; runs while the app process is alive).
         SmsWatcher.start(this)
+
+        // Re-mirror on every launch. SheetStore only instantiates when the
+        // Sheet tab, the bubble grid or the Backup page is opened, so without
+        // this the copy in Downloads could sit stale for days for someone who
+        // never visits that tab - and a user who deleted the file would not
+        // get it back until they happened to open the Sheet screen.
+        //
+        // Main process only: the VPN service runs in :vpn and initialises
+        // this class too, and two processes racing the delete-then-insert
+        // replace would leave a duplicate in Downloads.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P ||
+            Application.getProcessName() == packageName
+        ) {
+            net.typeblog.socks.util.sheet.SheetBackup.schedule(this)
+        }
     }
 
     /**
