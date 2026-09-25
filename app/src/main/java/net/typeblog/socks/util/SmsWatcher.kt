@@ -269,7 +269,20 @@ private val PrefixIsoFull = mapOf(
     "998" to "UZ",
 )
 
-fun smsFlagFor(iso: String): String = if (iso.length == 2) iso.uppercase(Locale.US) else ""
+/**
+ * Emoji flag for an ISO-2 code. Empty string when the code is unusable, so
+ * callers can hide the flag slot instead of drawing a placeholder.
+ * Emoji generation lives in [Utility] (one home in util/); this only adapts
+ * the empty-on-invalid contract the SMS rows rely on.
+ */
+fun smsFlagFor(iso: String): String {
+    if (iso.length != 2) return ""
+    return try {
+        Utility.countryCodeToFlag(iso)
+    } catch (_: Exception) {
+        ""
+    }
+}
 
 private fun isoForPrefix(prefix: String): String? {
     for (len in 4 downTo 1) {
