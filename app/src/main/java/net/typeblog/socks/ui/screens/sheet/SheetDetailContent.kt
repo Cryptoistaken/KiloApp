@@ -248,12 +248,14 @@ internal fun SheetDetailHeader(
             }
         }
         Box {
-            TextButton(onClick = { onOverflowMenuChange(true) }) {
-                Text(
-                    text = "More",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            // The overflow affordance is an icon, matching the file card's
+            // ic_ss_more, not a "More" text label that widened the top bar.
+            IconButton(onClick = { onOverflowMenuChange(true) }) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_ss_more),
+                    contentDescription = "More actions",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
                 )
             }
             DropdownMenu(
