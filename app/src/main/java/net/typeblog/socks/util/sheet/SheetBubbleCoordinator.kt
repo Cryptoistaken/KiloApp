@@ -129,7 +129,7 @@ class SheetBubbleCoordinator(context: Context) {
             }
         }
         if (changed.isNotEmpty()) {
-            persistBubbleRows(file, before, rows, changed, "check")
+            persistBubbleRows(file, before, rows, changed, "check", pushRedo = false)
             if (checks.isNotEmpty() || reqs.isNotEmpty()) {
                 try {
                     db.tx { d -> db.saveCheckDetails(d, fileId, checks, reqs) }
