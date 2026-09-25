@@ -362,13 +362,13 @@ class SheetMenuOverlay(
         // is nothing checkable or a check is running; the left half runs the
         // check, the arrow only opens the menu (still available while
         // disabled, hidden while checking). Checking swaps the label for a
-        // 12dp spinner + "Checking", like the in-app indicator row.
+        // 10dp spinner + "Checking", like the in-app indicator row.
         val pillEnabled = checkable && !checking
         checkPill?.background = pillDrawable(if (pillEnabled) primaryColor() else dimColor(primaryColor()))
         checkView?.let {
             it.isEnabled = pillEnabled
             it.text = if (checking) "Checking" else "Check"
-            it.setPadding(if (checking) dp(5f) else dp(10f), dp(5f), dp(10f), dp(5f))
+            it.setPadding(if (checking) dp(4f) else dp(8f), dp(4f), dp(8f), dp(4f))
         }
         checkSpinner?.visibility = if (checking) View.VISIBLE else View.GONE
         arrowView?.visibility = if (checking) View.GONE else View.VISIBLE
