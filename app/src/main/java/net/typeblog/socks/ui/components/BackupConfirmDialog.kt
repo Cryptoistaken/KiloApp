@@ -1,6 +1,7 @@
 package net.typeblog.socks.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -282,7 +283,12 @@ private fun StatRow(label: String, incoming: Int, current: Int) {
             textAlign = TextAlign.End,
             modifier = Modifier.width(COL_NOW)
         )
-        DeltaChip(delta)
+        Box(
+            modifier = Modifier.width(COL_DELTA),
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            DeltaChip(delta)
+        }
     }
 }
 
@@ -305,14 +311,13 @@ private fun DeltaChip(delta: Int) {
     }
     Surface(
         shape = RoundedCornerShape(999.dp),
-        color = tint.copy(alpha = 0.14f),
-        modifier = Modifier.width(COL_DELTA)
+        color = tint.copy(alpha = 0.14f)
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
             color = tint,
-            modifier = Modifier.padding(vertical = 2.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             textAlign = TextAlign.Center
         )
     }
