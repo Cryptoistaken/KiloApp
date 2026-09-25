@@ -300,7 +300,7 @@ internal fun MethodSheet(counts: List<MethodCount>, onPick: (String) -> Unit) {
         )
     }
     LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-        items(counts) { m ->
+        items(counts, key = { it.method }) { m ->
             Row(
                 modifier = Modifier.fillMaxWidth().clickable(onClick = { onPick(m.method) }).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -355,7 +355,7 @@ internal fun CountrySheet(
         )
     }
     LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-        items(rows) { r ->
+        items(rows, key = { it.country.prefix }) { r ->
             Row(
                 modifier = Modifier.fillMaxWidth().clickable(onClick = { onPick(r.country) }).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically

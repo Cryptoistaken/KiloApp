@@ -442,7 +442,7 @@ internal fun StatsPage(
         if (byCty.isEmpty()) {
             item { Text("None", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
-            items(byCty.entries.sortedByDescending { it.value.size }) { (name, list) ->
+            items(byCty.entries.sortedByDescending { it.value.size }, key = { it.key }) { (name, list) ->
                 Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(text = list.firstOrNull()?.flag ?: "", fontSize = 20.sp, modifier = Modifier.width(28.dp))
@@ -478,7 +478,7 @@ internal fun StatsPage(
         if (recent.isEmpty()) {
             item { Text("None", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
-            items(recent) { (n, m) ->
+            items(recent, key = { item -> "${item.first.id}:${item.second.at}:${item.second.code}" }) { (n, m) ->
                 Row(
                     modifier = Modifier.fillMaxWidth().clickable { onCopy(m.code) }.padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
