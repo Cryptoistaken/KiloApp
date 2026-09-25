@@ -88,31 +88,42 @@ class SheetBubbleCoordinator(context: Context) {
     }
 
     /**
-     * File-scoped UID-liveness sweep over every row, mirroring the UID phase
-     * of SheetStore.runCheck (dead wins, live never downgrades eligible,
-     * offline falls back to the format heuristic). Check details are saved
-     * behind the dot popup like the in-app check.
+     * File-scoped check over every row, mirroring SheetStore.runCheck
+     * phase by phase (UID liveness, then PAGE Simple/Advanced sweeps),
+     * gated by the same toggles. Dead wins, live never downgrades
+     * eligible, offline falls back to the format heuristic. One persist
+     * (one undo entry); details saved behind the dot popup like in-app.
+     * Phase bodies keep base indent so the mirrored store logic diffs
+     * cleanly; the if-gates only wrap them.
      */
-    fun checkFile(fileId: String): SheetBubbleCheckResult {
+    fun checkFile(
+        fileId: String,
+        uidOn: Boolean = true,
+        simpleOn: Boolean = false,
+        advancedOn: Boolean = false
+    ): SheetBubbleCheckResult {
         val file = validFile(fileId)
             ?: return SheetBubbleCheckResult(null, false, 0, 0)
         val cols = file.preset.columns
         val rows = rowsFor(fileId)
         val before = rows.map { it.copy() }
+        val now = System.currentTimeMillis()
+        val checks = mutableMapOf<Int, RowCheck>()
+        val reqs = mutableMapOf<Int, MutableList<CheckReq>>()
+        val changed = linkedSetOf<Int>()
+        var valid = 0
+        var dead = 0
+        var eligible = 0
+        // 1. UID liveness: one batched direct request (worker checkUids).
+        if (uidOn) {
         val targets = rows.filter { it.isData(cols) && !it.locked && effUid(it).isNotEmpty() }
-        if (targets.isEmpty()) return SheetBubbleCheckResult(load(fileId), false, 0, 0)
+        if (targets.isNotEmpty()) {
         val batch = try {
             SheetChecker.checkUids(targets.map { effUid(it) }.distinct())
         } catch (_: Exception) {
             null
         }
         val verdict = batch?.dead
-        var valid = 0
-        var dead = 0
-        val now = System.currentTimeMillis()
-        val checks = mutableMapOf<Int, RowCheck>()
-        val reqs = mutableMapOf<Int, MutableList<CheckReq>>()
-        val changed = linkedSetOf<Int>()
         rows.forEachIndexed { index, r ->
             if (!r.isData(cols) || r.locked) return@forEachIndexed
             if (r.cookies.isNotEmpty() && effUid(r).isNotEmpty()) {
@@ -150,6 +161,74 @@ class SheetBubbleCoordinator(context: Context) {
                 }
             }
         }
+        }
+        }
+        // 2. Page sweeps: direct per-row scrapes, sequential like the
+        // worker (first 25 candidates per run to avoid rate limits).
+        // Eligible rows are never swept again — once eligible, only a
+        // dead UID verdict (above) can move them. With UID off, fresh
+        // unchecked rows are swept directly so a new cookie is still
+        // page-checked.
+        if (file.preset == SheetPreset.PAGE && (simpleOn || advancedOn)) {
+        val cands = rows.filter { r ->
+            r.isData(cols) && !r.locked && !r.approved && !r.hold && !r.dead &&
+                "c_user=" in r.cookies && effUid(r).isNotEmpty() &&
+                (r.status == "good" || (!uidOn && (r.status.isEmpty() || r.status == "pending")))
+        }.take(25)
+        for (r in cands) {
+            try {
+                if (simpleOn) {
+                    val (res, traces) = SheetChecker.pageSimple(r.cookies)
+                    val base = checks.getOrPut(r.rowIdx) { RowCheck(checkedAt = now) }
+                    checks[r.rowIdx] = base.copy(
+                        checkedAt = now,
+                        simplePage = res.pageName, simpleNumber = res.linkedNumber,
+                        simpleError = res.error
+                    )
+                    for (t in traces) {
+                        reqs.getOrPut(r.rowIdx) { mutableListOf() }.add(
+                            t.toCheckReq(
+                                res.pageName?.let { "Page \"$it\"" }
+                                    ?: res.error ?: "No page"
+                            )
+                        )
+                    }
+                    if (res.error == null && res.eligible) {
+                        rows[r.rowIdx] = rows[r.rowIdx].copy(status = "eligible")
+                        changed += r.rowIdx
+                        eligible++
+                    }
+                } else {
+                    val (res, traces) = SheetChecker.pageAdvanced(r.cookies)
+                    val base = checks.getOrPut(r.rowIdx) { RowCheck(checkedAt = now) }
+                    checks[r.rowIdx] = base.copy(
+                        checkedAt = now,
+                        advEligible = res.eligible,
+                        advPage = res.pageName, advNumber = res.linkedNumber,
+                        advBan = res.banReason, advError = res.error
+                    )
+                    for (t in traces) {
+                        reqs.getOrPut(r.rowIdx) { mutableListOf() }.add(
+                            when (t.kind) {
+                                "graphql" -> t.toCheckReq(
+                                    if (res.eligible) "Eligible"
+                                    else (res.error ?: res.banReason ?: "Not eligible")
+                                )
+                                else -> t.toCheckReq(t.error ?: "Page shell")
+                            }
+                        )
+                    }
+                    if (res.error == null && res.eligible) {
+                        rows[r.rowIdx] = rows[r.rowIdx].copy(status = "eligible")
+                        changed += r.rowIdx
+                        eligible++
+                    }
+                }
+            } catch (_: Exception) {
+                // Challenges/rate limits: leave the row, try next.
+            }
+        }
+        }
         if (changed.isNotEmpty()) {
             persistBubbleRows(file, before, rows, changed, "check", pushRedo = false)
             if (checks.isNotEmpty() || reqs.isNotEmpty()) {
@@ -161,7 +240,7 @@ class SheetBubbleCoordinator(context: Context) {
             store.reloadOpenFileIfMatches(fileId)
             store.refresh()
         }
-        return SheetBubbleCheckResult(load(fileId), changed.isNotEmpty(), valid, dead)
+        return SheetBubbleCheckResult(load(fileId), changed.isNotEmpty(), valid, dead, eligible)
     }
 
     fun capture(
@@ -382,5 +461,6 @@ data class SheetBubbleCheckResult(
     val snapshot: SheetBubbleSnapshot?,
     val checked: Boolean,
     val valid: Int,
-    val dead: Int
+    val dead: Int,
+    val eligible: Int = 0
 )

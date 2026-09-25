@@ -1946,34 +1946,48 @@ class FloatingControlService : Service() {
         }
     }
 
-    /** Bubble Check: full in-app check when the file is open, else guidance. */
+    /** Bubble Check: file-scoped and toggle-honoring — runs the same
+     * phases as the in-app check (UID liveness, then PAGE Simple /
+     * Advanced sweeps) through the coordinator, so it never leaves the
+     * popup and never needs the file open in-app. */
+    private var bubbleCheckRunning = false
+
     private fun runSheetBubbleCheck() {
+        val generation = sheetBubbleGeneration
         val fileId = pendingSheetFileId ?: return
-        val store = net.typeblog.socks.util.sheet.SheetStore.get(this)
-        val open = store.openFile.value
-        if (open?.id != fileId) {
-            toast("Open the file to run check.")
-            openSheetTab()
-            return
-        }
-        if (store.checking.value) return
+        if (bubbleCheckRunning) return
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         val uidOn = prefs.getBoolean("ss_autoCheck", true)
         val simpleOn = prefs.getBoolean("ss_pageSimple", false)
         val advancedOn = prefs.getBoolean("ss_pageAdvanced", false)
-        val isPage = open.preset == net.typeblog.socks.util.sheet.SheetPreset.PAGE
+        if (!uidOn && !simpleOn && !advancedOn) {
+            toast("Turn on a check in the menu.")
+            return
+        }
+        bubbleCheckRunning = true
         syncSheetToolbar(sheetOverlaySnapshot(), checking = true)
-        store.runCheck(uidOn, simpleOn, advancedOn, isPage) { valid, dead ->
-            sheetBubbleScope.launch {
-                val snap = withContext(Dispatchers.IO) {
-                    sheetBubbleCoordinator.load(fileId)
+        sheetBubbleScope.launch {
+            val check = withContext(Dispatchers.IO) {
+                sheetBubbleCoordinator.checkFile(fileId, uidOn, simpleOn, advancedOn)
+            }
+            bubbleCheckRunning = false
+            if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
+            if (check.snapshot != null) {
+                lastSheetSnapshot = check.snapshot
+                sheetOverlay?.render(check.snapshot)
+                syncSheetToolbar(check.snapshot)
+            } else {
+                syncSheetToolbar(sheetOverlaySnapshot())
+            }
+            if (!check.checked) {
+                toast("Nothing to check.")
+            } else {
+                val parts = buildList {
+                    if (check.valid > 0) add("Alive ${check.valid}")
+                    if (check.dead > 0) add("Dead ${check.dead}")
+                    if (check.eligible > 0) add("Eligible ${check.eligible}")
                 }
-                if (sheetOverlay?.isShowing() == true && snap != null) {
-                    lastSheetSnapshot = snap
-                    sheetOverlay?.render(snap)
-                    syncSheetToolbar(snap)
-                }
-                toast(checkCounts(valid, dead))
+                toast(if (parts.isEmpty()) "Check done." else parts.joinToString(", ") + ".")
             }
         }
     }

@@ -359,9 +359,25 @@ class SheetMenuOverlay(
             it.alpha = if (canRedo && !checking) 1f else 0.38f
         }
         val snap = lastSnapshot
-        val checkable = snap != null && snap.rows.any { r ->
-            r.isData(snap.file.preset.columns) && !r.locked &&
-                (r.uid.isNotEmpty() || net.typeblog.socks.util.sheet.extractCUser(r.cookies) != null)
+        // Toggle-honoring enable rule (same targets the check itself sweeps):
+        // UID arms on UID/c_user rows while its toggle is on; Simple /
+        // Advanced arm on PAGE sweep candidates while either is on.
+        val prefs = try { menuPrefs() } catch (_: Exception) { null }
+        val uidOn = prefs?.getBoolean("ss_autoCheck", true) ?: true
+        val pageOn = (prefs?.getBoolean("ss_pageSimple", false) ?: false) ||
+            (prefs?.getBoolean("ss_pageAdvanced", false) ?: false)
+        val checkable = snap != null && run {
+            val cols = snap.file.preset.columns
+            val uidTargets = snap.rows.any { r ->
+                r.isData(cols) && !r.locked &&
+                    (r.uid.isNotEmpty() || "c_user=" in r.cookies)
+            }
+            val pageTargets = snap.file.preset == SheetPreset.PAGE && pageOn &&
+                snap.rows.any { r ->
+                    r.isData(cols) && !r.locked && !r.approved && !r.hold && !r.dead &&
+                        "c_user=" in r.cookies
+                }
+            (uidOn && uidTargets) || pageTargets
         }
         // In-app split button parity: the whole joined pill dims when there
         // is nothing checkable or a check is running; the left half runs the
