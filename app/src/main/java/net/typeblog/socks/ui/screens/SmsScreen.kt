@@ -52,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +62,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -75,11 +83,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.painterResource
 import androidx.core.content.ContextCompat
+import net.typeblog.socks.ui.components.rememberPref
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.delay
 import net.typeblog.socks.R
 import net.typeblog.socks.ui.components.SsBanner
 import net.typeblog.socks.ui.components.SsBannerStatus
+import net.typeblog.socks.util.Constants.PREF_SMS_LAST_RANGE
 import net.typeblog.socks.util.SMS_EXPIRE_SEC
 import net.typeblog.socks.util.SmsCountry
 import net.typeblog.socks.util.SmsMsg
@@ -90,11 +100,11 @@ import net.typeblog.socks.util.smsTimeAgo
 import java.util.Calendar
 import kotlin.math.roundToInt
 
-private const val RANGE_KEY = "kilo_range"
 private val CodeGreen = Color(0xFF16A34A)
 private val Amber = Color(0xFFD97706)
 
-private fun mmss(leftSec: Long): String {    val m = (leftSec / 60).toString().padStart(2, '0')
+private fun mmss(leftSec: Long): String {
+    val m = (leftSec / 60).toString().padStart(2, '0')
     val s = (leftSec % 60).toString().padStart(2, '0')
     return "$m:$s"
 }
@@ -135,10 +145,13 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
 
-    var page by remember { mutableStateOf(0) } // 0 main, 1 nums, 2 feed, 3 stats
-    var rangeText by remember { mutableStateOf(prefs.getString(RANGE_KEY, "") ?: "") }
-    var search by remember { mutableStateOf("") }
-    var numTab by remember { mutableStateOf(0) } // 0 active, 1 expired
+    var page by rememberSaveable { mutableStateOf(0) }
+    val rangeState = rememberPref(prefs, PREF_SMS_LAST_RANGE) {
+        it.getString(PREF_SMS_LAST_RANGE, null) ?: it.getString("kilo_range", "") ?: ""
+    }
+    val rangeText = rangeState.value
+    var search by rememberSaveable { mutableStateOf("") }
+    var numTab by rememberSaveable { mutableStateOf(0) }
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var copied by remember { mutableStateOf<String?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -162,10 +175,15 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     }
 
     val now = SmsWatcher.now
+    val revision = SmsWatcher.revision
     val mine = SmsWatcher.mine
     val expired = SmsWatcher.expired
     val feed = SmsWatcher.feed
     val countries = SmsWatcher.countries
+    val mineSnapshot = remember(revision) { mine.toList() }
+    val expiredSnapshot = remember(revision) { expired.toList() }
+    val feedSnapshot = remember(revision) { feed.toList() }
+    val countriesSnapshot = remember(revision) { countries.toList() }
     val busy = SmsWatcher.busy
     val error = SmsWatcher.error
     val errorAt = SmsWatcher.errorAt
@@ -201,18 +219,18 @@ fun SmsScreen(modifier: Modifier = Modifier) {
 
     // Close the item sheet if its number just expired.
     val open = (sheet as? Sheet.Item)?.num
-    LaunchedEffect(mine.size, expired.size) {
-        if (open != null && mine.none { it.id == open.id }) sheet = null
+    LaunchedEffect(mineSnapshot, expiredSnapshot, open?.id) {
+        if (open != null && mineSnapshot.none { it.id == open.id }) sheet = null
     }
 
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (page) {
             0 -> MainPage(
-                now = now, mine = mine, expired = expired,
+                now = now, mine = mineSnapshot, expired = expiredSnapshot,
                 rangeText = rangeText,
                 onRange = {
-                    rangeText = it
-                    prefs.edit().putString(RANGE_KEY, it).apply()
+                    rangeState.value = it
+                    prefs.edit().putString(PREF_SMS_LAST_RANGE, it).apply()
                 },
                 onGet = ::onGet,
                 busy = busy,
@@ -225,7 +243,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 copied = copied,
             )
             1 -> NumsPage(
-                now = now, mine = mine, expired = expired,
+                now = now, mine = mineSnapshot, expired = expiredSnapshot,
                 search = search, onSearch = { search = it },
                 numTab = numTab, onTab = { numTab = it },
                 onBack = { page = 0 },
@@ -245,14 +263,14 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 copied = copied,
             )
             2 -> FeedPage(
-                now = now, mine = mine, expired = expired,
+                now = now, mine = mineSnapshot, expired = expiredSnapshot,
                 onBack = { page = 0 },
                 onOpen = { sheet = Sheet.Item(it) },
                 onRegen = ::onRegen,
                 onCopy = ::tapCopy,
                 copied = copied,
             )
-            3 -> StatsPage(now = now, mine = mine, expired = expired, onBack = { page = 0 },
+            3 -> StatsPage(now = now, mine = mineSnapshot, expired = expiredSnapshot, onBack = { page = 0 },
                 onCopy = ::tapCopy, copied = copied)
         }
         if (error.isNotEmpty() && now - errorAt < 5000) {
@@ -265,8 +283,8 @@ fun SmsScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    val methodCounts = remember(feed.size) {
-        val byMethod = feed.groupBy { it.method }
+    val methodCounts = remember(feedSnapshot) {
+        val byMethod = feedSnapshot.groupBy { it.method }
         val order = listOf("create", "forgot")
         ((order.filter { byMethod.containsKey(it) }) + (byMethod.keys - order.toSet()).sorted())
             .map { m ->
@@ -284,9 +302,9 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                     onPick = { m -> sheet = Sheet.Countries(m) },
                 )
                 is Sheet.Countries -> {
-                    val rows = remember(sh.method, countries.size, feed.size) {
-                        countries.map { c ->
-                            val hits = feed.count { it.method == sh.method && it.range.startsWith(c.prefix) }
+                    val rows = remember(sh.method, countriesSnapshot, feedSnapshot) {
+                        countriesSnapshot.map { c ->
+                            val hits = feedSnapshot.count { it.method == sh.method && it.range.startsWith(c.prefix) }
                             CountryRow(c, hits)
                         }.sortedByDescending { it.hits }
                     }
@@ -462,11 +480,12 @@ private fun MainPage(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    val all = mine + expired
-    val recent = all.flatMap { n -> n.msgs.map { n to it } }.sortedByDescending { it.second.at }
+    val all = remember(mine, expired) { mine + expired }
+    val recent = remember(all) { all.flatMap { n -> n.msgs.map { n to it } }.sortedByDescending { it.second.at } }
     val otpCount = all.sumOf { it.msgs.size }
     val total = all.size
     val pct = if (total == 0) 0 else (mine.count { it.code != null } + expired.count { it.code != null }) * 100 / total
+    val lastNums = remember(mine, expired) { (mine + expired).sortedByDescending { it.born }.take(10) }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         item {
             Text(
@@ -500,7 +519,6 @@ private fun MainPage(
             }
             SectionHead("My numbers", onOpenNums)
         }
-        val lastNums = (mine + expired).sortedByDescending { it.born }.take(10)
         if (lastNums.isEmpty()) {
             item {
                 Text(
@@ -526,7 +544,7 @@ private fun MainPage(
                 )
             }
         } else {
-            items(recent.take(3)) { (n, m) ->
+            items(recent.take(3), key = { item -> "${item.first.id}:${item.second.at}:${item.second.code}" }) { (n, m) ->
                 ReceivedRow(n, m, now, onOpenMine, onRegen, onCopy, copied)
             }
         }
@@ -543,7 +561,28 @@ private fun SwipeBox(
     content: @Composable () -> Unit,
 ) {
     var dx by remember { mutableStateOf(0f) }
-    Box(Modifier.fillMaxWidth().padding(bottom = padBottom).clip(RoundedCornerShape(12.dp))) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = padBottom)
+            .clip(RoundedCornerShape(12.dp))
+            .semantics {
+                role = Role.Button
+                contentDescription = "Open SMS number"
+                onClick(label = "Open SMS number") {
+                    onRight()
+                    true
+                }
+                customActions = buildList {
+                    if (onLeft != null) {
+                        add(CustomAccessibilityAction("Regenerate number") {
+                            onLeft.invoke()
+                            true
+                        })
+                    }
+                }
+            }
+    ) {
         if (dx != 0f) {
             Row(
                 modifier = Modifier.matchParentSize()
@@ -773,7 +812,7 @@ private fun FeedPage(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    val received = remember(mine.size, expired.size) {
+    val received = remember(mine, expired) {
         (mine + expired).flatMap { n -> n.msgs.map { n to it } }
             .sortedByDescending { it.second.at }
     }
@@ -784,7 +823,7 @@ private fun FeedPage(
             Text("No OTPs yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         LazyColumn(Modifier.fillMaxSize()) {
-            items(received.take(50)) { (n, m) ->
+            items(received.take(50), key = { item -> "${item.first.id}:${item.second.at}:${item.second.code}" }) { (n, m) ->
                 ReceivedRow(n, m, now, onOpen, onRegen, onCopy, copied)
             }
         }
@@ -800,7 +839,7 @@ private fun StatsPage(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    val all = remember(mine.size, expired.size) { mine + expired }
+    val all = remember(mine, expired) { mine + expired }
     val otpCount = all.sumOf { it.msgs.size }
     val withCode = all.count { it.code != null }
     val pct = if (all.isEmpty()) 0 else withCode * 100 / all.size

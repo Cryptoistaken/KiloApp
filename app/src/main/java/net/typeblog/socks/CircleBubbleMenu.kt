@@ -242,6 +242,12 @@ class CircleBubbleMenu(
                 // Touch equivalent of the mockup's whileHover scale 1.1,
                 // duration 0.1s, delay 0.
                 if (i == 1) {
+                    contentDescription = "SMS numbers"
+                    setOnClickListener { onSmsTap() }
+                    setOnLongClickListener {
+                        onSmsLongPress()
+                        true
+                    }
                     // SMS mirrors the HTML MenuItem tap contract: 550ms
                     // long-press opens the popup, 300ms double-tap window
                     // regenerates, single tap is delayed 300ms so a double

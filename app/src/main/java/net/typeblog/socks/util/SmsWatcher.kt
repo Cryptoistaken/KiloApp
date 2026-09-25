@@ -269,11 +269,7 @@ private val PrefixIsoFull = mapOf(
     "998" to "UZ",
 )
 
-fun smsFlagFor(iso: String): String {
-    if (iso.length != 2) return ""
-    return iso.uppercase().map { 0x1F1E6 + (it.code - 'A'.code) }
-        .map { Character.toChars(it).concatToString() }.joinToString("")
-}
+fun smsFlagFor(iso: String): String = if (iso.length == 2) iso.uppercase(Locale.US) else ""
 
 private fun isoForPrefix(prefix: String): String? {
     for (len in 4 downTo 1) {
@@ -284,15 +280,6 @@ private fun isoForPrefix(prefix: String): String? {
     return null
 }
 
-fun smsNameFlagForIso(iso: String): Pair<String, String> {
-    if (iso.length != 2) return iso to ""
-    val name = try {
-        Locale("", iso).displayCountry.ifEmpty { iso }
-    } catch (e: Exception) {
-        iso
-    }
-    return name to smsFlagFor(iso)
-}
 
 fun smsCountryForPrefix(prefix: String): Pair<String, String> {
     val iso = isoForPrefix(prefix) ?: return "Unknown" to ""
@@ -304,13 +291,6 @@ fun smsCountryForPrefix(prefix: String): Pair<String, String> {
     return name to smsFlagFor(iso)
 }
 
-fun smsMaskNum(full: String): String {
-    val digits = full.filter { it.isDigit() }
-    if (digits.length < 5) return "+$full"
-    val i = digits.length / 2
-    val m = digits.substring(0, i) + "X" + digits.substring(i + 1)
-    return "+$m"
-}
 
 fun smsTimeAgo(ts: Long, now: Long): String {
     val s = ((now - ts) / 1000).coerceAtLeast(0)
@@ -344,6 +324,7 @@ object SmsWatcher {
     var busy by mutableStateOf(false)
     var error by mutableStateOf("")
     var errorAt by mutableLongStateOf(0L)
+    var revision by mutableLongStateOf(0L)
 
     // Last time the push stream proved itself useful. Heartbeats alone
     // must NOT suppress the poll fallback for long: a connection can carry
@@ -447,6 +428,7 @@ object SmsWatcher {
         waitingNumbers.value = mine
             .filter { it.code == null && t - it.born < SMS_EXPIRE_SEC * 1000 }
             .map { it.full }
+        revision++
     }
 
     fun resumeWaiting() {
@@ -504,6 +486,7 @@ object SmsWatcher {
             if (result != null) {
                 feed.clear()
                 feed.addAll(result)
+                revision++
             } else if (feed.isEmpty()) {
                 fail("Could not load feed")
             }
@@ -516,6 +499,7 @@ object SmsWatcher {
                     countries.add(SmsCountry(name, flag, mc.prefix, count, mc.range))
                 }
                 countries.sortByDescending { it.count }
+                revision++
             }
         }
     }

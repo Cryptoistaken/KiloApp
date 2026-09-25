@@ -29,6 +29,7 @@ import android.widget.TextView
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import net.typeblog.socks.util.SmsNum
 import net.typeblog.socks.util.SmsWatcher
+import net.typeblog.socks.util.smsIsRangePat
 import net.typeblog.socks.util.ThemeMode
 
 /**
@@ -76,6 +77,16 @@ class SmsMenuOverlay(
     private var genSpin: ProgressBar? = null
     private var closeBtn: ImageButton? = null
     private var generating = false
+    private val rowViews = mutableMapOf<Long, RowViews>()
+
+    private data class RowViews(
+        val root: View,
+        val flag: TextView,
+        val name: TextView,
+        val time: TextView,
+        val spin: ProgressBar,
+        val code: TextView
+    )
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
 
@@ -154,7 +165,9 @@ class SmsMenuOverlay(
         input.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) showKeyboard(input)
         }
+        genT.contentDescription = "Generate number"
         genT.setOnClickListener { submitRange() }
+        close.contentDescription = "Close"
         close.setOnClickListener {
             input.setText("")
             hide()
@@ -262,7 +275,7 @@ class SmsMenuOverlay(
 
     /** X swaps to the Gen pill as soon as the range holds any digit. */
     private fun syncGenButton(text: String) {
-        val valid = text.filter { it.isDigit() }.isNotEmpty()
+        val valid = smsIsRangePat(text)
         genWrap?.visibility = if (valid) View.VISIBLE else View.GONE
         closeBtn?.visibility = if (valid) View.GONE else View.VISIBLE
     }
@@ -271,6 +284,7 @@ class SmsMenuOverlay(
     private fun submitRange() {
         if (generating || !isShowing()) return
         val raw = searchInput?.text?.toString() ?: ""
+        if (!smsIsRangePat(raw)) return
         // Full typed/pasted text (e.g. 23762XXX) stays visible in the field
         // like the HTML mockup — only digits feed the provision prefix.
         val digits = raw.filter { it.isDigit() }
@@ -381,44 +395,70 @@ class SmsMenuOverlay(
     }
 
     private fun render(list: LinearLayout, numbers: List<SmsNum>) {
-        list.removeAllViews()
+        val activeIds = numbers.mapTo(HashSet()) { it.id }
+        rowViews.keys.filter { it !in activeIds }.forEach { id ->
+            rowViews.remove(id)?.root?.let(list::removeView)
+        }
+        numbers.forEachIndexed { index, n ->
+            val views = rowViews.getOrPut(n.id) { makeRow(n) }
+            if (list.getChildAt(index) !== views.root) {
+                list.removeView(views.root)
+                list.addView(views.root, index)
+            }
+            updateRow(views, n)
+        }
+        while (list.childCount > numbers.size) {
+            list.removeViewAt(list.childCount - 1)
+        }
         val empty = numbers.isEmpty()
         emptyView?.visibility = if (empty) View.VISIBLE else View.GONE
         scrollView?.visibility = if (empty) View.GONE else View.VISIBLE
-        numbers.forEach { n -> list.addView(makeRow(n)) }
     }
 
-    private fun makeRow(n: SmsNum): View {
+    private fun makeRow(n: SmsNum): RowViews {
         val row = LayoutInflater.from(activeInflateContext).inflate(R.layout.bubble_sms_row, listView, false)
-        row.findViewById<TextView>(R.id.sms_row_flag).text = n.flag
-        row.findViewById<TextView>(R.id.sms_row_name).text = n.display
-        val timeView = row.findViewById<TextView>(R.id.sms_row_time)
-        val spin = row.findViewById<ProgressBar>(R.id.sms_row_spin)
-        val codeView = row.findViewById<TextView>(R.id.sms_row_code)
+        val views = RowViews(
+            root = row,
+            flag = row.findViewById(R.id.sms_row_flag),
+            name = row.findViewById(R.id.sms_row_name),
+            time = row.findViewById(R.id.sms_row_time),
+            spin = row.findViewById(R.id.sms_row_spin),
+            code = row.findViewById(R.id.sms_row_code),
+        )
         try {
-            spin.indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#0C0C14"))
+            views.spin.indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#0C0C14"))
         } catch (_: Exception) {
         }
-        if (n.code != null) {
-            timeView.visibility = View.GONE
-            spin.visibility = View.GONE
-            codeView.visibility = View.VISIBLE
-            codeView.text = n.code
+        return views
+    }
+
+    private fun updateRow(views: RowViews, n: SmsNum) {
+        val code = n.code
+        views.flag.text = n.flag
+        views.name.text = n.display
+        if (code != null) {
+            views.time.visibility = View.GONE
+            views.spin.visibility = View.GONE
+            views.code.visibility = View.VISIBLE
+            views.code.text = code
         } else {
-            timeView.visibility = View.VISIBLE
-            timeView.text = elapsed(n.born)
-            spin.visibility = View.VISIBLE
-            codeView.visibility = View.GONE
+            views.time.visibility = View.VISIBLE
+            views.time.text = elapsed(n.born)
+            views.spin.visibility = View.VISIBLE
+            views.code.visibility = View.GONE
         }
-        // Quick-access popup: tap copies the code when one arrived,
-        // else the number while waiting. Never the full message.
-        row.setOnClickListener {
-            onNumberCopy(n.code ?: n.display)
+        views.root.contentDescription = if (code != null) {
+            "Copy code $code"
+        } else {
+            "Copy number ${n.display}"
         }
-        codeView.setOnClickListener {
-            n.code?.let { onNumberCopy(it) }
-        }
-        return row
+        views.root.isClickable = true
+        views.root.isFocusable = true
+        views.root.setOnClickListener { onNumberCopy(code ?: n.display) }
+        views.code.isClickable = code != null
+        views.code.isFocusable = code != null
+        views.code.contentDescription = if (code != null) "Copy code $code" else null
+        views.code.setOnClickListener { code?.let(onNumberCopy) }
     }
 
     private fun elapsed(born: Long): String {
@@ -447,6 +487,7 @@ class SmsMenuOverlay(
         panelView = null
         scrollView = null
         listView = null
+        rowViews.clear()
         emptyView = null
         searchInput = null
         genWrap = null
