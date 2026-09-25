@@ -120,29 +120,26 @@ fun BackupConfirmDialog(
 
                 // Incoming beside current, with the difference made explicit.
                 Column(modifier = Modifier.padding(top = 16.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Spacer(modifier = Modifier.weight(1f))
                         Text(
-                            text = "",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = "IN BACKUP",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.width(64.dp)
-                        )
-                        Text(
-                            text = "IN APP",
+                            text = "BACKUP",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.width(52.dp)
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.width(COL_BACKUP)
                         )
                         Text(
-                            text = "",
+                            text = "NOW",
                             style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.width(46.dp)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.width(COL_NOW)
                         )
+                        Spacer(modifier = Modifier.width(COL_DELTA))
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     StatRow("Files", staged.fileCount, staged.currentFiles)
@@ -275,17 +272,28 @@ private fun StatRow(label: String, incoming: Int, current: Int) {
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.width(64.dp)
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(COL_BACKUP)
         )
         Text(
             text = current.toString(),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(52.dp)
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(COL_NOW)
         )
         DeltaChip(delta)
     }
 }
+
+/**
+ * Numeric columns are fixed width and right aligned so the figures line up and
+ * can be compared down the column. The headers are short for the same reason:
+ * "IN BACKUP" is wider than its column and ran into the next one.
+ */
+private val COL_BACKUP = 58.dp
+private val COL_NOW = 44.dp
+private val COL_DELTA = 48.dp
 
 /** Plain ASCII signs, not arrows: user-visible text stays ASCII. */
 @Composable
@@ -298,7 +306,7 @@ private fun DeltaChip(delta: Int) {
     Surface(
         shape = RoundedCornerShape(999.dp),
         color = tint.copy(alpha = 0.14f),
-        modifier = Modifier.width(46.dp)
+        modifier = Modifier.width(COL_DELTA)
     ) {
         Text(
             text = text,
