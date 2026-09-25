@@ -143,8 +143,10 @@ class SheetStore private constructor(context: Context) {
         val file = try {
             db.getFile(id)
         } catch (e: Exception) {
+            // A read failure is not the same as a deleted file: keep the
+            // selection so a transient error cannot wipe the user's choice.
             Log.e(TAG, "Failed to resolve active bubble Sheet file $id", e)
-            null
+            return@locked null
         }
         if (file == null || file.archived) {
             bubbleFilePrefs.edit().remove(PREF_SHEET_BUBBLE_FILE_ID).apply()
@@ -200,7 +202,7 @@ class SheetStore private constructor(context: Context) {
         persistRowsLocked(
             fileId = file.id,
             previous = previous,
-            rows = topUp(target, file.preset),
+            rows = topUp(target),
             history = SheetHistoryAction.UNDO,
             expectedSequence = file.seq,
             expectedGeneration = openGeneration.get()
@@ -214,7 +216,7 @@ class SheetStore private constructor(context: Context) {
         persistRowsLocked(
             fileId = file.id,
             previous = previous,
-            rows = topUp(target, file.preset),
+            rows = topUp(target),
             history = SheetHistoryAction.REDO,
             expectedSequence = file.seq,
             expectedGeneration = openGeneration.get()
@@ -371,7 +373,7 @@ class SheetStore private constructor(context: Context) {
     }
 
     private fun loadOpenSnapshot(file: SheetFile): OpenSnapshot {
-        val rows = topUp(db.loadRows(file.id), file.preset)
+        val rows = topUp(db.loadRows(file.id))
         val dups = try {
             db.crossDupCells(file.id, rows)
         } catch (e: Exception) {
@@ -408,14 +410,18 @@ class SheetStore private constructor(context: Context) {
     }
 
 
-    private fun topUp(rows: List<SheetRow>, preset: SheetPreset): List<SheetRow> {
+    /**
+     * Pad an open grid out to the row cap so the user always has blank rows to
+     * type into. The lookahead must never exceed [MAX_GRID_ROWS]: the
+     * persistRowsLocked guard rejects larger lists, so padding past the cap
+     * would make every later row mutation fail.
+     */
+    private fun topUp(rows: List<SheetRow>): List<SheetRow> {
         val normalized = meaningfulSheetRows(rows).mapIndexed { index, row ->
             if (row.rowIdx == index) row else row.copy(rowIdx = index)
         }
-        val lastData = normalized.indexOfLast { it.isData(preset.columns) }
-        val want = (lastData + 51).coerceAtLeast(MAX_GRID_ROWS)
-        if (normalized.size >= want) return normalized
-        return normalized + (normalized.size until want).map { SheetRow(rowIdx = it) }
+        if (normalized.size >= MAX_GRID_ROWS) return normalized.take(MAX_GRID_ROWS)
+        return normalized + (normalized.size until MAX_GRID_ROWS).map { SheetRow(rowIdx = it) }
     }
 
     private fun normalizedRows(rows: List<SheetRow>): List<SheetRow> =
@@ -473,7 +479,7 @@ class SheetStore private constructor(context: Context) {
             if (openFile.value?.id == fileId &&
                 (expectedGeneration == null || expectedGeneration == openGeneration.get())
             ) {
-                openRows.value = topUp(rows, current.preset)
+                openRows.value = topUp(rows)
             }
             return true
         }
@@ -521,7 +527,7 @@ class SheetStore private constructor(context: Context) {
                 (expectedGeneration == null || expectedGeneration == openGeneration.get())
         if (publish) {
             openFile.value = updated
-            openRows.value = topUp(rows, updated.preset)
+            openRows.value = topUp(rows)
             when {
                 checkDetails != null -> {
                     openChecks.value = checkDetails.checks
@@ -615,7 +621,7 @@ class SheetStore private constructor(context: Context) {
         persistRowsLocked(
             fileId = fileId,
             previous = before,
-            rows = topUp(restored, file.preset),
+            rows = topUp(restored),
             history = SheetHistoryAction.UNDO,
             expectedSequence = file.seq
         )
@@ -649,30 +655,31 @@ class SheetStore private constructor(context: Context) {
         persistRowsLocked(
             fileId = fileId,
             previous = before,
-            rows = topUp(restored, file.preset),
+            rows = topUp(restored),
             history = SheetHistoryAction.REDO,
             expectedSequence = file.seq
         )
     }
 
-    fun replaceRows(fileId: String, rows: List<SheetRow>): Int = locked {
+    /** Rows written, or null when the write could not be persisted. */
+    fun replaceRows(fileId: String, rows: List<SheetRow>): Int? = locked {
         val file = try {
             db.getFile(fileId)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load Sheet file $fileId for replace", e)
             null
-        } ?: return@locked 0
-        if (file.archived) return@locked 0
+        } ?: return@locked null
+        if (file.archived) return@locked null
         if (rows.size > MAX_GRID_ROWS) {
             Log.e(TAG, "Rejected Sheet replace over the $MAX_GRID_ROWS row limit for $fileId")
-            return@locked 0
+            return@locked null
         }
         val bounded = normalizedRows(rows)
         val before = try {
             db.loadRows(fileId)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load rows before replace for $fileId", e)
-            return@locked 0
+            return@locked null
         }
         val saved = meaningfulSheetRows(bounded).size
         if (!persistRowsLocked(
@@ -683,25 +690,26 @@ class SheetStore private constructor(context: Context) {
                 clearChecks = true,
                 expectedSequence = file.seq
             )
-        ) return@locked 0
+        ) return@locked null
         saved
     }
 
-    fun mergeRows(fileId: String, incoming: List<SheetRow>): Int = locked {
+    /** Rows added, 0 when there was genuinely nothing to add, null on failure. */
+    fun mergeRows(fileId: String, incoming: List<SheetRow>): Int? = locked {
         val file = try {
             db.getFile(fileId)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load Sheet file $fileId for merge", e)
             null
-        } ?: return@locked 0
-        if (file.archived) return@locked 0
+        } ?: return@locked null
+        if (file.archived) return@locked null
         val loaded = try {
             db.loadRows(fileId)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load rows before merge for $fileId", e)
-            return@locked 0
+            return@locked null
         }
-        val previous = topUp(loaded, file.preset)
+        val previous = topUp(loaded)
         val current = meaningfulSheetRows(loaded).mapIndexed { index, row ->
             row.copy(rowIdx = index)
         }
@@ -719,7 +727,7 @@ class SheetStore private constructor(context: Context) {
                 clearChecks = reindexed,
                 expectedSequence = file.seq
             )
-        ) return@locked 0
+        ) return@locked null
         addition.size
     }
 
@@ -1016,8 +1024,9 @@ class SheetStore private constructor(context: Context) {
         }
     }
 
-    fun deleteDeadRows(): Int = locked {
-        val file = openFile.value ?: return@locked 0
+    /** Rows removed, 0 when there was nothing to remove, null on failure. */
+    fun deleteDeadRows(): Int? = locked {
+        val file = openFile.value ?: return@locked null
         val before = openRows.value
         val dead = before.filter { it.status == "bad" || it.dead }
         if (dead.isEmpty()) return@locked 0
@@ -1026,13 +1035,13 @@ class SheetStore private constructor(context: Context) {
         val saved = persistRowsLocked(
             fileId = file.id,
             previous = before,
-            rows = topUp(kept, file.preset),
+            rows = topUp(kept),
             history = SheetHistoryAction.PUSH,
             clearChecks = true,
             expectedSequence = file.seq,
             expectedGeneration = openGeneration.get()
         )
-        if (saved) dead.size else 0
+        if (saved) dead.size else null
     }
 
     fun compactRows() = locked {
@@ -1043,7 +1052,7 @@ class SheetStore private constructor(context: Context) {
         persistRowsLocked(
             fileId = file.id,
             previous = before,
-            rows = topUp(data, file.preset),
+            rows = topUp(data),
             history = SheetHistoryAction.PUSH,
             clearChecks = true,
             expectedSequence = file.seq,
@@ -1077,7 +1086,7 @@ class SheetStore private constructor(context: Context) {
         simpleOn: Boolean = false,
         advancedOn: Boolean = false,
         isPageFile: Boolean = false,
-        done: (valid: Int, dead: Int) -> Unit
+        done: (valid: Int, dead: Int, persisted: Boolean) -> Unit
     ) {
         val context = locked {
             if (checking.value) return@locked null
@@ -1098,6 +1107,7 @@ class SheetStore private constructor(context: Context) {
             var valid = 0
             var dead = 0
             var rows = context.rows
+            var saved = true
             val now = System.currentTimeMillis()
             val checks = mutableMapOf<Int, RowCheck>()
             val reqs = mutableMapOf<Int, MutableList<CheckReq>>()
@@ -1253,9 +1263,13 @@ class SheetStore private constructor(context: Context) {
                             )
                         }
                     }
-                    if (!persisted) Log.i(TAG, "Sheet check result was not persisted for ${context.fileId}")
+                    if (!persisted) {
+                        saved = false
+                        Log.i(TAG, "Sheet check result was not persisted for ${context.fileId}")
+                    }
                 }
             } catch (e: Exception) {
+                saved = false
                 Log.e(TAG, "Sheet check failed", e)
             } finally {
                 locked {
@@ -1263,7 +1277,7 @@ class SheetStore private constructor(context: Context) {
                 }
             }
             try {
-                done(valid, dead)
+                done(valid, dead, saved)
             } catch (e: Exception) {
                 Log.e(TAG, "Sheet check completion callback failed", e)
             }

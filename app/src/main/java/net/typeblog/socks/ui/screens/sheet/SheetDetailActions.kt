@@ -52,9 +52,13 @@ internal fun runSheetDetailCheck(
         simpleCheck && !readOnly,
         advancedCheck && !readOnly,
         preset == SheetPreset.PAGE
-    ) { valid, dead ->
+    ) { valid, dead, persisted ->
         scope.launch {
-            toast(appCtx, detailCheckSummary(valid, dead))
+            toast(
+                appCtx,
+                if (persisted) detailCheckSummary(valid, dead)
+                else "Check finished, but the result could not be saved."
+            )
         }
     }
 }
@@ -291,6 +295,7 @@ internal fun importSheetDetailFile(
                 if (mode == "merge") {
                     val incoming = detailUploadedRows(draft.rows, columns)
                     val saved = store.mergeRows(target.id, incoming)
+                        ?: return@withContext "Import failed."
                     "Merged $saved rows."
                 } else {
                     if (draft.rows.size > MAX_GRID_ROWS) {
@@ -300,6 +305,7 @@ internal fun importSheetDetailFile(
                     }
                     val cleaned = detailUploadedRows(draft.rows, columns)
                     val saved = store.replaceRows(target.id, cleaned)
+                        ?: return@withContext "Import failed."
                     "Imported $saved rows."
                 }
             } catch (e: Exception) {
@@ -360,8 +366,11 @@ internal fun deleteSheetDetailDeadRows(
         val removed = withContext(Dispatchers.IO) { store.deleteDeadRows() }
         toast(
             appCtx,
-            if (removed > 0) "Deleted $removed dead row" + if (removed == 1) "." else "s."
-            else "No dead rows to delete."
+            when {
+                removed == null -> "Couldn't delete dead rows. Please try again."
+                removed > 0 -> "Deleted $removed dead row" + if (removed == 1) "." else "s."
+                else -> "No dead rows to delete."
+            }
         )
     }
 }

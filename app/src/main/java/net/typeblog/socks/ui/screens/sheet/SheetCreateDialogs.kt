@@ -441,6 +441,7 @@ fun importDraft(
         )
     }
     val saved = store.replaceRows(created.id, rows)
+        ?: return "Import failed."
     return "Successfully imported $saved rows."
 }
 
