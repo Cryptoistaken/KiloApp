@@ -788,7 +788,7 @@ object SheetBackup {
      * a provider can hand back any name and a spreadsheet app may rewrite one.
      */
     fun parse(bytes: ByteArray): BackupSnapshot {
-        if (isZip(bytes)) {
+        if (isWorkbook(bytes)) {
             return SheetBackupXlsx.read(bytes)
                 ?: throw IllegalArgumentException("Not a KiloApp backup workbook")
         }
@@ -796,7 +796,9 @@ object SheetBackup {
     }
 
     /** Local files every PKZip file starts with, so an xlsx is recognised
-     *  without trusting the name the picker reported. */
-    private fun isZip(bytes: ByteArray): Boolean =
+     *  without trusting the name the picker reported. Public because a
+     *  workbook carries no dump timestamp, and the restore confirmation
+     *  should not claim a date it does not have. */
+    fun isWorkbook(bytes: ByteArray): Boolean =
         bytes.size >= 2 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()
 }

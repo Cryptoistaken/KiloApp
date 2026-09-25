@@ -8,14 +8,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -37,8 +35,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import net.typeblog.socks.R
+import net.typeblog.socks.ui.components.BackupConfirmDialog
 import net.typeblog.socks.ui.components.ProtonSwitch
 import net.typeblog.socks.ui.components.SettingsItem
+import net.typeblog.socks.ui.components.StagedBackup
 import net.typeblog.socks.ui.components.rememberPref
 import net.typeblog.socks.ui.screens.sheet.toast
 import net.typeblog.socks.util.Constants.PREF_BACKUP_DIR
@@ -75,22 +75,50 @@ fun BackupScreen(
     var lastAt by remember { mutableStateOf(SheetBackup.lastAt(context)) }
     var lastSize by remember { mutableStateOf(SheetBackup.lastSize(context)) }
     var lastError by remember { mutableStateOf(SheetBackup.lastError(context)) }
-    // A restore is staged first: the file is parsed and counted before the
-    // user is asked, so the confirmation can say what it will replace.
-    var staged by remember { mutableStateOf<ByteArray?>(null) }
-    var stagedCounts by remember { mutableStateOf<Triple<Int, Int, Int>?>(null) }
+    // A restore is staged first: the file is parsed and counted, and what
+    // the app holds right now is captured alongside, before anyone is asked.
+    var staged by remember { mutableStateOf<StagedBackup?>(null) }
+
+    // Pairs the bytes with the current state, so the dialog can show what
+    // replacing would gain as well as what it would drop.
+    fun stage(
+        bytes: ByteArray,
+        source: String,
+        snap: net.typeblog.socks.util.sheet.SheetBackup.BackupSnapshot
+    ): StagedBackup {
+        val store = SheetStore.get(context)
+        val live = store.files.value + store.archive.value
+        return StagedBackup(
+            bytes = bytes,
+            source = source,
+            // A workbook carries no dump time, and the moment it was read
+            // would look like a fresh backup.
+            takenAt = if (SheetBackup.isWorkbook(bytes)) null else snap.at.takeIf { it > 0L },
+            fileCount = snap.files.size,
+            rowCount = snap.rowCount,
+            checkCount = snap.checks.values.sumOf { it.size },
+            reqCount = snap.reqs.values.sumOf { it.values.sumOf { l -> l.size } },
+            styleCount = snap.styles.values.sumOf { it.size },
+            hiddenCount = snap.hidden.values.sumOf { it.size },
+            txCount = snap.txs.size,
+            profileCount = snap.profileCount,
+            balance = snap.balance,
+            currentFiles = live.size,
+            currentRows = live.sumOf { it.rowCount },
+            currentTxCount = store.txs.value.size
+        )
+    }
 
     // Reads a local generation and stages it behind the same confirmation the
     // file picker uses, so every restore path reports what it will replace.
-    fun stageLocal(read: (Context) -> String?, missing: String) {
+    fun stageLocal(read: (Context) -> String?, missing: String, source: String) {
         scope.launch {
             busy = true
             val local = withContext(Dispatchers.IO) { read(context) }
             val bytes = local?.toByteArray(Charsets.UTF_8)
-            val counts = if (bytes == null) null else withContext(Dispatchers.IO) {
+            val snap = if (bytes == null) null else withContext(Dispatchers.IO) {
                 try {
-                    val s = SheetBackup.parse(bytes)
-                    Triple(s.files.size, s.rowCount, s.profileCount)
+                    SheetBackup.parse(bytes)
                 } catch (_: Exception) {
                     null
                 }
@@ -98,11 +126,8 @@ fun BackupScreen(
             busy = false
             when {
                 bytes == null -> toast(context, missing)
-                counts == null -> toast(context, "That copy could not be read.")
-                else -> {
-                    staged = bytes
-                    stagedCounts = counts
-                }
+                snap == null -> toast(context, "That copy could not be read.")
+                else -> staged = stage(bytes, source, snap)
             }
         }
     }
@@ -128,6 +153,7 @@ fun BackupScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
+        val name = uri.lastPathSegment?.substringAfterLast('/') ?: "the file you picked"
         scope.launch {
             busy = true
             val stagedResult = withContext(Dispatchers.IO) {
@@ -135,8 +161,7 @@ fun BackupScreen(
                     val bytes = context.contentResolver.openInputStream(uri)
                         ?.use { it.readBytes() } ?: return@withContext null
                     // SheetBackup.parse sniffs JSON vs workbook by content.
-                    val snap = SheetBackup.parse(bytes)
-                    bytes to Triple(snap.files.size, snap.rowCount, snap.profileCount)
+                    bytes to SheetBackup.parse(bytes)
                 } catch (_: Exception) {
                     null
                 }
@@ -145,8 +170,7 @@ fun BackupScreen(
             if (stagedResult == null) {
                 toast(context, "That file is not a KiloApp backup.")
             } else {
-                staged = stagedResult.first
-                stagedCounts = stagedResult.second
+                staged = stage(stagedResult.first, name, stagedResult.second)
             }
         }
     }
@@ -248,7 +272,13 @@ fun BackupScreen(
                     description = "The copy this app kept on the device",
                     showChevron = false,
                     enabled = !busy,
-                    onClick = { stageLocal(SheetBackup::localCurrent, "No saved copy on this device.") }
+                    onClick = {
+                        stageLocal(
+                            SheetBackup::localCurrent,
+                            "No saved copy on this device.",
+                            "The copy this app kept on this device"
+                        )
+                    }
                 )
                 SettingsItem(
                     icon = painterResource(R.drawable.lucide_server),
@@ -257,7 +287,11 @@ fun BackupScreen(
                     showChevron = false,
                     enabled = !busy,
                     onClick = {
-                        stageLocal(SheetBackup::localPrevious, "No previous copy on this device.")
+                        stageLocal(
+                            SheetBackup::localPrevious,
+                            "No previous copy on this device.",
+                            "The previous copy on this device"
+                        )
                     }
                 )
             }
@@ -280,20 +314,18 @@ fun BackupScreen(
                                     scope.launch {
                                         busy = true
                                         val bytes = raw.toByteArray(Charsets.UTF_8)
-                                        val counts = withContext(Dispatchers.IO) {
+                                        val snap = withContext(Dispatchers.IO) {
                                             try {
-                                                val snap = SheetBackup.parse(bytes)
-                                                Triple(snap.files.size, snap.rowCount, snap.profileCount)
+                                                SheetBackup.parse(bytes)
                                             } catch (_: Exception) {
                                                 null
                                             }
                                         }
                                         busy = false
-                                        if (counts == null) {
+                                        if (snap == null) {
                                             toast(context, "That copy could not be read.")
                                         } else {
-                                            staged = bytes
-                                            stagedCounts = counts
+                                            staged = stage(bytes, "Saved before ${s.label}", snap)
                                         }
                                     }
                                 }
@@ -305,47 +337,34 @@ fun BackupScreen(
         }
     }
 
-    staged?.let { raw ->
-        val counts = stagedCounts
-        AlertDialog(
-            onDismissRequest = { staged = null },
-            title = { Text("Replace all data?") },
-            text = {
-                Text(
-                    "This replaces every file, row and profile setting currently " +
-                            "in the app with ${counts?.first ?: 0} files, " +
-                            "${counts?.second ?: 0} rows and ${counts?.third ?: 0} " +
-                            "profile settings from the backup. It cannot be undone."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    staged = null
-                    scope.launch {
-                        busy = true
-                        val ok = withContext(Dispatchers.IO) {
-                            try {
-                                SheetBackup.restore(context, raw)
-                                true
-                            } catch (_: Exception) {
-                                false
-                            }
-                        }
-                        busy = false
-                        if (ok) {
-                            // Every cached view in the store predates the
-                            // tables we just replaced.
-                            SheetStore.get(context).onBackupRestored()
-                            toast(context, "Backup restored.")
-                        } else {
-                            toast(context, "That backup could not be restored.")
+    staged?.let { ready ->
+        BackupConfirmDialog(
+            staged = ready,
+            onConfirm = {
+                val raw = ready.bytes
+                staged = null
+                scope.launch {
+                    busy = true
+                    val ok = withContext(Dispatchers.IO) {
+                        try {
+                            SheetBackup.restore(context, raw)
+                            true
+                        } catch (_: Exception) {
+                            false
                         }
                     }
-                }) { Text("Replace") }
+                    busy = false
+                    if (ok) {
+                        // Every cached view in the store predates
+                        // the tables we just replaced.
+                        SheetStore.get(context).onBackupRestored()
+                        toast(context, "Backup restored.")
+                    } else {
+                        toast(context, "That backup could not be restored.")
+                    }
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { staged = null }) { Text("Cancel") }
-            }
+            onDismiss = { staged = null }
         )
     }
 }
