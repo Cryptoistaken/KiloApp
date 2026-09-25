@@ -179,8 +179,7 @@ object SheetBackup {
                 val cut = rel.lastIndexOf('/')
                 val dir = if (cut < 0) "" else rel.substring(0, cut)
                 val name = rel.substring(cut + 1)
-                val mime = if (rel.endsWith(".json")) JSON_MIME else XLSX_MIME
-                val ok = writeDownloads(app, dir, name, mime, bytes)
+                val ok = writeDownloads(app, dir, name, mimeFor(name), bytes)
                 if (!ok) {
                     if (error == null) error = "Could not write $name to Downloads"
                 } else if (rel == REL_JSON) {
@@ -198,8 +197,7 @@ object SheetBackup {
             folderUri(app)?.let { tree ->
                 for ((rel, bytes) in artifacts) {
                     val name = rel.substringAfterLast('/')
-                    val mime = if (rel.endsWith(".json")) JSON_MIME else XLSX_MIME
-                    if (!writeTree(app, Uri.parse(tree), name, mime, bytes) && error == null) {
+                    if (!writeTree(app, Uri.parse(tree), name, mimeFor(name), bytes) && error == null) {
                         error = "Could not write $name to the backup folder"
                     }
                 }
@@ -277,7 +275,29 @@ object SheetBackup {
                 Log.i(TAG, "Removed a backup file that is no longer produced: $stale")
             }
         }
+        if (previous.isEmpty()) {
+            // First run of this version: the old build wrote the config file
+            // with a spreadsheet MIME, so MediaStore appended an extension and
+            // every run added another "profiles.txt (N).xlsx". Those rows were
+            // never in the tracked set, so clear them once. Bounded, inside our
+            // own config folder, and matched on our own naming pattern only.
+            deleteDownloads(app, DIR_CONFIG, "profiles.txt.xlsx")
+            for (n in 1..20) {
+                if (!deleteDownloads(app, DIR_CONFIG, "profiles.txt ($n).xlsx")) break
+            }
+        }
         prefs(app).edit().putStringSet(PREF_BACKUP_XLSX, keep.toSet()).apply()
+    }
+
+    /** Must agree with the file extension. A name that disagrees with its MIME
+     *  type gets an extension appended by MediaStore, and then the
+     *  replace-by-name misses that row forever - the next write finds the
+     *  name taken and inserts "name (1)", so the folder grows a duplicate per
+     *  backup run. */
+    private fun mimeFor(name: String): String = when {
+        name.endsWith(".json") -> JSON_MIME
+        name.endsWith(".txt") -> "text/plain"
+        else -> XLSX_MIME
     }
 
     /** MediaStore normalises RELATIVE_PATH to a trailing slash, so every
