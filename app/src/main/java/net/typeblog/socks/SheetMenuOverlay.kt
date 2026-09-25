@@ -40,12 +40,9 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.ViewTreeLifecycleOwner
-import androidx.lifecycle.ViewTreeViewModelStoreOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
-import androidx.savedstate.ViewTreeSavedStateRegistryOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -183,9 +180,7 @@ class SheetMenuOverlay(
         lifecycleOwner = owner
         compose?.let { cv ->
             cv.visibility = View.GONE
-            ViewTreeLifecycleOwner.set(cv, owner)
-            ViewTreeViewModelStoreOwner.set(cv, owner)
-            ViewTreeSavedStateRegistryOwner.set(cv, owner)
+            attachTreeOwners(cv, owner)
             owner.create()
             cv.setContent {
                 KiloProxyTheme {
@@ -578,12 +573,32 @@ class SheetMenuOverlay(
 }
 
 /**
+ * Attach the view-tree owners by reflection: the classes live in
+ * lifecycle-runtime / savedstate, which the overlay compile classpath does
+ * not expose, but compose-ui guarantees them at runtime (its own
+ * ComposeView resolves them when creating the composition).
+ */
+private fun attachTreeOwners(view: View, owner: OverlayLifecycleOwner) {
+    try {
+        Class.forName("androidx.lifecycle.ViewTreeLifecycleOwner")
+            .getMethod("set", View::class.java, LifecycleOwner::class.java)
+            .invoke(null, view, owner)
+        Class.forName("androidx.lifecycle.ViewTreeViewModelStoreOwner")
+            .getMethod("set", View::class.java, ViewModelStoreOwner::class.java)
+            .invoke(null, view, owner)
+        Class.forName("androidx.savedstate.ViewTreeSavedStateRegistryOwner")
+            .getMethod("set", View::class.java, SavedStateRegistryOwner::class.java)
+            .invoke(null, view, owner)
+    } catch (_: Exception) {
+    }
+}
+
+/**
  * Manual lifecycle for the overlay window: a plain Service has no
  * LifecycleOwner, and ComposeView needs all three view-tree owners
  * (Lifecycle, ViewModelStore, SavedStateRegistry for rememberSaveable).
  * Created + resumed on show, torn down on hide.
- */
-private class OverlayLifecycleOwner :
+ */private class OverlayLifecycleOwner :
     LifecycleOwner,
     ViewModelStoreOwner,
     SavedStateRegistryOwner {

@@ -1401,7 +1401,6 @@ if (readOnly) {
                                             lastTapTime = now
                                             selectedCell = selKey
                                             draft = row.cell(col.key)
-                                        }
                     },
                     onCellLongClick = cellLongClick@{ row, col ->
                         val selKey = Pair(row.rowIdx, col.key)
@@ -1416,7 +1415,6 @@ if (!readOnly && row.locked) {
                                             selectionMode = true
                                             selectedCell = null
                                             selectedItems = selectedItems + selKey
-                                        }
                     },
                     onRowRailClick = { ri -> toggleMulti(rowCells(ri)) },
                     onRowRailLongClick = { ri ->
@@ -1447,8 +1445,7 @@ if (!readOnly && row.locked) {
                                                     store.copyGrid(gridOf(row.rowIdx, "twofakey", v))
                                                     toast(appCtx, "Copied.")
                                                 }
-                                            }
-                    },
+                        },
                     onDotLongClick = { row ->
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                         dotRowIdx = row.rowIdx
