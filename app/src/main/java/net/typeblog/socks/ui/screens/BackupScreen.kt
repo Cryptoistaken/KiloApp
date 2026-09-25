@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +62,14 @@ fun BackupScreen(
     val prefs = PreferenceManager.getDefaultSharedPreferences(context)
     val scope = rememberCoroutineScope()
 
+    // Collected, not read once: the store builds its lists in an async
+    // refresh, so store.files.value is still empty on the first read and the
+    // dialog would report "now 0" against a real current state.
+    val store = SheetStore.get(context)
+    val liveFiles by store.files.collectAsStateWithLifecycle()
+    val liveArchive by store.archive.collectAsStateWithLifecycle()
+    val liveTxs by store.txs.collectAsStateWithLifecycle()
+
     var auto by rememberPref(prefs, PREF_BACKUP_ENABLED) {
         it.getBoolean(PREF_BACKUP_ENABLED, true)
     }
@@ -86,8 +95,7 @@ fun BackupScreen(
         source: String,
         snap: net.typeblog.socks.util.sheet.SheetBackup.BackupSnapshot
     ): StagedBackup {
-        val store = SheetStore.get(context)
-        val live = store.files.value + store.archive.value
+        val live = liveFiles + liveArchive
         return StagedBackup(
             bytes = bytes,
             source = source,
@@ -105,7 +113,7 @@ fun BackupScreen(
             balance = snap.balance,
             currentFiles = live.size,
             currentRows = live.sumOf { it.rowCount },
-            currentTxCount = store.txs.value.size
+            currentTxCount = liveTxs.size
         )
     }
 

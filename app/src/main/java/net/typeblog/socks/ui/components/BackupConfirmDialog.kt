@@ -99,11 +99,13 @@ fun BackupConfirmDialog(
                 }
 
                 val extras = buildList {
-                    if (staged.checkCount > 0) add("$staged.checkCount checked rows")
-                    if (staged.reqCount > 0) add("$staged.reqCount request traces")
-                    if (staged.styleCount > 0) add("$staged.styleCount styled cells")
-                    if (staged.hiddenCount > 0) add("$staged.hiddenCount hidden columns")
-                    if (staged.profileCount > 0) add("$staged.profileCount profile settings")
+                    // ${...} not $staged.x: a bare $staged interpolates the
+                    // object and leaves ".x" as literal text.
+                    if (staged.checkCount > 0) add("${staged.checkCount} checked rows")
+                    if (staged.reqCount > 0) add("${staged.reqCount} request traces")
+                    if (staged.styleCount > 0) add("${staged.styleCount} styled cells")
+                    if (staged.hiddenCount > 0) add("${staged.hiddenCount} hidden columns")
+                    if (staged.profileCount > 0) add("${staged.profileCount} profile settings")
                     if (staged.balance != 0.0) add("balance ${staged.balance}")
                 }
                 if (extras.isNotEmpty()) {
