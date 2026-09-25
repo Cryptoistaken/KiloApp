@@ -33,6 +33,10 @@ import net.typeblog.socks.ui.screens.sheet.SheetDetailScreen
 import net.typeblog.socks.ui.screens.sheet.SheetFilesTab
 import net.typeblog.socks.ui.screens.sheet.SheetWalletTab
 
+// Wallet tab is hidden for now; the tab, its screen and its data layer
+// are all still in place. Flip to true to bring the tab back.
+private const val SHOW_WALLET_TAB = false
+
 private enum class SheetTab { FILES, WALLET, ARCHIVE }
 
 /**
@@ -95,12 +99,14 @@ fun SheetScreen(modifier: Modifier = Modifier) {
                 label = "Archive",
                 onClick = { tab = SheetTab.ARCHIVE; selecting = false }
             )
-            SheetHomeTab(
-                selected = tab == SheetTab.WALLET,
-                icon = if (tab == SheetTab.WALLET) R.drawable.ic_ss_wallet_sel else R.drawable.ic_ss_wallet_idle,
-                label = "Wallet",
-                onClick = { tab = SheetTab.WALLET; selecting = false }
-            )
+            if (SHOW_WALLET_TAB) {
+                SheetHomeTab(
+                    selected = tab == SheetTab.WALLET,
+                    icon = if (tab == SheetTab.WALLET) R.drawable.ic_ss_wallet_sel else R.drawable.ic_ss_wallet_idle,
+                    label = "Wallet",
+                    onClick = { tab = SheetTab.WALLET; selecting = false }
+                )
+            }
         }
         }
         when (tab) {
