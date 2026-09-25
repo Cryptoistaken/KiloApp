@@ -49,6 +49,17 @@ object SheetBackup {
     const val PREV_JSON_NAME = "kiloapp-backup.prev.json"
     const val DOWNLOAD_SUBDIR = "KiloApp"
 
+    // Layout inside the KiloApp folder. Grouping by kind keeps it browsable:
+    // backup/ is the canonical pair, files/ and archive/ hold the per-file
+    // workbooks, config/ holds the proxy profiles.
+    private const val DIR_BACKUP = "backup"
+    private const val DIR_FILES = "files"
+    private const val DIR_ARCHIVE = "archive"
+    private const val DIR_CONFIG = "config"
+    private const val REL_JSON = DIR_BACKUP + "/kiloapp-backup.json"
+    private const val REL_ALL = DIR_BACKUP + "/kiloapp-backup.xlsx"
+    private const val REL_CONFIG = DIR_CONFIG + "/profiles.txt"
+
     private const val TAG = "SheetBackup"
     private const val DEBOUNCE_MS = 10_000L
     private const val JSON_MIME = "application/json"
@@ -143,53 +154,54 @@ object SheetBackup {
     }
 
     /**
-     * Writes both files. Returns the number of bytes of the JSON, or -1 when
-     * nothing could be written. Never throws: a backup failure must not take
-     * the edit that triggered it down with it.
+     * Everything the mirror writes, keyed by its path inside the KiloApp
+     * folder. Grouped by kind so the folder is browsable instead of one pile:
+     *
+     *   backup/   the canonical pair - json restores everything, xlsx is the
+     *             whole app as one workbook
+     *   files/    one workbook per active Sheet file
+     *   archive/  one workbook per archived Sheet file
+     *   config/   proxy profiles, readable
+     *
+     * Returns the JSON size, or -1 when nothing could be written. Never
+     * throws: a backup failure must not take the edit that triggered it down.
      */
     fun backupNow(context: Context): Int {
         val app = context.applicationContext
         return try {
             val snap = dump(app)
-            val json = toJson(snap).toByteArray(Charsets.UTF_8)
-            val xlsx = workbook(snap)
+            val artifacts = artifacts(app, snap)
+            val json = artifacts[REL_JSON] ?: ByteArray(0)
+
             var written = 0
             var error: String? = null
-
-            if (writeDownloads(app, JSON_NAME, JSON_MIME, json)) {
-                writeLocalRotating(app, json)
-                written = json.size
-            } else {
-                error = "Could not write to Downloads"
-            }
-
-            if (!writeDownloads(app, XLSX_NAME, XLSX_MIME, xlsx) && error == null) {
-                error = "Could not write the workbook"
-            }
-
-            // One workbook per Sheet file, so each opens straight onto that
-            // file rather than behind a tab. Their headers are the same shape
-            // the Sheet tab import already understands, so a per-file workbook
-            // is a working fallback even without this app.
-            val perFile = linkedMapOf<String, ByteArray>()
-            val used = mutableSetOf(XLSX_NAME.lowercase())
-            for (f in snap.files) {
-                val name = fileSafeName(f.name.ifBlank { f.preset.title }, used)
-                val bytes = SheetBackupXlsx.writeFile(snap, f.id) ?: continue
-                perFile[name] = bytes
-                if (!writeDownloads(app, name, XLSX_MIME, bytes) && error == null) {
-                    error = "Could not write every sheet workbook"
+            for ((rel, bytes) in artifacts) {
+                val cut = rel.lastIndexOf('/')
+                val dir = if (cut < 0) "" else rel.substring(0, cut)
+                val name = rel.substring(cut + 1)
+                val mime = if (rel.endsWith(".json")) JSON_MIME else XLSX_MIME
+                val ok = writeDownloads(app, dir, name, mime, bytes)
+                if (!ok) {
+                    if (error == null) error = "Could not write $name to Downloads"
+                } else if (rel == REL_JSON) {
+                    writeLocalRotating(app, bytes)
+                    written = bytes.size
                 }
             }
-            prunePerFile(app, perFile.keys)
+            pruneDownloads(app, artifacts.keys)
 
+            // The user-picked folder is written flat: the Storage Access
+            // Framework has no portable way to create a nested directory, and
+            // faking one with a slash in a file name only works on some
+            // providers. Downloads, the default destination, gets the
+            // subfolders.
             folderUri(app)?.let { tree ->
-                if (!writeTree(app, Uri.parse(tree), JSON_NAME, JSON_MIME, json)) {
-                    error = "Could not write to the backup folder"
-                }
-                writeTree(app, Uri.parse(tree), XLSX_NAME, XLSX_MIME, xlsx)
-                for ((name, bytes) in perFile) {
-                    writeTree(app, Uri.parse(tree), name, XLSX_MIME, bytes)
+                for ((rel, bytes) in artifacts) {
+                    val name = rel.substringAfterLast('/')
+                    val mime = if (rel.endsWith(".json")) JSON_MIME else XLSX_MIME
+                    if (!writeTree(app, Uri.parse(tree), name, mime, bytes) && error == null) {
+                        error = "Could not write $name to the backup folder"
+                    }
                 }
             }
 
@@ -208,22 +220,24 @@ object SheetBackup {
         }
     }
 
-    /** Remove workbooks for Sheet files that no longer exist or were renamed.
-     *  Tracked from the last run's name list rather than by scanning the
-     *  folder, so a file the user put there themselves is never touched. */
-    private fun prunePerFile(context: Context, keep: Set<String>) {
-        val app = context.applicationContext
-        val previous = try {
-            prefs(app).getStringSet(PREF_BACKUP_XLSX, emptySet()).orEmpty().toSet()
-        } catch (_: Exception) {
-            emptySet()
+    private fun artifacts(context: Context, s: BackupSnapshot): Map<String, ByteArray> {
+        val out = linkedMapOf<String, ByteArray>()
+        out[REL_JSON] = toJson(s).toByteArray(Charsets.UTF_8)
+        out[REL_ALL] = SheetBackupXlsx.write(s)
+
+        // Archived files are exports like any other, but keeping them apart
+        // stops the archive from crowding the files a user is working on.
+        val used = mutableSetOf(REL_ALL.substringAfterLast('/').lowercase())
+        for (f in s.files) {
+            val bytes = SheetBackupXlsx.writeFile(s, f.id) ?: continue
+            val name = fileSafeName(f.name.ifBlank { f.preset.title }, used)
+            val rel = (if (f.archived) DIR_ARCHIVE else DIR_FILES) + "/" + name
+            out[rel] = bytes
         }
-        for (stale in previous - keep) {
-            if (deleteDownloads(app, stale)) {
-                Log.i(TAG, "Removed the workbook for a renamed or deleted sheet: $stale")
-            }
-        }
-        prefs(app).edit().putStringSet(PREF_BACKUP_XLSX, keep.toSet()).apply()
+
+        out[REL_CONFIG] = ProfileManager.getInstance(context).exportReadable()
+            .toByteArray(Charsets.UTF_8)
+        return out
     }
 
     /** Filesystem-safe export name. Wider than the workbook's own 31-character
@@ -243,6 +257,36 @@ object SheetBackup {
     }
 
     private const val ILLEGAL_FILE_CHARS = "<>:\"/\\|?*"
+
+    /** Remove artifacts for Sheet files that no longer exist or were renamed.
+     *  Tracked from the last run's path list rather than by scanning the
+     *  folder, so a file the user put there themselves is never touched. The
+     *  previous flat layout is in that list too, so moving into subfolders
+     *  clears the root on the first run instead of leaving a stale copy. */
+    private fun pruneDownloads(context: Context, keep: Set<String>) {
+        val app = context.applicationContext
+        val previous = try {
+            prefs(app).getStringSet(PREF_BACKUP_XLSX, emptySet()).orEmpty().toSet()
+        } catch (_: Exception) {
+            emptySet()
+        }
+        for (stale in previous - keep) {
+            val cut = stale.lastIndexOf('/')
+            val dir = if (cut < 0) "" else stale.substring(0, cut)
+            if (deleteDownloads(app, dir, stale.substring(cut + 1))) {
+                Log.i(TAG, "Removed a backup file that is no longer produced: $stale")
+            }
+        }
+        prefs(app).edit().putStringSet(PREF_BACKUP_XLSX, keep.toSet()).apply()
+    }
+
+    /** MediaStore normalises RELATIVE_PATH to a trailing slash, so every
+     *  write and every delete has to build it the same way or the match
+     *  silently misses and the file accumulates. */
+    private fun downloadsRelative(dir: String): String {
+        val base = Environment.DIRECTORY_DOWNLOADS + "/" + DOWNLOAD_SUBDIR
+        return if (dir.isBlank()) base + "/" else "$base/$dir/"
+    }
 
     /** App-private copy of the last two generations. Dies with the install
      *  like the database does, but costs nothing and gives in-app restore a
@@ -272,22 +316,21 @@ object SheetBackup {
         null
     }
 
-    // ── Destinations ───────────────────────────────────────────────────────
+// ── Destinations ───────────────────────────────────────────────────────
 
     /** insert() never replaces: a second row with the same display name is a
      *  second file, so an un-deleted mirror would pile up a new copy on every
      *  run and flood the folder. The match is scoped to our own subfolder -
      *  name alone would delete an unrelated file the user keeps in Downloads. */
-    private fun deleteDownloads(context: Context, name: String): Boolean {
+    private fun deleteDownloads(context: Context, dir: String, name: String): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
         return try {
             val resolver = context.applicationContext.contentResolver
-            val relative = Environment.DIRECTORY_DOWNLOADS + "/" + DOWNLOAD_SUBDIR
             val existing = resolver.query(
                 MediaStore.Downloads.EXTERNAL_CONTENT_URI,
                 arrayOf(MediaStore.Downloads._ID),
                 "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?",
-                arrayOf(name, relative), null
+                arrayOf(name, downloadsRelative(dir)), null
             )?.use { c -> if (c.moveToFirst()) c.getLong(0) else null } ?: return false
             resolver.delete(
                 ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, existing),
@@ -299,7 +342,7 @@ object SheetBackup {
         }
     }
 
-    private fun writeDownloads(context: Context, name: String, mime: String, bytes: ByteArray): Boolean {
+    private fun writeDownloads(context: Context, dir: String, name: String, mime: String, bytes: ByteArray): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             // Pre-29 needs a storage permission this app does not ask for, so
             // the always-on destination is simply unavailable there and the
@@ -308,13 +351,12 @@ object SheetBackup {
         }
         return try {
             val resolver = context.applicationContext.contentResolver
-            val relative = Environment.DIRECTORY_DOWNLOADS + "/" + DOWNLOAD_SUBDIR
-            deleteDownloads(context, name)
+            deleteDownloads(context, dir, name)
 
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
                 put(MediaStore.Downloads.MIME_TYPE, mime)
-                put(MediaStore.Downloads.RELATIVE_PATH, relative)
+                put(MediaStore.Downloads.RELATIVE_PATH, downloadsRelative(dir))
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
@@ -379,7 +421,7 @@ object SheetBackup {
         }
     }
 
-    // ── JSON: the lossless, canonical shape ────────────────────────────────
+// ── JSON: the lossless, canonical shape ────────────────────────────────
 
     fun toJson(s: BackupSnapshot): String {
         val root = JSONObject()
@@ -604,7 +646,7 @@ object SheetBackup {
     private fun JSONObject.optBooleanOrNull(key: String): Boolean? =
         if (!has(key) || isNull(key)) null else optBoolean(key, false)
 
-    // ── Restore ────────────────────────────────────────────────────────────
+// ── Restore ────────────────────────────────────────────────────────────
 
     /** Replaces every sheet-owned table in one transaction, and overwrites the
      *  profile settings alongside. Either the whole snapshot lands or none of
@@ -643,7 +685,7 @@ object SheetBackup {
         return Triple(snap.files.size, snap.rowCount, snap.profileCount)
     }
 
-    // ── Pre-destructive snapshots ──────────────────────────────────────────
+// ── Pre-destructive snapshots ──────────────────────────────────────────
 
     private const val SNAP_DIR = "snapshots"
     private const val SNAP_LIMIT = 10
@@ -716,9 +758,7 @@ object SheetBackup {
         null
     }
 
-    // ── The readable twin, and the reader for it ───────────────────────────
-
-    private fun workbook(s: BackupSnapshot): ByteArray = SheetBackupXlsx.write(s)
+// ── The readable twin, and the reader for it ───────────────────────────
 
     /**
      * Load backup: accept either shape. The JSON dump is the canonical path

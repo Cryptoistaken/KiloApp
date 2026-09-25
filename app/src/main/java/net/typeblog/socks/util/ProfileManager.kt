@@ -180,6 +180,41 @@ class ProfileManager private constructor(context: Context) {
         reload()
     }
 
+    /**
+     * Human-readable form of the same profile settings exportEntries returns,
+     * for the config file in the backup folder. Goes through the typed getters
+     * rather than the raw pref keys, which are url-encoded profile names with
+     * a suffix and are unreadable to a person.
+     */
+    @Synchronized
+    fun exportReadable(): String {
+        val sb = StringBuilder()
+        sb.append("KiloApp proxy profiles\n")
+        sb.append("Written ").append(
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+                .format(java.util.Date())
+        ).append("\n")
+        sb.append("Note: this file is plain text and holds your proxy credentials.\n")
+        for (name in mProfiles) {
+            val p = mFactory.getProfile(name) ?: continue
+            sb.append("\n[").append(name).append("]\n")
+            sb.append("server    = ").append(p.getServer()).append('\n')
+            sb.append("port      = ").append(p.getPort()).append('\n')
+            sb.append("username  = ").append(p.getUsername()).append('\n')
+            sb.append("password  = ").append(p.getPassword()).append('\n')
+            sb.append("dns       = ").append(p.getDns()).append(':').append(p.getDnsPort()).append('\n')
+            sb.append("route     = ").append(p.getRoute()).append('\n')
+            sb.append("ipv6      = ").append(p.hasIPv6()).append('\n')
+            sb.append("udp       = ").append(p.hasUDP()).append('\n')
+            sb.append("autostart = ").append(p.autoConnect()).append('\n')
+            sb.append("per app   = ").append(p.isPerApp()).append('\n')
+            if (p.isPerApp()) {
+                sb.append("apps      = ").append(p.getAppList().replace(',', ' ')).append('\n')
+            }
+        }
+        return sb.toString()
+    }
+
     companion object {
         @Volatile
         private var sInstance: ProfileManager? = null
