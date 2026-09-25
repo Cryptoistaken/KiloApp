@@ -68,6 +68,7 @@ fun SettingsScreen(
     onNavigateToBubbleSettings: () -> Unit,
     onNavigateToDebugLogs: () -> Unit,
     onNavigateToAdvanceSettings: () -> Unit,
+    onNavigateToBackup: () -> Unit,
     modifier: Modifier = Modifier,
     onNavigateBack: (() -> Unit)? = null
 ) {
@@ -186,6 +187,13 @@ fun SettingsScreen(
                     description = if (acceleratorEnabled) "On" else "Off",
                     showChevron = false,
                     onClick = onNavigateToAdvanceSettings
+                )
+                SettingsItem(
+                    icon = painterResource(R.drawable.ic_ss_download),
+                    label = "Backup",
+                    description = "Back up and restore your data",
+                    showChevron = true,
+                    onClick = onNavigateToBackup
                 )
             }
         }

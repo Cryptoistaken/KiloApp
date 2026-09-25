@@ -50,6 +50,7 @@ import net.typeblog.socks.ui.screens.SplitTunnelingScreen
 import net.typeblog.socks.ui.screens.ThemeScreen
 import net.typeblog.socks.ui.screens.DebugLogsScreen
 import net.typeblog.socks.ui.screens.AdvancedSettingsScreen
+import net.typeblog.socks.ui.screens.BackupScreen
 import net.typeblog.socks.ui.viewmodel.VpnViewModel
 
 sealed class Screen(val route: String) {
@@ -66,6 +67,7 @@ sealed class Screen(val route: String) {
     data object BubbleSettings : Screen("bubble_settings")
     data object DebugLogs : Screen("debug_logs")
     data object AdvanceSettings : Screen("advance_settings")
+    data object Backup : Screen("backup")
 }
 
 private data class BottomNavItem(
@@ -350,6 +352,9 @@ fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0, sheetSignal: Int
                     onNavigateToAdvanceSettings = {
                         navController.navigate(Screen.AdvanceSettings.route)
                     },
+                    onNavigateToBackup = {
+                        navController.navigate(Screen.Backup.route)
+                    },
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
@@ -378,6 +383,13 @@ fun AppNavigation(splitAppsSignal: Int = 0, smsSignal: Int = 0, sheetSignal: Int
             }
             composable(Screen.DebugLogs.route) {
                 DebugLogsScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+            composable(Screen.Backup.route) {
+                BackupScreen(
                     onNavigateBack = {
                         navController.popBackStack()
                     }
