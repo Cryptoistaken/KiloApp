@@ -1532,24 +1532,33 @@ class FloatingControlService : Service() {
             }
             else -> Pair("", Color.WHITE)
         }
-        circleMenu?.show(
-            (params?.x ?: 0) + bubbleWindowSizePx / 2,
-            (params?.y ?: 0) + bubbleWindowSizePx / 2,
-            prefs.getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL,
-            prefs.getInt(PREF_CIRCLE_SIZE, CIRCLE_SIZE_DEFAULT),
-            state == BubbleState.CONNECTED,
-            proxySub,
-            proxySubColor
-        )
-        // HTML layering: .cm-trigger z-50 sits ABOVE .cm-items-layer z-0, so
-        // menus emerge from underneath the main button. The item windows are
-        // added after the bubble window (so they paint on top) — re-insert
-        // the bubble window so the trigger stays on top and items dive under
-        // it. Item windows are small and touch-transparent, so taps outside
-        // them always reach the app below.
-        circleMenuOpen = true
-        bringBubbleToFront()
-        setCircleGlyph()
+        // The Sheet glyph needs one indexed DB row (off the main thread);
+        // everything else on this path is already in memory.
+        sheetBubbleScope.launch {
+            val sheetIcon = withContext(Dispatchers.IO) {
+                sheetBubbleCoordinator.bubbleIconRes()
+            }
+            if (circleMenu?.isShowing() == true) return@launch
+            circleMenu?.show(
+                (params?.x ?: 0) + bubbleWindowSizePx / 2,
+                (params?.y ?: 0) + bubbleWindowSizePx / 2,
+                prefs.getString(PREF_CIRCLE_ALIGN, CIRCLE_SMALL) ?: CIRCLE_SMALL,
+                prefs.getInt(PREF_CIRCLE_SIZE, CIRCLE_SIZE_DEFAULT),
+                state == BubbleState.CONNECTED,
+                proxySub,
+                proxySubColor,
+                sheetIcon
+            )
+            // HTML layering: .cm-trigger z-50 sits ABOVE .cm-items-layer z-0, so
+            // menus emerge from underneath the main button. The item windows are
+            // added after the bubble window (so they paint on top) — re-insert
+            // the bubble window so the trigger stays on top and items dive under
+            // it. Item windows are small and touch-transparent, so taps outside
+            // them always reach the app below.
+            circleMenuOpen = true
+            bringBubbleToFront()
+            setCircleGlyph()
+        }
     }
 
     /**

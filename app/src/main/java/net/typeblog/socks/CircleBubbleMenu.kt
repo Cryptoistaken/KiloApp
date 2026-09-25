@@ -116,7 +116,10 @@ class CircleBubbleMenu(
         sizeDp: Int,
         proxyConnected: Boolean,
         proxySub: String = "",
-        proxySubColor: Int = Color.WHITE
+        proxySubColor: Int = Color.WHITE,
+        // Configured Sheet file icon (preset glyph, own colors). Defaults to
+        // the generic sheet glyph when no file is selected for the bubble.
+        sheetIconRes: Int = R.drawable.ic_tab_sheet
     ) {
         hideNow()
         hiding = false
@@ -154,7 +157,7 @@ class CircleBubbleMenu(
                 0.58f
             ),
             Triple(R.drawable.ic_tab_sms, Color.parseColor("#18181B"), 0.4f),
-            Triple(R.drawable.ic_tab_sheet, Color.parseColor("#18181B"), 0.4f),
+            Triple(sheetIconRes, Color.parseColor("#18181B"), 0.4f),
             Triple(R.drawable.ic_name_person, Color.parseColor("#18181B"), 0.4f)
         )
         val taps = listOf(onProxyTap, onSmsTap, onSheetTap, onNameTap)
@@ -211,7 +214,9 @@ class CircleBubbleMenu(
                 }
                 val iv = ImageView(context).apply {
                     setImageResource(icon)
-                    setColorFilter(tint)
+                    // Preset file glyphs carry their own colors (like the
+                    // in-app file cards); only the generic glyph is tinted.
+                    if (i != 2 || icon == R.drawable.ic_tab_sheet) setColorFilter(tint)
                     scaleType = ImageView.ScaleType.FIT_CENTER
                 }
                 val glyph = (itemSize * frac).toInt().coerceAtLeast(1)
