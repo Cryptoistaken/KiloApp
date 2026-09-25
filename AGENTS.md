@@ -210,7 +210,7 @@ codebase stays clean without future cleanups:
 | `BubbleMenuOverlay.kt` | Popup overlay shown near bubble: country list, search, positioning; window params/IME handling |
 | `BubblePopupPlacer.kt` | Shared smart four-side placement for country, SMS, and Sheet popup shells |
 | `CircleBubbleMenu.kt` | Circle-menu overlay: Proxy/SMS/Sheet/Name bubbles around the anchor, alignment + size from prefs, scrim dismiss; Sheet long press applies Skip 2FA |
-| `SheetMenuOverlay.kt` | Native 230dp x 280dp Sheet file popup on the exact proxy/SMS shell (44dp bar with file identity only — no close/"..." buttons, scrim-tap dismiss, smart placement, grow-in): exact in-app grid parity (36dp rows/rails, 13sp centered monospace cells, theme tokens, approved/hold fills, dup marks, cell styles, hidden columns), fixed header + 10-row window ending at the active row with auto-scroll to new data, clipboard auto-captured into the active row on open |
+| `SheetMenuOverlay.kt` | Native 230dp x 280dp Sheet file popup on the exact proxy/SMS shell (44dp bar with file identity only — no close/"..." buttons, scrim-tap dismiss, smart placement, grow-in): in-app toolbar (undo/redo/check/auto) + exact in-app grid parity at compact size (24dp rows/rails, 10sp centered monospace cells, theme tokens, approved/hold fills, dup marks, cell styles, hidden columns), fixed header + all 500 rows scrollable with auto-scroll to new data, clipboard auto-captured into the active row on open, fresh cookies auto-run the whole-file UID check until Auto is off |
 | `BootReceiver.kt` | BOOT_COMPLETED + MY_PACKAGE_REPLACED auto-start receiver (restores VPN for auto-connect profiles and the floating bubble after reboot and after in-app updates) |
 | `System.kt` | JNI bridge (sendfd) |
 
@@ -235,7 +235,7 @@ Notes on the merged notification/dot pass:
 | `SplitTunnel.kt` | Split-tunnel list parse/format + include-empty guard (single home for UI + engine guards) |
 | `sheet/SheetModels.kt` | Sheet local-first models: presets/columns, file/row/style/wallet types, auto-naming, archive days-left, No_2Fa marker validation |
 | `sheet/SheetBubbleRules.kt` | Pure Sheet bubble clipboard classification, 2FA normalization, preset-aware completion and active-row rules |
-| `sheet/SheetBubbleCoordinator.kt` | File-scoped Sheet bubble snapshot/atomic row writes; never publishes global open-file state |
+| `sheet/SheetBubbleCoordinator.kt` | File-scoped Sheet bubble snapshot/atomic row writes + DB undo-redo + whole-file UID check; never publishes global open-file state |
 | `sheet/SheetRowsJson.kt` | Shared row snapshot/undo JSON encoding |
 | `sheet/SheetDb.kt` | Sheet SQLite store (source of truth, app-private): files/rows/styles/hidden/journal/snapshots/wallet/outbox; uninstall wipes it, SAF export survives |
 | `sheet/SheetCsv.kt` | Sheet CSV/TSV builders for SAF export and clipboard copy-all |

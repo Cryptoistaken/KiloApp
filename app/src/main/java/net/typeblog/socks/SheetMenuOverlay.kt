@@ -16,6 +16,7 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -35,18 +36,22 @@ import net.typeblog.socks.util.sheet.isNo2Fa
  * top bar (file identity only — no close or "..." buttons, a tap outside
  * dismisses), the same smart four-side placement and grow-in.
  *
- * The body is the in-app file grid at small size: fixed header row plus a
- * scrollable window of up to [WINDOW_ROWS] data rows ending at the active
- * row, 36dp rows, 36dp row-number/dot rails, 13sp centered monospace
+ * Below the bar sits the in-app toolbar (undo / redo / check / auto) and
+ * then the in-app file grid at compact bubble size: fixed header row plus
+ * every row of the file (all 500, empty ones included) in a scrollable
+ * list — 24dp rows, 24dp row-number/dot rails, 10sp centered monospace
  * cells, site status colors, approved/hold fills, dup marks, per-cell
- * styles, and hidden columns — all from the same snapshot rules as
- * SheetDetailScreen. After every render the list scrolls to the active
- * row, so newly captured clipboard data is always on screen.
+ * styles, and hidden columns. After every render the list scrolls to the
+ * active row, so newly captured clipboard data is always on screen.
  */
 class SheetMenuOverlay(
     private val context: Context,
     private val onOpened: () -> Unit,
-    private val onDismissed: () -> Unit = {}
+    private val onDismissed: () -> Unit = {},
+    private val onUndo: () -> Unit = {},
+    private val onRedo: () -> Unit = {},
+    private val onCheck: () -> Unit = {},
+    private val onAutoToggle: () -> Unit = {}
 ) {
     private var windowManager: WindowManager = createWindowManager()
     private val handler = Handler(Looper.getMainLooper())
@@ -58,6 +63,11 @@ class SheetMenuOverlay(
     private var iconView: ImageView? = null
     private var nameView: TextView? = null
     private var descriptionView: TextView? = null
+    private var undoView: ImageButton? = null
+    private var redoView: ImageButton? = null
+    private var checkView: TextView? = null
+    private var autoView: TextView? = null
+    private var lastSnapshot: SheetBubbleSnapshot? = null
     private var scrolledOnce = false
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
@@ -83,6 +93,10 @@ class SheetMenuOverlay(
         val icon = root.findViewById<ImageView>(R.id.bubble_sheet_icon)
         val name = root.findViewById<TextView>(R.id.bubble_sheet_name)
         val description = root.findViewById<TextView>(R.id.bubble_sheet_description)
+        val undo = root.findViewById<ImageButton>(R.id.bubble_tool_undo)
+        val redo = root.findViewById<ImageButton>(R.id.bubble_tool_redo)
+        val check = root.findViewById<TextView>(R.id.bubble_tool_check)
+        val auto = root.findViewById<TextView>(R.id.bubble_tool_auto)
         rootView = root
         headerView = header
         rowsView = rows
@@ -91,13 +105,27 @@ class SheetMenuOverlay(
         iconView = icon
         nameView = name
         descriptionView = description
+        undoView = undo
+        redoView = redo
+        checkView = check
+        autoView = auto
+        lastSnapshot = null
         scrolledOnce = false
         // Placeholder identity until the service renders the loaded snapshot
-        // right after attach (DB load + clipboard capture).
+        // right after attach (DB load + clipboard capture + auto-check).
         icon?.setImageResource(R.drawable.ic_tab_sheet)
         name?.text = "Sheet"
         description?.text = ""
         empty.visibility = View.GONE
+        undo?.setColorFilter(textColor())
+        redo?.setColorFilter(textColor())
+        check?.background = pillDrawable(primaryColor())
+        check?.setTextColor(onPrimaryColor())
+        undo?.setOnClickListener { onUndo() }
+        redo?.setOnClickListener { onRedo() }
+        check?.setOnClickListener { onCheck() }
+        auto?.setOnClickListener { onAutoToggle() }
+        renderToolbar(canUndo = false, canRedo = false, checking = false, autoCheck = true)
 
         val bounds = contentBounds()
         val margin = dp(8f)
@@ -174,6 +202,7 @@ class SheetMenuOverlay(
         val rows = rowsView ?: return
         val empty = emptyView ?: return
         val scroll = scrollView
+        lastSnapshot = snapshot
         header.removeAllViews()
         rows.removeAllViews()
         val file = snapshot.file
@@ -181,43 +210,68 @@ class SheetMenuOverlay(
         nameView?.text = file.name
         descriptionView?.text = file.preset.desc
         val cols = file.preset.columns.filter { !snapshot.hidden.contains(it.key) }
-        val dataIdx = snapshot.rows.mapIndexedNotNull { index, row ->
-            if (row.isData(file.preset.columns)) index else null
+        val dataCount = snapshot.rows.count { it.isData(file.preset.columns) }
+        if (cols.isEmpty()) {
+            empty.text = "All columns hidden. Use the menu."
+            empty.visibility = View.VISIBLE
+            scroll?.visibility = View.GONE
+            return
         }
-        when {
-            cols.isEmpty() -> {
-                empty.text = "All columns hidden. Use the menu."
-                empty.visibility = View.VISIBLE
-                scroll?.visibility = View.GONE
-                return
-            }
-            dataIdx.isEmpty() -> {
-                empty.text = "No rows yet"
-                empty.visibility = View.VISIBLE
-                scroll?.visibility = View.GONE
-                return
-            }
+        if (dataCount == 0) {
+            empty.text = "No rows yet"
+            empty.visibility = View.VISIBLE
+            scroll?.visibility = View.GONE
+            return
         }
         empty.visibility = View.GONE
         scroll?.visibility = View.VISIBLE
         header.addView(headerRow(cols))
-        // Window of up to WINDOW_ROWS data rows ending at the active row, so
-        // the row holding freshly captured data is always on screen.
-        val endPos = dataIdx.indexOf(snapshot.activeRow)
-            .let { if (it < 0) dataIdx.size else it + 1 }
-        val startPos = (endPos - WINDOW_ROWS).coerceAtLeast(0)
-        for (pos in startPos until endPos) {
-            val index = dataIdx[pos]
-            snapshot.rows.getOrNull(index)?.let { row ->
-                rows.addView(dataRow(snapshot, cols, row, index == snapshot.activeRow))
-            }
+        // Every row of the file, empty ones included — like the in-app grid.
+        // The viewport shows what fits; the rest stays scrollable.
+        snapshot.rows.forEachIndexed { index, row ->
+            rows.addView(dataRow(snapshot, cols, row, index == snapshot.activeRow))
         }
-        val activePos = (endPos - startPos - 1).coerceAtLeast(0)
+        rows.addView(countFooter(dataCount))
+        val target = if (snapshot.activeRow >= 0) snapshot.activeRow else snapshot.rows.size - 1
         scroll?.post {
             if (!isShowing()) return@post
-            val y = activePos * dp(36f)
+            val y = target.coerceAtLeast(0) * dp(ROW_H_DP)
             if (scrolledOnce) scroll.smoothScrollTo(0, y) else scroll.scrollTo(0, y)
             scrolledOnce = true
+        }
+    }
+
+    /**
+     * Toolbar states. Check arms only while a checkable row exists and no
+     * check is running — same rule as the in-app Check split button.
+     */
+    fun renderToolbar(canUndo: Boolean, canRedo: Boolean, checking: Boolean, autoCheck: Boolean) {
+        undoView?.let {
+            it.isEnabled = canUndo && !checking
+            it.alpha = if (canUndo && !checking) 1f else 0.38f
+        }
+        redoView?.let {
+            it.isEnabled = canRedo && !checking
+            it.alpha = if (canRedo && !checking) 1f else 0.38f
+        }
+        val snap = lastSnapshot
+        val checkable = snap != null && snap.rows.any { r ->
+            r.isData(snap.file.preset.columns) && !r.locked &&
+                (r.uid.isNotEmpty() || net.typeblog.socks.util.sheet.extractCUser(r.cookies) != null)
+        }
+        checkView?.let {
+            val enabled = checkable && !checking
+            it.isEnabled = enabled
+            it.alpha = if (enabled) 1f else 0.38f
+            it.text = if (checking) "Checking" else "Check"
+        }
+        autoView?.let {
+            it.setTextColor(if (autoCheck) AliveGreen else mutedTextColor())
+            it.paintFlags = if (autoCheck) {
+                it.paintFlags or Paint.UNDERLINE_TEXT_FLAG
+            } else {
+                it.paintFlags and Paint.UNDERLINE_TEXT_FLAG.inv()
+            }
         }
     }
 
@@ -243,12 +297,17 @@ class SheetMenuOverlay(
         iconView = null
         nameView = null
         descriptionView = null
+        undoView = null
+        redoView = null
+        checkView = null
+        autoView = null
+        lastSnapshot = null
     }
 
     private fun headerRow(cols: List<SheetColumn>): LinearLayout {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(36f))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(ROW_H_DP))
             setBackgroundColor(headerColor())
         }
         row.addView(headerCell("", RAIL_DP))
@@ -270,8 +329,8 @@ class SheetMenuOverlay(
             ellipsize = TextUtils.TruncateAt.END
             includeFontPadding = false
             gravity = Gravity.CENTER
-            setPadding(dp(8f), 0, dp(8f), 0)
-            textSize = 12f
+            setPadding(dp(4f), 0, dp(4f), 0)
+            textSize = 10f
             setTextColor(headerTextColor())
             typeface = Typeface.DEFAULT_BOLD
         }
@@ -290,7 +349,7 @@ class SheetMenuOverlay(
         }
         val line = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(36f))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(ROW_H_DP))
         }
         // Row-number rail: surfaceVariant, status-filled when approved.
         val numBg = if (row.approved && statusFill != null) statusFill else surfaceVariantColor()
@@ -301,7 +360,7 @@ class SheetMenuOverlay(
             maxLines = 1
             includeFontPadding = false
             gravity = Gravity.CENTER
-            textSize = 11f
+            textSize = 9f
             setTextColor(mutedTextColor())
             typeface = Typeface.DEFAULT
         })
@@ -332,20 +391,20 @@ class SheetMenuOverlay(
                 ellipsize = TextUtils.TruncateAt.END
                 includeFontPadding = false
                 gravity = Gravity.CENTER
-                setPadding(dp(8f), 0, dp(8f), 0)
-                textSize = 13f
+                setPadding(dp(4f), 0, dp(4f), 0)
+                textSize = 10f
                 setTextColor(fg ?: textColor())
                 typeface = if (style?.bold == true) Typeface.DEFAULT_BOLD else Typeface.MONOSPACE
                 if (row.approved) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
             })
         }
-        // Status rail: surface cell with the site status mark (rounded 8dp
-        // square, 2.5dp radius — never a circle).
+        // Status rail: surface cell with the site status mark (rounded square,
+        // never a circle).
         line.addView(FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(RAIL_DP), dp(36f))
+            layoutParams = LinearLayout.LayoutParams(dp(RAIL_DP), dp(ROW_H_DP))
             background = colorDrawable(surfaceColor(), gridLineColor())
             addView(View(context).apply {
-                layoutParams = FrameLayout.LayoutParams(dp(8f), dp(8f), Gravity.CENTER)
+                layoutParams = FrameLayout.LayoutParams(dp(DOT_DP), dp(DOT_DP), Gravity.CENTER)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
                     cornerRadius = dpF(2.5f)
@@ -354,6 +413,18 @@ class SheetMenuOverlay(
             })
         })
         return line
+    }
+
+    private fun countFooter(dataCount: Int): TextView = TextView(context).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        text = "$dataCount rows"
+        gravity = Gravity.CENTER
+        setPadding(0, dp(8f), 0, dp(8f))
+        textSize = 11f
+        setTextColor(mutedTextColor())
     }
 
     private fun iconFor(preset: SheetPreset): Int = when (preset) {
@@ -397,10 +468,13 @@ class SheetMenuOverlay(
     private fun textColor(): Int = if (isDark()) Color.WHITE else Color.BLACK
     private fun headerTextColor(): Int = if (isDark()) Color.rgb(0xAA, 0xAA, 0xAA) else Color.rgb(0x55, 0x55, 0x55)
     private fun mutedTextColor(): Int = if (isDark()) Color.argb(153, 0xAA, 0xAA, 0xAA) else Color.argb(153, 0x55, 0x55, 0x55)
+    private fun primaryColor(): Int = if (isDark()) Color.WHITE else Color.BLACK
+    private fun onPrimaryColor(): Int = if (isDark()) Color.BLACK else Color.WHITE
 
     private companion object {
-        const val RAIL_DP = 36f
-        const val WINDOW_ROWS = 10
+        const val ROW_H_DP = 24f
+        const val RAIL_DP = 24f
+        const val DOT_DP = 7f
         val DeadRed = Color.rgb(0xE3, 0x3B, 0x2E)
         val PageBlue = Color.rgb(0x25, 0x63, 0xEB)
         val AliveGreen = Color.rgb(0x22, 0x93, 0x42)
@@ -413,6 +487,12 @@ class SheetMenuOverlay(
         shape = GradientDrawable.RECTANGLE
         setColor(fill)
         setStroke(dp(1f), stroke)
+    }
+
+    private fun pillDrawable(fill: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dpF(6f)
+        setColor(fill)
     }
 
     private fun createWindowManager(): WindowManager {

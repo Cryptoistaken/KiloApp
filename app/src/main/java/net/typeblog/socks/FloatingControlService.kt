@@ -195,6 +195,7 @@ class FloatingControlService : Service() {
     private var sheetBubbleGeneration = 0
     private var pendingSheetFileId: String? = null
     private var pendingSheetSkipNo2Fa = false
+    private var lastSheetSnapshot: net.typeblog.socks.util.sheet.SheetBubbleSnapshot? = null
     private val sheetBubbleCoordinator by lazy { SheetBubbleCoordinator(this) }
     // Single source of truth for the trigger glyph (Menu vs X). Never infer
     // from window attach state: remove/add cycles and animator timing made
@@ -326,7 +327,12 @@ class FloatingControlService : Service() {
                 longPressFired = false
                 sheetBubbleGeneration++
                 sheetBubbleJob?.cancel()
-            }
+                lastSheetSnapshot = null
+            },
+            onUndo = { runSheetHistory(redo = false) },
+            onRedo = { runSheetHistory(redo = true) },
+            onCheck = { runSheetBubbleCheck() },
+            onAutoToggle = { toggleSheetBubbleAuto() }
         )
         circleMenu = CircleBubbleMenu(
             this,
@@ -1872,21 +1878,129 @@ class FloatingControlService : Service() {
             if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
             // The file vanished (deleted/archived) between tap and load: close
             // the shell and route to the Sheet tab like the no-file tap.
-            if (initial == null) {
+            if (initial == null || fileId == null) {
                 sheetOverlay?.hide()
                 toast(getString(R.string.bubble_sheet_no_file))
                 openSheetTab()
                 return@launch
             }
-            sheetOverlay?.render(initial)
             val clipboard = readSheetClipboard()
             val result = withContext(Dispatchers.IO) {
-                if (fileId == null) null else sheetBubbleCoordinator.capture(fileId, clipboard, markNo2Fa)
+                sheetBubbleCoordinator.capture(fileId, clipboard, markNo2Fa)
             }
-            if (generation == sheetBubbleGeneration && sheetOverlay?.isShowing() == true) {
-                sheetOverlay?.render(result?.snapshot)
+            if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
+            // Single render of the post-capture state (the full 500-row grid
+            // inflates once, not twice).
+            lastSheetSnapshot = result.snapshot
+            sheetOverlay?.render(result.snapshot)
+            syncSheetToolbar(result.snapshot)
+            if (result.message.isNotEmpty()) toast(result.message)
+            // A fresh cookie runs the whole-file UID check by default, until
+            // the user turns Auto off (bubble toggle or in-app switch).
+            if (sheetBubbleCoordinator.isAutoCheckOn() && result.cookieChanged) {
+                syncSheetToolbar(result.snapshot, checking = true)
+                val check = withContext(Dispatchers.IO) {
+                    sheetBubbleCoordinator.checkFile(fileId)
+                }
+                if (generation == sheetBubbleGeneration && sheetOverlay?.isShowing() == true) {
+                    if (check.snapshot != null) {
+                        lastSheetSnapshot = check.snapshot
+                        sheetOverlay?.render(check.snapshot)
+                        syncSheetToolbar(check.snapshot)
+                    }
+                    if (check.checked) toast(checkCounts(check.valid, check.dead))
+                }
             }
         }
+    }
+
+    /** Bubble toolbar undo/redo: file-scoped DB history, bubble writes included. */
+    private fun runSheetHistory(redo: Boolean) {
+        val generation = sheetBubbleGeneration
+        val fileId = pendingSheetFileId ?: return
+        sheetBubbleJob?.cancel()
+        sheetBubbleJob = sheetBubbleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                if (redo) sheetBubbleCoordinator.redo(fileId)
+                else sheetBubbleCoordinator.undo(fileId)
+            }
+            if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
+            if (result.snapshot == null) {
+                sheetOverlay?.hide()
+                toast(getString(R.string.bubble_sheet_no_file))
+                openSheetTab()
+                return@launch
+            }
+            lastSheetSnapshot = result.snapshot
+            sheetOverlay?.render(result.snapshot)
+            syncSheetToolbar(result.snapshot)
+            if (!result.changed) toast(if (redo) "Nothing to redo." else "Nothing to undo.")
+        }
+    }
+
+    /** Bubble Check: full in-app check when the file is open, else guidance. */
+    private fun runSheetBubbleCheck() {
+        val fileId = pendingSheetFileId ?: return
+        val store = net.typeblog.socks.util.sheet.SheetStore.get(this)
+        val open = store.openFile.value
+        if (open?.id != fileId) {
+            toast("Open the file to run check.")
+            openSheetTab()
+            return
+        }
+        if (store.checking.value) return
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val uidOn = prefs.getBoolean("ss_autoCheck", true)
+        val simpleOn = prefs.getBoolean("ss_pageSimple", false)
+        val advancedOn = prefs.getBoolean("ss_pageAdvanced", false)
+        val isPage = open.preset == net.typeblog.socks.util.sheet.SheetPreset.PAGE
+        syncSheetToolbar(sheetOverlaySnapshot(), checking = true)
+        store.runCheck(uidOn, simpleOn, advancedOn, isPage) { valid, dead ->
+            sheetBubbleScope.launch {
+                val snap = withContext(Dispatchers.IO) {
+                    sheetBubbleCoordinator.load(fileId)
+                }
+                if (sheetOverlay?.isShowing() == true && snap != null) {
+                    lastSheetSnapshot = snap
+                    sheetOverlay?.render(snap)
+                    syncSheetToolbar(snap)
+                }
+                toast(checkCounts(valid, dead))
+            }
+        }
+    }
+
+    /** Bubble Auto toggle: the same ss_autoCheck switch the app honors. */
+    private fun toggleSheetBubbleAuto() {
+        val on = !sheetBubbleCoordinator.isAutoCheckOn()
+        sheetBubbleCoordinator.setAutoCheckOn(on)
+        syncSheetToolbar(sheetOverlaySnapshot())
+    }
+
+    private fun sheetOverlaySnapshot(): net.typeblog.socks.util.sheet.SheetBubbleSnapshot? =
+        lastSheetSnapshot
+
+    private fun syncSheetToolbar(
+        snapshot: net.typeblog.socks.util.sheet.SheetBubbleSnapshot?,
+        checking: Boolean? = null
+    ) {
+        val overlay = sheetOverlay ?: return
+        val store = net.typeblog.socks.util.sheet.SheetStore.get(this)
+        overlay.renderToolbar(
+            canUndo = snapshot?.canUndo == true,
+            canRedo = snapshot?.canRedo == true,
+            checking = checking ?: store.checking.value,
+            autoCheck = sheetBubbleCoordinator.isAutoCheckOn()
+        )
+    }
+
+    /** Zero counts are not mentioned: "Dead 3.", "Alive 2.", "Alive 2, Dead 1.". */
+    private fun checkCounts(valid: Int, dead: Int): String {
+        val parts = buildList {
+            if (valid > 0) add("Alive $valid")
+            if (dead > 0) add("Dead $dead")
+        }
+        return if (parts.isEmpty()) "No UID to check." else parts.joinToString(", ") + "."
     }
 
     /** No Sheet file is configured for the bubble: open the app on its tab. */

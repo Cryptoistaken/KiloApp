@@ -21,7 +21,10 @@ data class SheetBubbleSnapshot(
     // and hidden columns, so the small window renders the file exactly.
     val dups: Set<Pair<Int, String>> = emptySet(),
     val styles: Map<String, CellStyle> = emptyMap(),
-    val hidden: Set<String> = emptySet()
+    val hidden: Set<String> = emptySet(),
+    // DB undo/redo depth for the toolbar buttons.
+    val canUndo: Boolean = false,
+    val canRedo: Boolean = false
 )
 
 /** The old bubble accepts Facebook cookies only when they look complete. */
