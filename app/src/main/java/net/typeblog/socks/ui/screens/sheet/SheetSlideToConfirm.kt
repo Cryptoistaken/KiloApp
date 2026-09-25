@@ -183,8 +183,16 @@ fun SlideToConfirmButton(
                         stateDescription =
                             if (confirmed) confirmedLabel
                             else "$label, ${(progress * 100).toInt()} percent"
-                        onClick(label = "Confirm withdrawal") {
-                            fire()
+                        onClick(label = "Confirm $label") {
+                            // Same contract as the keyboard path: drive the
+                            // knob to the end before firing, so an
+                            // accessibility activation cannot skip the drag.
+                            scope.launch {
+                                if (knob.value >= maxX - endPx) {
+                                    knob.animateTo(maxX)
+                                    fire()
+                                }
+                            }
                             true
                         }
                     },

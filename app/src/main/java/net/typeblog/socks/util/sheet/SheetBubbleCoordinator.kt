@@ -280,8 +280,10 @@ class SheetBubbleCoordinator(context: Context) {
 
         val parsed = parseBubbleClipboard(clipboardText?.take(32_000))
         var cookieChanged = false
+        var noFreeRow = false
         if (parsed.type == BubbleClipboardType.COOKIE) {
             val active = findBubbleActiveRow(rows, file.preset)
+            if (active < 0) noFreeRow = true
             if (active >= 0 && rows[active].cookies.isBlank() && !cookieDuplicate(rows, active, parsed.value)) {
                 rows[active] = rows[active].copy(
                     cookies = parsed.value,
@@ -295,6 +297,7 @@ class SheetBubbleCoordinator(context: Context) {
             }
         } else if (parsed.type == BubbleClipboardType.TWO_FA && usesBubbleTwoFa(file.preset)) {
             val active = findBubbleActiveRow(rows, file.preset)
+            if (active < 0) noFreeRow = true
             if (active >= 0 && rows[active].twofakey.isBlank() && !keyDuplicate(rows, active, parsed.value)) {
                 rows[active] = rows[active].copy(twofakey = parsed.value)
                 changedRows += active
@@ -320,6 +323,8 @@ class SheetBubbleCoordinator(context: Context) {
         val changed = saved && changedRows.isNotEmpty()
         val resultMessage = if (changed) message else if (changedRows.isNotEmpty()) {
             "Couldn't save. Please try again."
+        } else if (noFreeRow) {
+            "This Sheet file has no free row. Open the Sheet tab to add one."
         } else {
             ""
         }

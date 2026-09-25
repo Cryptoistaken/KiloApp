@@ -69,12 +69,13 @@ class CircleBubbleMenu(
     private val openStaggerLineMs = 60L
     private val closeStaggerMs = 70L
     private val springStiffness = 300f
+
     // framer damping 30 at stiffness 300 -> ratio 30 / (2 * sqrt(300)).
     private val springDamping = 0.866f
 
     private fun isLineAlign(align: String): Boolean =
         align == CIRCLE_UP || align == CIRCLE_DOWN ||
-            align == CIRCLE_RIGHT || align == CIRCLE_LEFT
+                align == CIRCLE_RIGHT || align == CIRCLE_LEFT
 
     private var windowManager: WindowManager =
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -92,6 +93,7 @@ class CircleBubbleMenu(
     private var lastProxySubColor: Int = Color.WHITE
     private var winParams: WindowManager.LayoutParams? = null
     private var proxySubView: android.widget.TextView? = null
+
     // SMS bubble live state: envelope icon vs 7-min expiry ring.
     private var smsIcon: ImageView? = null
     private var smsRing: ExpiryRingView? = null
@@ -102,6 +104,7 @@ class CircleBubbleMenu(
             handler.postDelayed(this, 1000)
         }
     }
+
     // Glyph scale fractions per item (Proxy 0.58, rest 0.4) — must match show().
     private var hiding = false
     private var animGen = 0
@@ -244,10 +247,6 @@ class CircleBubbleMenu(
                 if (i == 1) {
                     contentDescription = "SMS numbers"
                     setOnClickListener { onSmsTap() }
-                    setOnLongClickListener {
-                        onSmsLongPress()
-                        true
-                    }
                     // SMS mirrors the HTML MenuItem tap contract: 550ms
                     // long-press opens the popup, 300ms double-tap window
                     // regenerates, single tap is delayed 300ms so a double
@@ -257,12 +256,22 @@ class CircleBubbleMenu(
                     var lpFired = false
                     val lpRunnable = Runnable {
                         if (!isShowing()) return@Runnable
+                        // The platform long-click (accessibility activation)
+                        // and this timer are the same gesture: fire once only.
+                        if (lpFired) return@Runnable
                         lpFired = true
                         try {
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         } catch (_: Exception) {
                         }
                         onSmsLongPress()
+                    }
+                    setOnLongClickListener {
+                        if (!lpFired) {
+                            lpFired = true
+                            onSmsLongPress()
+                        }
+                        true
                     }
                     setOnTouchListener { v, ev ->
                         when (ev.actionMasked) {
@@ -272,6 +281,7 @@ class CircleBubbleMenu(
                                 handler.postDelayed(lpRunnable, 550)
                                 false
                             }
+
                             MotionEvent.ACTION_UP -> {
                                 handler.removeCallbacks(lpRunnable)
                                 v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
@@ -298,12 +308,14 @@ class CircleBubbleMenu(
                                     true
                                 }
                             }
+
                             MotionEvent.ACTION_CANCEL -> {
                                 handler.removeCallbacks(lpRunnable)
                                 v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
                                 lpFired = false
                                 true
                             }
+
                             else -> false
                         }
                     }
@@ -313,6 +325,7 @@ class CircleBubbleMenu(
                             MotionEvent.ACTION_DOWN -> {
                                 v.animate().scaleX(1.1f).scaleY(1.1f).setDuration(100).start()
                             }
+
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
                                 v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
                         }
@@ -405,10 +418,12 @@ class CircleBubbleMenu(
             }
         }
 
-        root.addView(box, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
+        root.addView(
+            box, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
         container = box
 
         val params = WindowManager.LayoutParams(
@@ -416,7 +431,7 @@ class CircleBubbleMenu(
             winH,
             overlayType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
