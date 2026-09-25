@@ -70,7 +70,7 @@
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Undo"
                 android:padding="4dp"
-                android:src="@drawable/ic_ss_undo" />
+                android:src="@drawable/ic_ss_undo_small" />
 
             <ImageButton
                 android:id="@+id/bubble_tool_redo"
@@ -80,7 +80,7 @@
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Redo"
                 android:padding="4dp"
-                android:src="@drawable/ic_ss_redo" />
+                android:src="@drawable/ic_ss_redo_small" />
 
             <!-- In-app Check split button parity: one joined 6dp pill (bg set
                  in code to primary / 38% when disabled), Check action left,
