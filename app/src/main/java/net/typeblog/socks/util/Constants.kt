@@ -94,6 +94,11 @@ object Constants {
     const val PREF_BACKUP_LAST_SIZE = "backup_last_size"
     const val PREF_BACKUP_LAST_ERROR = "backup_last_error"
 
+    // Names of the per-file workbooks written on the last mirror run. Kept so
+    // a renamed or deleted Sheet file has its old export removed instead of
+    // leaving an orphan in Downloads forever.
+    const val PREF_BACKUP_XLSX = "backup_xlsx_names"
+
     // Split-tunnel: single Include-only mode. Global keys (PREF_ADV_*) are the
     // single source of truth (written by SplitTunnelingScreen); the legacy
     // Exclude/Include selector is gone and the engine forces bypass=false.

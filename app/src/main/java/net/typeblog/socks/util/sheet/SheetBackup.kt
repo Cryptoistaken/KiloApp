@@ -20,6 +20,7 @@ import net.typeblog.socks.util.Constants.PREF_BACKUP_ENABLED
 import net.typeblog.socks.util.Constants.PREF_BACKUP_LAST_AT
 import net.typeblog.socks.util.Constants.PREF_BACKUP_LAST_ERROR
 import net.typeblog.socks.util.Constants.PREF_BACKUP_LAST_SIZE
+import net.typeblog.socks.util.Constants.PREF_BACKUP_XLSX
 import net.typeblog.socks.util.ProfileEntry
 import net.typeblog.socks.util.ProfileManager
 import org.json.JSONArray
@@ -166,11 +167,30 @@ object SheetBackup {
                 error = "Could not write the workbook"
             }
 
+            // One workbook per Sheet file, so each opens straight onto that
+            // file rather than behind a tab. Their headers are the same shape
+            // the Sheet tab import already understands, so a per-file workbook
+            // is a working fallback even without this app.
+            val perFile = linkedMapOf<String, ByteArray>()
+            val used = mutableSetOf(XLSX_NAME.lowercase())
+            for (f in snap.files) {
+                val name = fileSafeName(f.name.ifBlank { f.preset.title }, used)
+                val bytes = SheetBackupXlsx.writeFile(snap, f.id) ?: continue
+                perFile[name] = bytes
+                if (!writeDownloads(app, name, XLSX_MIME, bytes) && error == null) {
+                    error = "Could not write every sheet workbook"
+                }
+            }
+            prunePerFile(app, perFile.keys)
+
             folderUri(app)?.let { tree ->
                 if (!writeTree(app, Uri.parse(tree), JSON_NAME, JSON_MIME, json)) {
                     error = "Could not write to the backup folder"
                 }
                 writeTree(app, Uri.parse(tree), XLSX_NAME, XLSX_MIME, xlsx)
+                for ((name, bytes) in perFile) {
+                    writeTree(app, Uri.parse(tree), name, XLSX_MIME, bytes)
+                }
             }
 
             prefs(app).edit().apply {
@@ -187,6 +207,42 @@ object SheetBackup {
             -1
         }
     }
+
+    /** Remove workbooks for Sheet files that no longer exist or were renamed.
+     *  Tracked from the last run's name list rather than by scanning the
+     *  folder, so a file the user put there themselves is never touched. */
+    private fun prunePerFile(context: Context, keep: Set<String>) {
+        val app = context.applicationContext
+        val previous = try {
+            prefs(app).getStringSet(PREF_BACKUP_XLSX, emptySet()).orEmpty().toSet()
+        } catch (_: Exception) {
+            emptySet()
+        }
+        for (stale in previous - keep) {
+            if (deleteDownloads(app, stale)) {
+                Log.i(TAG, "Removed the workbook for a renamed or deleted sheet: $stale")
+            }
+        }
+        prefs(app).edit().putStringSet(PREF_BACKUP_XLSX, keep.toSet()).apply()
+    }
+
+    /** Filesystem-safe export name. Wider than the workbook's own 31-character
+     *  sheet-name rules, and it avoids the characters that break a FAT/exFAT SD
+     *  card or a Windows copy of the folder. */
+    private fun fileSafeName(raw: String, used: MutableSet<String>): String {
+        val cleaned = raw.map { if (it in ILLEGAL_FILE_CHARS || it.code < 0x20) '_' else it }
+            .joinToString("").trim().trimEnd('.', ' ').ifBlank { "Sheet" }
+        val base = cleaned.take(180)
+        var n = 1
+        while (true) {
+            val suffix = if (n == 1) "" else " $n"
+            val candidate = base.take(180 - suffix.length) + suffix + ".xlsx"
+            if (used.add(candidate.lowercase())) return candidate
+            n++
+        }
+    }
+
+    private const val ILLEGAL_FILE_CHARS = "<>:\"/\\|?*"
 
     /** App-private copy of the last two generations. Dies with the install
      *  like the database does, but costs nothing and gives in-app restore a
@@ -218,6 +274,31 @@ object SheetBackup {
 
     // ── Destinations ───────────────────────────────────────────────────────
 
+    /** insert() never replaces: a second row with the same display name is a
+     *  second file, so an un-deleted mirror would pile up a new copy on every
+     *  run and flood the folder. The match is scoped to our own subfolder -
+     *  name alone would delete an unrelated file the user keeps in Downloads. */
+    private fun deleteDownloads(context: Context, name: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        return try {
+            val resolver = context.applicationContext.contentResolver
+            val relative = Environment.DIRECTORY_DOWNLOADS + "/" + DOWNLOAD_SUBDIR
+            val existing = resolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Downloads._ID),
+                "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?",
+                arrayOf(name, relative), null
+            )?.use { c -> if (c.moveToFirst()) c.getLong(0) else null } ?: return false
+            resolver.delete(
+                ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, existing),
+                null, null
+            ) > 0
+        } catch (e: Exception) {
+            Log.e(TAG, "Downloads delete failed for $name", e)
+            false
+        }
+    }
+
     private fun writeDownloads(context: Context, name: String, mime: String, bytes: ByteArray): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             // Pre-29 needs a storage permission this app does not ask for, so
@@ -228,24 +309,7 @@ object SheetBackup {
         return try {
             val resolver = context.applicationContext.contentResolver
             val relative = Environment.DIRECTORY_DOWNLOADS + "/" + DOWNLOAD_SUBDIR
-
-            // insert() never replaces: a second row with the same display
-            // name is a second file, so an un-deleted mirror would pile up a
-            // new copy on every run and flood the Downloads folder. The
-            // match is scoped to our own subfolder - name alone would delete
-            // an unrelated file the user happens to keep in Downloads.
-            val existing = resolver.query(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                arrayOf(MediaStore.Downloads._ID),
-                "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?",
-                arrayOf(name, relative), null
-            )?.use { c -> if (c.moveToFirst()) c.getLong(0) else null }
-            if (existing != null) {
-                resolver.delete(
-                    ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, existing),
-                    null, null
-                )
-            }
+            deleteDownloads(context, name)
 
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)

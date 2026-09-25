@@ -84,6 +84,28 @@ internal object SheetBackupXlsx {
         return SheetXlsx.buildWorkbook(sheets)
     }
 
+    /** One Sheet file as a single-worksheet workbook, so it opens directly on
+     *  that file instead of behind a tab. Null when the file holds nothing,
+     *  which is also when the existing export refuses. */
+    fun writeFile(s: BackupSnapshot, id: String): ByteArray? {
+        val f = s.files.firstOrNull { it.id == id } ?: return null
+        val rows = s.rows[id].orEmpty()
+        if (rows.none { it.isData(f.preset.columns) }) return null
+        return SheetXlsx.buildWorkbook(
+            listOf(
+                SheetXlsx.XlsxSheet(
+                    f.name.ifBlank { f.preset.title }, ROW_HEADER,
+                    rows.map { r ->
+                        listOf(
+                            r.rowIdx.toString(), r.cookies, r.twofakey, r.uid, r.status,
+                            boolText(r.hold), boolText(r.approved), boolText(r.dead)
+                        )
+                    }
+                )
+            )
+        )
+    }
+
     // ── Read ───────────────────────────────────────────────────────────────
 
     /** Null when the bytes are not one of our backup workbooks, so the caller
