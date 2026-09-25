@@ -1517,11 +1517,10 @@ class FloatingControlService : Service() {
     }
 
     private fun startAsForeground() {
-        val fitted = NotifText.fit(text)
-        val notification = buildForegroundNotification(fitted)
+        val notification = buildForegroundNotification()
         // Seed the dedupe so the first poll tick does not rebuild and re-issue
         // a notification startForeground() has just posted.
-        lastNotificationText = fitted
+        lastNotificationText = NotifText.fit(currentNotificationText())
         lastNotificationState = state.name
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -1537,10 +1536,13 @@ class FloatingControlService : Service() {
         // Notification first -- decoding the large-icon bitmap and making
         // three PendingIntent calls on every tick -- only to discard it
         // because the text had not changed.
-        val latestText = NotifText.fit(text)
+        // NotifText.fit is applied here exactly as the old comparison read it
+        // back out of the built Notification's extras, so the dedupe key is
+        // unchanged.
+        val latestText = NotifText.fit(currentNotificationText())
         val latestState = state.name
         if (latestText == lastNotificationText && latestState == lastNotificationState) return
-        manager.notify(NOTIFICATION_ID, buildForegroundNotification(latestText))
+        manager.notify(NOTIFICATION_ID, buildForegroundNotification())
         lastNotificationText = latestText
         lastNotificationState = latestState
     }
@@ -1560,7 +1562,31 @@ class FloatingControlService : Service() {
         }
     }
 
-    private fun buildForegroundNotification(latestText: String): Notification {
+    /**
+     * The notification body text for the current state. Extracted so the
+     * dedupe in [updateForegroundNotification] can compare it without building
+     * a whole Notification first.
+     */
+    private fun currentNotificationText(): String {
+        return try {
+            when {
+                state == BubbleState.CONNECTED && !vpnService?.currentIp.isNullOrEmpty() -> {
+                    val ip = vpnService?.currentIp ?: ""
+                    val country = vpnService?.country ?: ""
+                    // Notification content stays plain ASCII (repo rule): no
+                    // flag emoji, no middle-dot separator.
+                    if (country.isNotEmpty()) "$country - $ip" else "$ip"
+                }
+                state == BubbleState.CONNECTED -> getString(R.string.notify_verifying)
+                state == BubbleState.CONNECTING -> getString(R.string.notify_establishing)
+                else -> getString(R.string.bubble_vpn_off)
+            }
+        } catch (e: Exception) {
+            "Floating control"
+        }
+    }
+
+    private fun buildForegroundNotification(): Notification {
         val connectIntent = Intent(ACTION_START_VPN).apply { setPackage(packageName) }
         val connectPending = PendingIntent.getBroadcast(
             this, 1, connectIntent,
@@ -1581,22 +1607,7 @@ class FloatingControlService : Service() {
         } catch (e: Exception) {
             "Floating control"
         }
-        val text = try {
-            when {
-                state == BubbleState.CONNECTED && !vpnService?.currentIp.isNullOrEmpty() -> {
-                    val ip = vpnService?.currentIp ?: ""
-                    val country = vpnService?.country ?: ""
-                    // Notification content stays plain ASCII (repo rule): no
-                    // flag emoji, no middle-dot separator.
-                    if (country.isNotEmpty()) "$country - $ip" else "$ip"
-                }
-                state == BubbleState.CONNECTED -> getString(R.string.notify_verifying)
-                state == BubbleState.CONNECTING -> getString(R.string.notify_establishing)
-                else -> getString(R.string.bubble_vpn_off)
-            }
-        } catch (e: Exception) {
-            "Floating control"
-        }
+        val text = currentNotificationText()
 
         val isConnected = state == BubbleState.CONNECTED || state == BubbleState.CONNECTING
         val buttonText = if (isConnected) getString(R.string.notify_action_disconnect)
@@ -1615,7 +1626,7 @@ class FloatingControlService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
-            .setContentText(latestText)
+            .setContentText(NotifText.fit(text))
             .setSmallIcon(R.drawable.ic_notification_transparent)
             .setLargeIcon(notifLargeIcon)
             .setContentIntent(contentIntent)
