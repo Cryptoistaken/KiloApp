@@ -84,22 +84,25 @@ data class SheetRow(
         "uid" -> uid
         else -> ""
     }
+
     fun withCell(key: String, value: String): SheetRow = when (key) {
         "cookies" -> copy(cookies = value)
         "twofakey" -> copy(twofakey = value)
         "uid" -> copy(uid = value)
         else -> this
     }
+
     fun isData(columns: List<SheetColumn>): Boolean {
         if (columns.any { cell(it.key).isNotEmpty() }) return true
         return uid.isNotEmpty() || status.isNotEmpty()
     }
+
     // Raw emptiness for storage trimming (Google values[][] parity: trailing
     // empties are never stored). Wider than isData: status-only rows trim too
     // only when every field and flag is empty.
     fun isEmptyRow(): Boolean =
         cookies.isEmpty() && twofakey.isEmpty() && uid.isEmpty() && status.isEmpty() &&
-            !hold && !approved && !dead
+                !hold && !approved && !dead
 }
 
 // Per-row check record: the details behind the dot verdict, recorded on
@@ -179,16 +182,6 @@ data class PasteResult(
     val skipped: Int,
     val cookiesWritten: Boolean,
     val note: String? = null
-)
-
-data class WalletTx(
-    val id: String,
-    val createdAt: Long,
-    val type: String,
-    val amount: Double,
-    val balanceAfter: Double,
-    val title: String,
-    val detail: String? = null
 )
 
 fun newFileId(): String = UUID.randomUUID().toString()

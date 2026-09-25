@@ -169,11 +169,6 @@ fun fmtDate(ts: Long): String {
     return f.format(java.util.Date(ts))
 }
 
-fun fmtUsd(v: Double): String {
-    val r = Math.round(v * 100) / 100.0
-    return if (r == 0.0) "0.00" else if (r == Math.floor(r)) "%,d".format(r.toLong()) else "%,.2f".format(r)
-}
-
 @Composable
 fun rowsIndicatorColor(): Color {
     return if (androidx.compose.foundation.isSystemInDarkTheme()) Color(0xFFEDEDED) else Color(0xFF525252)

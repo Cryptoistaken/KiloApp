@@ -31,18 +31,19 @@ import net.typeblog.socks.R
 import net.typeblog.socks.ui.screens.sheet.SheetArchiveTab
 import net.typeblog.socks.ui.screens.sheet.SheetDetailScreen
 import net.typeblog.socks.ui.screens.sheet.SheetFilesTab
-import net.typeblog.socks.ui.screens.sheet.SheetWalletTab
 
-private enum class SheetTab { FILES, WALLET, ARCHIVE }
+private enum class SheetTab { FILES, ARCHIVE }
 
 /**
- * Sheet tab: My Files / Wallet / Archive for regular users (admins in the
- * app get the same user-only views). Matches the SheetSubmit website home
- * tabs; data lives in the local-first SQLite store.
+ * Sheet tab: My Files / Archive for regular users (admins in the app get the
+ * same user-only views). Data lives in the local-first SQLite store.
  */
 @Composable
 fun SheetScreen(modifier: Modifier = Modifier) {
-    var tab by rememberSaveable { mutableStateOf(SheetTab.FILES) }
+    // Saved by name so a removed or renamed tab falls back to My Files
+    // instead of failing to deserialize the saved enum on restore.
+    var tabName by rememberSaveable { mutableStateOf(SheetTab.FILES.name) }
+    val tab = SheetTab.entries.firstOrNull { it.name == tabName } ?: SheetTab.FILES
     // Open file as saveable primitives: a custom data class in
     // rememberSaveable crashes state save on backgrounding, which is why
     // the app used to drop back to Home.
@@ -68,40 +69,34 @@ fun SheetScreen(modifier: Modifier = Modifier) {
 
     Column(modifier = modifier.fillMaxSize()) {
         if (!selecting) {
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .padding(top = 16.dp)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .border(
-                    1.dp,
-                    MaterialTheme.colorScheme.outlineVariant,
-                    androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(top = 16.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant,
+                        androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    )
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SheetHomeTab(
+                    selected = tab == SheetTab.FILES,
+                    icon = if (tab == SheetTab.FILES) R.drawable.ic_ss_myfiles_sel else R.drawable.ic_ss_myfiles_idle,
+                    label = "My Files",
+                    onClick = { tabName = SheetTab.FILES.name; selecting = false }
                 )
-                .padding(3.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            SheetHomeTab(
-                selected = tab == SheetTab.FILES,
-                icon = if (tab == SheetTab.FILES) R.drawable.ic_ss_myfiles_sel else R.drawable.ic_ss_myfiles_idle,
-                label = "My Files",
-                onClick = { tab = SheetTab.FILES; selecting = false }
-            )
-            SheetHomeTab(
-                selected = tab == SheetTab.ARCHIVE,
-                icon = if (tab == SheetTab.ARCHIVE) R.drawable.ic_ss_archive_sel else R.drawable.ic_ss_archive_idle,
-                label = "Archive",
-                onClick = { tab = SheetTab.ARCHIVE; selecting = false }
-            )
-            SheetHomeTab(
-                selected = tab == SheetTab.WALLET,
-                icon = if (tab == SheetTab.WALLET) R.drawable.ic_ss_wallet_sel else R.drawable.ic_ss_wallet_idle,
-                label = "Wallet",
-                onClick = { tab = SheetTab.WALLET; selecting = false }
-            )
-        }
+                SheetHomeTab(
+                    selected = tab == SheetTab.ARCHIVE,
+                    icon = if (tab == SheetTab.ARCHIVE) R.drawable.ic_ss_archive_sel else R.drawable.ic_ss_archive_idle,
+                    label = "Archive",
+                    onClick = { tabName = SheetTab.ARCHIVE.name; selecting = false }
+                )
+            }
         }
         when (tab) {
             SheetTab.FILES -> SheetFilesTab(
@@ -109,7 +104,6 @@ fun SheetScreen(modifier: Modifier = Modifier) {
                 onSelectionModeChange = { selecting = it },
                 modifier = Modifier.weight(1f)
             )
-            SheetTab.WALLET -> SheetWalletTab(modifier = Modifier.weight(1f))
             SheetTab.ARCHIVE -> SheetArchiveTab(
                 onOpenArchived = { openId = it; openArchived = true },
                 onSelectionModeChange = { selecting = it },

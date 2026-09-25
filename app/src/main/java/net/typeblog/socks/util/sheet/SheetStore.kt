@@ -39,9 +39,7 @@ private data class OpenSnapshot(
 
 private data class RefreshSnapshot(
     val files: List<SheetFile>,
-    val archive: List<SheetFile>,
-    val balance: Double,
-    val txs: List<WalletTx>
+    val archive: List<SheetFile>
 )
 
 private data class CheckContext(
@@ -69,8 +67,6 @@ class SheetStore private constructor(context: Context) {
 
     val files = MutableStateFlow<List<SheetFile>>(emptyList())
     val archive = MutableStateFlow<List<SheetFile>>(emptyList())
-    val balance = MutableStateFlow(0.0)
-    val txs = MutableStateFlow<List<WalletTx>>(emptyList())
 
     val openFile = MutableStateFlow<SheetFile?>(null)
     val openRows = MutableStateFlow<List<SheetRow>>(emptyList())
@@ -102,17 +98,13 @@ class SheetStore private constructor(context: Context) {
                 val next = locked {
                     RefreshSnapshot(
                         files = db.listFiles(false),
-                        archive = db.listFiles(true),
-                        balance = db.walletBalance(),
-                        txs = db.walletTxs()
+                        archive = db.listFiles(true)
                     )
                 }
                 locked {
                     if (generation == refreshGeneration) {
                         files.value = next.files
                         archive.value = next.archive
-                        balance.value = next.balance
-                        txs.value = next.txs
                     }
                 }
             } catch (e: Exception) {
@@ -1270,41 +1262,6 @@ class SheetStore private constructor(context: Context) {
         }
     }
 
-    fun requestWithdraw(amount: Double, method: String, account: String): Boolean = locked {
-        if (!amount.isFinite() || amount <= 0.0) return@locked false
-        val trimmedAccount = account.trim()
-        if (trimmedAccount.isEmpty()) return@locked false
-        val balanceBefore = try {
-            db.walletBalance()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to read wallet balance", e)
-            return@locked false
-        }
-        if (!balanceBefore.isFinite() || amount > balanceBefore) return@locked false
-        val now = System.currentTimeMillis()
-        val after = balanceBefore - amount
-        val transaction = WalletTx(
-            id = newFileId(),
-            createdAt = now,
-            type = "DEBIT",
-            amount = amount,
-            balanceAfter = after,
-            title = "Withdrawal: $method",
-            detail = maskAccount(trimmedAccount)
-        )
-        try {
-            db.tx { d ->
-                db.setWalletBalance(d, after)
-                db.insertWalletTx(d, transaction)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to persist wallet withdrawal", e)
-            return@locked false
-        }
-        refresh()
-        true
-    }
-
     companion object {
         @Volatile
         private var instance: SheetStore? = null
@@ -1319,12 +1276,4 @@ class SheetStore private constructor(context: Context) {
     private fun rowsToJson(rows: List<SheetRow>): String = encodeSheetRows(rows)
 
     private fun rowsFromJson(data: String): List<SheetRow> = decodeSheetRows(data)
-}
-
-fun maskAccount(account: String): String {
-    val value = account.trim()
-    if (value.isEmpty()) return "-"
-    if (value.length > 12) return "${value.take(6)}...${value.takeLast(4)}"
-    if (value.length > 4) return ".... ${value.takeLast(4)}"
-    return value
 }

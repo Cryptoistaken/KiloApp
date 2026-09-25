@@ -506,51 +506,6 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
         db.delete("redo_hist", "fileId=?", arrayOf(fileId))
     }
 
-    fun walletBalance(): Double {
-        readableDatabase.rawQuery("SELECT v FROM wallet_kv WHERE k='balance'", null).use { c ->
-            if (!c.moveToFirst()) return 0.0
-            return c.getString(0).toDoubleOrNull() ?: 0.0
-        }
-    }
-
-    fun setWalletBalance(db: SQLiteDatabase, v: Double) {
-        val inserted = db.insertWithOnConflict(
-            "wallet_kv", null, cv("k" to "balance", "v" to v.toString()),
-            SQLiteDatabase.CONFLICT_REPLACE
-        )
-        if (inserted == -1L) throw IllegalStateException("Wallet balance write failed")
-    }
-
-    fun walletTxs(): List<WalletTx> {
-        val out = mutableListOf<WalletTx>()
-        readableDatabase.rawQuery(
-            "SELECT id,createdAt,type,amount,balanceAfter,title,detail FROM wallet_tx ORDER BY createdAt DESC LIMIT 200",
-            null
-        ).use { c ->
-            while (c.moveToNext()) {
-                out.add(
-                    WalletTx(
-                        id = c.getString(0), createdAt = c.getLong(1), type = c.getString(2),
-                        amount = c.getDouble(3), balanceAfter = c.getDouble(4),
-                        title = c.getString(5), detail = c.getString(6)
-                    )
-                )
-            }
-        }
-        return out
-    }
-
-    fun insertWalletTx(db: SQLiteDatabase, t: WalletTx) {
-        db.insertOrThrow(
-            "wallet_tx", null,
-            cv(
-                "id" to t.id, "createdAt" to t.createdAt, "type" to t.type,
-                "amount" to t.amount, "balanceAfter" to t.balanceAfter,
-                "title" to t.title, "detail" to t.detail
-            )
-        )
-    }
-
     private fun countDataRows(fileId: String): Int {
         readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM rows WHERE fileId=? AND (cookies<>'' OR twofakey<>'' OR uid<>'' OR status<>'')",
