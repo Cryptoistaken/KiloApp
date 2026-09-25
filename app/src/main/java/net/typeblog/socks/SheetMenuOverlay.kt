@@ -180,6 +180,11 @@ class SheetMenuOverlay(
         lifecycleOwner = owner
         compose?.let { cv ->
             cv.visibility = View.GONE
+            // Tags must sit on the window root: ComposeView resolves its
+            // parent composition context (and recomposer) by walking UP
+            // from its parent, so owners on the ComposeView itself are
+            // never found (ViewTreeLifecycleOwner not found crash).
+            attachTreeOwners(root, owner)
             attachTreeOwners(cv, owner)
             owner.create()
             cv.setContent {
