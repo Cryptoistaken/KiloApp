@@ -19,6 +19,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -49,8 +50,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import net.typeblog.socks.ui.screens.sheet.SheetGrid
-import net.typeblog.socks.ui.theme.KiloProxyTheme
 import net.typeblog.socks.ui.screens.sheet.SheetGrid
 import net.typeblog.socks.ui.theme.KiloProxyTheme
 import net.typeblog.socks.util.ThemeMode

@@ -1328,7 +1328,7 @@ fun SheetDetailScreen(
                 dotRowIdx = dotRowIdx,
                 listState = gridState,
                 interactions = SheetGridInteractions(
-                    onCellClick = { row, col ->
+                    onCellClick = cellClick@{ row, col ->
                         val selKey = Pair(row.rowIdx, col.key)
 if (readOnly) {
                                                 // Archived view: single tap selects,
@@ -1343,18 +1343,18 @@ if (readOnly) {
                                                         clipboard.setText(AnnotatedString(v))
                                                         toast(appCtx, "Copied.")
                                                     }
-                                                    return@combinedClickable
+                                                    return@cellClick
                                                 }
                                                 if (lastTapCell == selKey) {
                                                     lastTapCell = null
                                                     menuCell = selKey
-                                                    return@combinedClickable
+                                                    return@cellClick
                                                 }
                                                 lastTapCell = selKey
                                                 lastTapTime = now
                                                 selectedCell = selKey
                                                 draft = row.cell(col.key)
-                                                return@combinedClickable
+                                                return@cellClick
                                             }
                                             if (selectionMode) {
                                                 selectedItems = if (selectedItems.contains(selKey)) {
@@ -1364,14 +1364,14 @@ if (readOnly) {
                                                 } else {
                                                     selectedItems + selKey
                                                 }
-                                                return@combinedClickable
+                                                return@cellClick
                                             }
                                             if (row.locked) {
                                                 toast(
                                                     appCtx,
                                                     if (row.hold) "On hold. Editing is locked." else "Approved."
                                                 )
-                                                return@combinedClickable
+                                                return@cellClick
                                             }
                                             val now = System.currentTimeMillis()
                                             if (lastTapCell == selKey && now - lastTapTime < 400) {
@@ -1383,14 +1383,14 @@ if (readOnly) {
                                                 val v = row.cell(col.key)
                                                 if (v.isNotEmpty()) copyCell(selKey.first, selKey.second)
                                                 else pasteInto(selKey.first, selKey.second)
-                                                return@combinedClickable
+                                                return@cellClick
                                             }
                                             if (lastTapCell == selKey) {
                                                 // Slow second tap on the same cell:
                                                 // Sheets-style Cut/Copy/Paste menu.
                                                 lastTapCell = null
                                                 menuCell = selKey
-                                                return@combinedClickable
+                                                return@cellClick
                                             }
                                             if (selectedCell != null && selectedCell != selKey) {
                                                 commitDraft()
@@ -1403,14 +1403,14 @@ if (readOnly) {
                                             draft = row.cell(col.key)
                                         }
                     },
-                    onCellLongClick = { row, col ->
+                    onCellLongClick = cellLongClick@{ row, col ->
                         val selKey = Pair(row.rowIdx, col.key)
 if (!readOnly && row.locked) {
                                                 toast(
                                                     appCtx,
                                                     if (row.hold) "On hold. Editing is locked." else "Approved."
                                                 )
-                                                return@combinedClickable
+                                                return@cellLongClick
                                             }
                                             haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                             selectionMode = true
@@ -1433,7 +1433,7 @@ if (!readOnly && row.locked) {
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                         enterMulti(colCells(ck))
                     },
-                    onDotClick = { row ->
+                    onDotClick = dotClick@{ row ->
 // Tap-again on the open dot closes it, like
                                             // the mock; otherwise tap copies the 2FA code.
                                             if (dotRowIdx == row.rowIdx && !dotWide) {
