@@ -128,6 +128,43 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
         return out
     }
 
+    // Backup dump: every file regardless of archived state, without the five
+    // per-file COUNT subqueries listFiles runs. Counts are a UI concern; a
+    // dump reads raw columns once.
+    fun allFiles(): List<SheetFile> {
+        val db = readableDatabase
+        val out = mutableListOf<SheetFile>()
+        db.rawQuery(
+            "SELECT id,name,preset,password,archived,deletedAt,createdAt,updatedAt,seq FROM files",
+            null
+        ).use { c ->
+            while (c.moveToNext()) {
+                out.add(
+                    SheetFile(
+                        id = c.getString(0), name = c.getString(1),
+                        preset = SheetPreset.of(c.getString(2)), password = c.getString(3),
+                        archived = c.getInt(4) == 1, deletedAt = c.getLong(5),
+                        createdAt = c.getLong(6), updatedAt = c.getLong(7), seq = c.getLong(8)
+                    )
+                )
+            }
+        }
+        return out
+    }
+
+    // Load-backup: drop every row of every sheet-owned table so a restore
+    // cannot merge into leftovers from the previous install. The same list
+    // deleteFileAll walks per file; keep the two in sync.
+    fun clearAllSheets(db: SQLiteDatabase) {
+        for (t in listOf(
+            "rows", "styles", "hidden_cols", "row_checks", "check_reqs",
+            "undo_hist", "redo_hist", "journal", "snapshots",
+            "wallet_kv", "wallet_tx", "outbox", "files"
+        )) {
+            db.delete(t, null, null)
+        }
+    }
+
     fun getFile(id: String): SheetFile? {
         readableDatabase.rawQuery(
             "SELECT id,name,preset,password,archived,deletedAt,createdAt,updatedAt,seq FROM files WHERE id=?",

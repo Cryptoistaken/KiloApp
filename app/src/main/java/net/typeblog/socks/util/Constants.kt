@@ -23,19 +23,23 @@ object Constants {
     const val PREF_PROFILE = "profile"
     const val PREF_LAST_PROFILE = "last_profile"
     const val PREF_ADV_PER_APP = "adv_per_app"
+
     // Legacy: Exclude/Include selector, removed in the single-mode (Include-only)
     // rework. Kept so the one-time migration can delete it; nothing reads it.
     const val PREF_ADV_APP_BYPASS = "adv_app_bypass"
     const val PREF_ADV_APP_LIST = "adv_app_list"
+
     // One-time migration flag for the single-mode rework: wipes split-tunnel
     // config (global + per-profile) while keeping proxy profiles, so split
     // starts OFF for updaters. See SocksApplication.migrateSplitSingleMode.
     const val PREF_SPLIT_SINGLE_MODE_MIGRATED = "split_single_mode_migrated_v1"
     const val PREF_THEME_MODE = "theme_mode"
     const val PREF_AUTO_STOP = "auto_stop"
+
     // Accelerator master gate for repeat-connect experiments. Default OFF,
     // which keeps every path below on stock behavior.
     const val PREF_VPN_ACCELERATOR = "vpn_accelerator"
+
     // Advanced Settings options. Honored by the engine only while the
     // accelerator master toggle is ON. Defaults preserve stock behavior.
     const val PREF_ACCEL_PRIMARY = "accel_primary"
@@ -55,6 +59,7 @@ object Constants {
     const val BUBBLE_STYLE_CIRCLE = "circle"
     const val PREF_BUBBLE_X = "bubble_x"
     const val PREF_BUBBLE_Y = "bubble_y"
+
     // Floating circle menu (long-press on the bubble): 4 bubbles around it.
     const val PREF_CIRCLE_ALIGN = "circle_align"
     const val CIRCLE_SMALL = "circle-small"
@@ -63,6 +68,7 @@ object Constants {
     const val CIRCLE_RIGHT = "line-right"
     const val CIRCLE_LEFT = "line-left"
     const val PREF_CIRCLE_SIZE = "circle_size"
+
     // File UUID selected once from the full Sheet file-card menu for the
     // floating Sheet bubble. It is a pointer only; sheet.db remains the source
     // of truth for the file and rows.
@@ -70,10 +76,24 @@ object Constants {
     const val CIRCLE_SIZE_DEFAULT = 48
     const val CIRCLE_SIZE_MIN = 36
     const val CIRCLE_SIZE_MAX = 72
+
     // SMS bubble: last used digit range (e.g. 23762 from 23762XXX) so
     // single/double tap keep working after restarts.
     const val PREF_SMS_LAST_RANGE = "sms_last_range"
     const val PREF_SKIPPED_UPDATE_VERSION = "skipped_update_version"
+
+    // Backup page. The mirror itself lives outside the sandbox (MediaStore
+    // Downloads, or a folder the user picked), because /data/data and
+    // Android/data are both deleted on uninstall and on clear app data.
+    // PREF_BACKUP_ENABLED gates the debounced post-change mirror; manual
+    // "Back up now" ignores it. PREF_BACKUP_DIR holds a persisted SAF tree
+    // URI and is empty until the user picks one.
+    const val PREF_BACKUP_ENABLED = "backup_enabled"
+    const val PREF_BACKUP_DIR = "backup_dir"
+    const val PREF_BACKUP_LAST_AT = "backup_last_at"
+    const val PREF_BACKUP_LAST_SIZE = "backup_last_size"
+    const val PREF_BACKUP_LAST_ERROR = "backup_last_error"
+
     // Split-tunnel: single Include-only mode. Global keys (PREF_ADV_*) are the
     // single source of truth (written by SplitTunnelingScreen); the legacy
     // Exclude/Include selector is gone and the engine forces bypass=false.

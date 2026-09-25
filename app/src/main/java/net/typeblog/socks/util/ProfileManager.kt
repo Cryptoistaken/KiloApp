@@ -9,6 +9,18 @@ import net.typeblog.socks.util.Constants.PREF
 import net.typeblog.socks.util.Constants.PREF_LAST_PROFILE
 import net.typeblog.socks.util.Constants.PREF_PROFILE
 
+/**
+ * One stored profile setting, decrypted, for the backup mirror.
+ *
+ * The encrypted prefs file itself is worthless off-device: the master key is
+ * a non-exportable AndroidKeyStore entry, so restoring its bytes onto another
+ * phone yields prefs the app cannot read and ProfileManager wipes on sight.
+ * The backup therefore carries the plaintext values with their type, and
+ * importEntries writes them back through the ordinary path so the receiving
+ * device re-encrypts them under its own key.
+ */
+data class ProfileEntry(val key: String, val type: String, val value: String)
+
 class ProfileManager private constructor(context: Context) {
     private val mContext: Context = context.applicationContext
     private val mPref: SharedPreferences
@@ -25,8 +37,10 @@ class ProfileManager private constructor(context: Context) {
                     val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
                     ks.load(null)
                     ks.deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
-                } catch (_: Exception) {}
-            } catch (_: Exception) {}
+                } catch (_: Exception) {
+                }
+            } catch (_: Exception) {
+            }
             createEncryptedPrefs(mContext)
         }
         mFactory = ProfileFactory.getInstance(mContext, mPref)
@@ -124,8 +138,51 @@ class ProfileManager private constructor(context: Context) {
         return true
     }
 
+    /**
+     * Backup: every profile setting this file holds, decrypted. Covers the
+     * profile name list, the active profile and each profile's server, port,
+     * credentials, DNS, route, per-app list and flags, because they all live
+     * under the same prefs file.
+     */
+    @Synchronized
+    fun exportEntries(): List<ProfileEntry> = mPref.all.mapNotNull { (k, v) ->
+        when (v) {
+            is String -> ProfileEntry(k, "s", v)
+            is Int -> ProfileEntry(k, "i", v.toString())
+            is Boolean -> ProfileEntry(k, "b", v.toString())
+            is Float -> ProfileEntry(k, "f", v.toString())
+            is Long -> ProfileEntry(k, "l", v.toString())
+            // String sets and anything else are not written by Profile today;
+            // skipping is safer than guessing a lossy encoding for them.
+            else -> null
+        }
+    }
+
+    /**
+     * Load-backup: overwrite the settings the backup carries. Keys absent from
+     * the backup are left alone rather than deleted, so a restore can never
+     * remove a setting the older backup simply predates.
+     */
+    @Synchronized
+    fun importEntries(entries: List<ProfileEntry>) {
+        if (entries.isEmpty()) return
+        val ed = mPref.edit()
+        for (e in entries) {
+            when (e.type) {
+                "s" -> ed.putString(e.key, e.value)
+                "i" -> e.value.toIntOrNull()?.let { ed.putInt(e.key, it) }
+                "b" -> ed.putBoolean(e.key, e.value.toBoolean())
+                "f" -> e.value.toFloatOrNull()?.let { ed.putFloat(e.key, it) }
+                "l" -> e.value.toLongOrNull()?.let { ed.putLong(e.key, it) }
+            }
+        }
+        ed.apply()
+        reload()
+    }
+
     companion object {
-        @Volatile private var sInstance: ProfileManager? = null
+        @Volatile
+        private var sInstance: ProfileManager? = null
 
         @Synchronized
         fun getInstance(context: Context): ProfileManager {

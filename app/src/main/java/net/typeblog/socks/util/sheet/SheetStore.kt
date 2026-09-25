@@ -57,6 +57,7 @@ private data class CheckContext(
 // serialized mutation path below so file sequence, history, and check records
 // cannot diverge.
 class SheetStore private constructor(context: Context) {
+    private val appContext = context.applicationContext
     private val db = SheetDb(context.applicationContext)
     private val bubbleFilePrefs = PreferenceManager.getDefaultSharedPreferences(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -97,6 +98,9 @@ class SheetStore private constructor(context: Context) {
 
     fun refresh() {
         val generation = locked { ++refreshGeneration }
+        // Every mutation, app start and restore ends up here, so this one hook
+        // covers the debounced backup mirror without touching each write path.
+        SheetBackup.schedule(appContext)
         scope.launch {
             try {
                 val next = locked {
@@ -293,6 +297,12 @@ class SheetStore private constructor(context: Context) {
     }
 
     fun deleteForever(id: String) = locked {
+        val label = try {
+            db.getFile(id)?.name ?: "file"
+        } catch (_: Exception) {
+            "file"
+        }
+        SheetBackup.snapshot(appContext, "delete-$label")
         try {
             db.tx { d -> db.deleteFileAll(d, id) }
         } catch (e: Exception) {
@@ -341,6 +351,29 @@ class SheetStore private constructor(context: Context) {
         }
     }
 
+
+    /**
+     * Load-backup replaced the tables underneath every cached view. Drop them
+     * all and bump the generation so a half-open file cannot publish stale
+     * rows over the restored state.
+     */
+    fun onBackupRestored() = locked {
+        openGeneration.incrementAndGet()
+        openingFileId = null
+        checkToken++
+        checking.value = false
+        openFile.value = null
+        openRows.value = emptyList()
+        openStyles.value = emptyMap()
+        openHidden.value = emptySet()
+        openCrossDups.value = emptySet()
+        openChecks.value = emptyMap()
+        openCheckReqs.value = emptyMap()
+        undoStack.clear()
+        redoStack.clear()
+        publishHistoryLocked()
+        refresh()
+    }
 
     fun closeFile(expectedFileId: String? = null) {
         locked {
@@ -682,6 +715,7 @@ class SheetStore private constructor(context: Context) {
             return@locked null
         }
         val saved = meaningfulSheetRows(bounded).size
+        SheetBackup.snapshot(appContext, "replace-${file.name}")
         if (!persistRowsLocked(
                 fileId = fileId,
                 previous = before,
@@ -719,6 +753,7 @@ class SheetStore private constructor(context: Context) {
         val addition = meaningfulSheetRows(normalizedRows(incoming)).take(room)
         val merged = (current + addition).mapIndexed { index, row -> row.copy(rowIdx = index) }
         if (!reindexed && addition.isEmpty()) return@locked 0
+        SheetBackup.snapshot(appContext, "merge-${file.name}")
         if (!persistRowsLocked(
                 fileId = fileId,
                 previous = previous,
@@ -999,6 +1034,7 @@ class SheetStore private constructor(context: Context) {
 
     fun clearCells(cells: Set<Pair<Int, String>>) = locked {
         val file = openFile.value ?: return@locked
+        SheetBackup.snapshot(appContext, "clear-${file.name}")
         val before = openRows.value
         val rows = before.toMutableList()
         var touched = false
