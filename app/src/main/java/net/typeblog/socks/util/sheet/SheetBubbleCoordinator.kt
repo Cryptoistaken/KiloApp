@@ -69,8 +69,11 @@ class SheetBubbleCoordinator(context: Context) {
     fun undo(fileId: String): SheetBubbleHistoryResult {
         val file = validFile(fileId)
             ?: return SheetBubbleHistoryResult(null, false)
-        val prevData = try { db.loadUndoStack(fileId, 1) } catch (_: Exception) { emptyList() }
-            .firstOrNull() ?: return SheetBubbleHistoryResult(load(fileId), false)
+        // The tables load oldest-first while pop removes the newest: the
+        // step to restore is the LAST entry, not the first (first wipes
+        // every change at once). Tables are capped at 50, so this is whole.
+        val prevData = try { db.loadUndoStack(fileId, 50) } catch (_: Exception) { emptyList() }
+            .lastOrNull() ?: return SheetBubbleHistoryResult(load(fileId), false)
         applyHistory(file, decodeSheetRows(prevData), "undo")
         return SheetBubbleHistoryResult(load(fileId), true)
     }
@@ -78,8 +81,8 @@ class SheetBubbleCoordinator(context: Context) {
     fun redo(fileId: String): SheetBubbleHistoryResult {
         val file = validFile(fileId)
             ?: return SheetBubbleHistoryResult(null, false)
-        val nextData = try { db.loadRedoStack(fileId, 1) } catch (_: Exception) { emptyList() }
-            .firstOrNull() ?: return SheetBubbleHistoryResult(load(fileId), false)
+        val nextData = try { db.loadRedoStack(fileId, 50) } catch (_: Exception) { emptyList() }
+            .lastOrNull() ?: return SheetBubbleHistoryResult(load(fileId), false)
         applyHistory(file, decodeSheetRows(nextData), "redo")
         return SheetBubbleHistoryResult(load(fileId), true)
     }
@@ -178,6 +181,18 @@ class SheetBubbleCoordinator(context: Context) {
         val changedRows = linkedSetOf<Int>()
         var message = ""
 
+        // Bubble infinite scroll (in-app growRows parity at bubble scale):
+        // with 4 or fewer trailing empty rows left, append 5 fresh ones so
+        // the next captures always land. Growth rides the capture write.
+        val grownRows = linkedSetOf<Int>()
+        if (trailingEmptyCount(rows, file.preset) <= BUBBLE_MIN_TRAILING) {
+            val start = rows.size
+            repeat(BUBBLE_GROW_ROWS) {
+                rows.add(SheetRow(rowIdx = start + it))
+                grownRows += start + it
+            }
+        }
+
         // Long press is deliberately applied before clipboard capture. A
         // marker on a cookie-less row keeps that row active for its cookie;
         // a marker on a complete cookie row advances to the next row.
@@ -214,7 +229,7 @@ class SheetBubbleCoordinator(context: Context) {
             }
         }
 
-        if (changedRows.isNotEmpty()) {
+        if (changedRows.isNotEmpty() || grownRows.isNotEmpty()) {
             val now = System.currentTimeMillis()
             val seq = file.seq + 1
             val staleChecks = changedRows.filter { index ->
@@ -224,14 +239,14 @@ class SheetBubbleCoordinator(context: Context) {
                     before.uid != after.uid || before.status != after.status || before.dead != after.dead
             }.toSet()
             db.tx { d ->
-                for (index in changedRows) {
+                for (index in changedRows + grownRows) {
                     rows.getOrNull(index)?.let { db.upsertRow(d, fileId, it) }
                 }
                 db.saveSnapshot(d, fileId, seq, encodeSheetRows(rows))
                 db.updateFile(d, file.copy(updatedAt = now, seq = seq))
                 db.insertUndo(d, fileId, encodeSheetRows(previousRows))
                 db.clearRedo(d, fileId)
-                db.recordOp(d, fileId, "bubble")
+                db.recordOp(d, fileId, if (changedRows.isNotEmpty()) "bubble" else "bubble-grow")
                 db.deleteRowCheckData(d, fileId, staleChecks)
             }
             // Only publish editor state if the user happens to have this same
@@ -258,6 +273,12 @@ class SheetBubbleCoordinator(context: Context) {
         else db.loadRedoStack(fileId, 1).isNotEmpty()
     } catch (_: Exception) {
         false
+    }
+
+    /** Empty rows after the last data row; a dataless file has them all. */
+    private fun trailingEmptyCount(rows: List<SheetRow>, preset: SheetPreset): Int {
+        val lastData = rows.indexOfLast { it.isData(preset.columns) }
+        return if (lastData < 0) rows.size else rows.size - 1 - lastData
     }
 
     private fun effUid(r: SheetRow): String = r.uid.ifEmpty {

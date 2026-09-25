@@ -117,7 +117,7 @@
                     android:layout_height="24dp"
                     android:background="?android:attr/selectableItemBackgroundBorderless"
                     android:contentDescription="Check options"
-                    android:padding="7dp"
+                    android:padding="8dp"
                     android:src="@drawable/ic_ss_check_arrow" />
             </LinearLayout>
         </LinearLayout>
@@ -137,53 +137,31 @@
             android:layout_height="1dp"
             android:background="#E4E4E7" />
 
-        <!-- Fixed header row (like the in-app sticky header) + scrollable
-             data rows below it. -->
-        <LinearLayout
+        <!-- The shared SheetGrid component (same file view as the app,
+             hosted read-only in a ComposeView) + the empty state. -->
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:layout_marginTop="2dp"
-            android:orientation="vertical">
+            android:layout_marginTop="2dp">
 
-            <LinearLayout
-                android:id="@+id/bubble_sheet_header_row"
+            <androidx.compose.ui.platform.ComposeView
+                android:id="@+id/bubble_sheet_grid"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical" />
+                android:layout_height="match_parent"
+                android:overScrollMode="never"
+                android:scrollbars="vertical" />
 
-            <FrameLayout
+            <TextView
+                android:id="@+id/bubble_sheet_empty"
                 android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1">
-
-                <ScrollView
-                    android:id="@+id/bubble_sheet_scroll"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:fillViewport="true"
-                    android:overScrollMode="never"
-                    android:scrollbars="vertical">
-
-                    <LinearLayout
-                        android:id="@+id/bubble_sheet_rows"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:paddingBottom="4dp" />
-                </ScrollView>
-
-                <TextView
-                    android:id="@+id/bubble_sheet_empty"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:gravity="center"
-                    android:padding="16dp"
-                    android:text="No rows yet"
-                    android:textColor="#71717A"
-                    android:textSize="11sp"
-                    android:visibility="gone" />
-            </FrameLayout>
-        </LinearLayout>
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:padding="16dp"
+                android:text="No rows yet"
+                android:textColor="#71717A"
+                android:textSize="11sp"
+                android:visibility="gone" />
+        </FrameLayout>
     </LinearLayout>
 </FrameLayout>

@@ -1897,8 +1897,8 @@ class FloatingControlService : Service() {
                 sheetBubbleCoordinator.capture(fileId, clipboard, markNo2Fa)
             }
             if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
-            // Single render of the post-capture state (the full 500-row grid
-            // inflates once, not twice).
+            // Single render of the post-capture state (the shared lazy grid
+            // only composes visible rows, so any file size paints instantly).
             lastSheetSnapshot = result.snapshot
             sheetOverlay?.render(result.snapshot)
             syncSheetToolbar(result.snapshot)

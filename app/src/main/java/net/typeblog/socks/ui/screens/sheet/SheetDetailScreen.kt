@@ -99,25 +99,7 @@ private val PALETTE = listOf(
     "#16a34a", "#00acc1", "#0070f3", "#6366f1", "#795548"
 )
 
-private fun parseHexColor(hex: String?): Color? {
-    if (hex == null) return null
-    var h = hex.trim().removePrefix("#")
-    if (h.length == 3) {
-        h = h.map { "$it$it" }.joinToString("")
-    }
-    if (h.length != 6) return null
-    return try {
-        Color(
-            red = h.substring(0, 2).toInt(16),
-            green = h.substring(2, 4).toInt(16),
-            blue = h.substring(4, 6).toInt(16)
-        )
-    } catch (e: Exception) {
-        null
-    }
-}
-
-private fun styleKey(rowIdx: Int, colKey: String): String = "$rowIdx:$colKey"
+// styleKey/parseHexColor live in SheetUi.kt (shared with SheetGrid).
 
 // Dot card provider: right-aligned under the dot like the mock small
 // popup (plain Popup, NOT DropdownMenu — menus intrinsic-measure their
@@ -1328,137 +1310,27 @@ fun SheetDetailScreen(
                 )
             }
         } else {
-            androidx.compose.foundation.layout.BoxWithConstraints(
+            // The file grid is the shared SheetGrid component (also hosted
+            // read-only in the floating bubble): same layout, same cells,
+            // same status dots. Editor behavior lives in these closures.
+            SheetGrid(
+                rows = rows,
+                visibleCols = visibleCols,
+                styles = styles,
+                crossDups = crossDups,
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                val fitW = (maxWidth - 72.dp) / visibleCols.size.coerceAtLeast(1)
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    state = gridState
-                ) {
-                stickyHeader {
-                    Row(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .width(36.dp)
-                                .height(36.dp)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                .combinedClickable(
-                                    onClick = { enterMulti(allCells()) },
-                                    onLongClick = {
-                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                        enterMulti(allCells())
-                                    }
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {}
-                        for (col in visibleCols) {
-                            Box(
-                                modifier = Modifier
-                                    .width(fitW)
-                                    .height(36.dp)
-                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                    .combinedClickable(
-                                        onClick = { toggleMulti(colCells(col.key)) },
-                                        onLongClick = {
-                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                            enterMulti(colCells(col.key))
-                                        }
-                                    )
-                                    .padding(horizontal = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = col.label,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                        Box(
-                            modifier = Modifier
-                                .width(36.dp)
-                                .height(36.dp)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                            contentAlignment = Alignment.Center
-                        ) {}
-                    }
-                }
-                items(rows, key = { it.rowIdx }) { row ->
-                    // Cross-file dup paints the duplicate cell only; dots stay
-                    // on the account status and never change for duplicates.
-                    val statusColor: Color? = when {
-                        row.dead || row.status == "bad" -> DeadRed
-                        row.status == "eligible" -> PageBlue
-                        row.status == "good" || row.status == "done" -> AliveGreen
-                        else -> null
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .width(36.dp)
-                                .height(36.dp)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                .background(
-                                    if (row.approved && statusColor != null) statusColor
-                                    else MaterialTheme.colorScheme.surfaceVariant
-                                )
-                                .combinedClickable(
-                                    onClick = { toggleMulti(rowCells(row.rowIdx)) },
-                                    onLongClick = {
-                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                        enterMulti(rowCells(row.rowIdx))
-                                    }
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = (row.rowIdx + 1).toString(),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                            )
-                        }
-                        for (col in visibleCols) {
-                            val key = styleKey(row.rowIdx, col.key)
-                            val st = styles[key]
-                            val selKey = Pair(row.rowIdx, col.key)
-                            val isActive = selectedCell == selKey && !selectionMode
-                            val isMulti = selectedItems.contains(selKey)
-                            val isDup = crossDups.contains(selKey)
-                            val customBg = parseHexColor(st?.bg)
-                            val fg = parseHexColor(st?.color)
-                            val cellBg: Color = when {
-                                customBg != null -> customBg
-                                isMulti -> MaterialTheme.colorScheme.surfaceVariant
-                                isDup -> StatusYellow.copy(alpha = 0.15f)
-                                row.hold && statusColor != null -> statusColor
-                                row.approved && statusColor != null -> statusColor
-                                else -> Color.Transparent
-                            }
-                            val cellBorder: Color = when {
-                                isActive -> MaterialTheme.colorScheme.onSurface
-                                isMulti -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                                isDup -> StatusYellow
-                                else -> MaterialTheme.colorScheme.outlineVariant
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .width(fitW)
-                                    .height(36.dp)
-                                    .border(1.dp, cellBorder)
-                                    .background(cellBg)
-                                    .combinedClickable(
-                                        onClick = {
-                                            if (readOnly) {
+                    .fillMaxWidth(),
+                selectedCell = selectedCell,
+                selectionMode = selectionMode,
+                selectedItems = selectedItems,
+                menuCell = menuCell,
+                dotRowIdx = dotRowIdx,
+                listState = gridState,
+                interactions = SheetGridInteractions(
+                    onCellClick = { row, col ->
+                        val selKey = Pair(row.rowIdx, col.key)
+if (readOnly) {
                                                 // Archived view: single tap selects,
                                                 // double-tap copies, slow re-tap shows
                                                 // the Copy bar. Empty cells stay silent.
@@ -1529,9 +1401,11 @@ fun SheetDetailScreen(
                                             lastTapTime = now
                                             selectedCell = selKey
                                             draft = row.cell(col.key)
-                                        },
-                                        onLongClick = {
-                                            if (!readOnly && row.locked) {
+                                        }
+                    },
+                    onCellLongClick = { row, col ->
+                        val selKey = Pair(row.rowIdx, col.key)
+if (!readOnly && row.locked) {
                                                 toast(
                                                     appCtx,
                                                     if (row.hold) "On hold. Editing is locked." else "Approved."
@@ -1543,58 +1417,24 @@ fun SheetDetailScreen(
                                             selectedCell = null
                                             selectedItems = selectedItems + selKey
                                         }
-                                    )
-                                    .padding(horizontal = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                // Perf: grid cells always render the committed value.
-                                // Live typing lives only in the formula bar below, so
-                                // keystrokes no longer recompose the whole grid.
-                                Text(
-                                    text = row.cell(col.key),
-                                    fontSize = 13.sp,
-                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                    fontWeight = if (st?.bold == true) FontWeight.Bold else FontWeight.Normal,
-                                    color = fg ?: MaterialTheme.colorScheme.onSurface,
-                                    textDecoration = if (row.approved) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
-                                // Sheets-style tap-again bar: white floating line
-                                // with text buttons above the selected cell.
-                                if (menuCell == selKey) {
-                                    CellPopBar(
-                                        readOnly = readOnly,
-                                        onCut = { menuCell = null; cutCell(selKey.first, selKey.second) },
-                                        onCopy = { menuCell = null; copyCell(selKey.first, selKey.second) },
-                                        onPaste = { menuCell = null; pasteInto(selKey.first, selKey.second) },
-                                        onDismiss = { menuCell = null }
-                                    )
-                                }
-                            }
-                        }
-                        Box {
-                            val holdP = remember(row.rowIdx) { Animatable(0f) }
-                            val pressSource = remember(row.rowIdx) { MutableInteractionSource() }
-                            val pressed by pressSource.collectIsPressedAsState()
-                            LaunchedEffect(pressed) {
-                                // Hold progress bar under the dot, like the mock
-                                // hold-to-confirm. Release early snaps it back.
-                                if (pressed) holdP.animateTo(1f, tween(500))
-                                else holdP.snapTo(0f)
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .width(36.dp)
-                                    .height(36.dp)
-                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                    .background(MaterialTheme.colorScheme.surface)
-                                    .combinedClickable(
-                                        interactionSource = pressSource,
-                                        indication = null,
-                                        onClick = {
-                                            // Tap-again on the open dot closes it, like
+                    },
+                    onRowRailClick = { ri -> toggleMulti(rowCells(ri)) },
+                    onRowRailLongClick = { ri ->
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        enterMulti(rowCells(ri))
+                    },
+                    onCornerClick = { enterMulti(allCells()) },
+                    onCornerLongClick = {
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        enterMulti(allCells())
+                    },
+                    onHeaderClick = { ck -> toggleMulti(colCells(ck)) },
+                    onHeaderLongClick = { ck ->
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        enterMulti(colCells(ck))
+                    },
+                    onDotClick = { row ->
+// Tap-again on the open dot closes it, like
                                             // the mock; otherwise tap copies the 2FA code.
                                             if (dotRowIdx == row.rowIdx && !dotWide) {
                                                 dotRowIdx = null
@@ -1608,56 +1448,47 @@ fun SheetDetailScreen(
                                                     toast(appCtx, "Copied.")
                                                 }
                                             }
-                                        },
-                                        onLongClick = {
-                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                            dotRowIdx = row.rowIdx
-                                        }
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                StatusDot(
-                                    status = row.status,
-                                    dead = row.dead,
-                                    isDup = false
-                                )
-                                if (holdP.value > 0f) {
-                                    Box(
-                                        Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .fillMaxWidth(holdP.value)
-                                            .height(2.dp)
-                                            .background(AliveGreen)
-                                    )
-                                }
-                            }
-                            if (dotRowIdx == row.rowIdx && !dotWide) {
-                                Popup(
-                                    popupPositionProvider = dotCardProvider(),
-                                    onDismissRequest = { dotRowIdx = null },
-                                    properties = PopupProperties(focusable = true)
-                                ) {
-                                    DotPopupCard(
-                                        row = row,
-                                        check = openChecks[row.rowIdx],
-                                        reqs = openCheckReqs[row.rowIdx] ?: emptyList(),
-                                        dupSources = dotDups,
-                                        fileName = openFile?.name ?: "",
-                                        presetLabel = openFile?.preset?.name ?: "",
-                                        rowNo = row.rowIdx + 1,
-                                        checking = checking,
-                                        wide = false,
-                                        onToggleWide = { dotWide = true },
-                                        showHeader = false,
-                                        tab = dotTab,
-                                        onTabChange = { dotTab = it }
-                                    )
-                                }
-                            }
+                    },
+                    onDotLongClick = { row ->
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        dotRowIdx = row.rowIdx
+                    }
+                ),
+                cellPopup = { ri, ck ->
+                    CellPopBar(
+                        readOnly = readOnly,
+                        onCut = { menuCell = null; cutCell(ri, ck) },
+                        onCopy = { menuCell = null; copyCell(ri, ck) },
+                        onPaste = { menuCell = null; pasteInto(ri, ck) },
+                        onDismiss = { menuCell = null }
+                    )
+                },
+                dotPopup = { row ->
+                    if (dotRowIdx == row.rowIdx && !dotWide) {
+                        Popup(
+                            popupPositionProvider = dotCardProvider(),
+                            onDismissRequest = { dotRowIdx = null },
+                            properties = PopupProperties(focusable = true)
+                        ) {
+                            DotPopupCard(
+                                row = row,
+                                check = openChecks[row.rowIdx],
+                                reqs = openCheckReqs[row.rowIdx] ?: emptyList(),
+                                dupSources = dotDups,
+                                fileName = openFile?.name ?: "",
+                                presetLabel = openFile?.preset?.name ?: "",
+                                rowNo = row.rowIdx + 1,
+                                checking = checking,
+                                wide = false,
+                                onToggleWide = { dotWide = true },
+                                showHeader = false,
+                                tab = dotTab,
+                                onTabChange = { dotTab = it }
+                            )
                         }
                     }
-                }
-                item {
+                },
+                footer = {
                     if (!readOnly) {
                         // The sheet always holds 500 rows up front, so the cap
                         // is normally reached: then the footer is a static
@@ -1692,8 +1523,7 @@ fun SheetDetailScreen(
                         }
                     }
                 }
-                }
-            }
+            )
         }
 
         // Selection mode bottom bar: Copy + Paste + Clear floating card.

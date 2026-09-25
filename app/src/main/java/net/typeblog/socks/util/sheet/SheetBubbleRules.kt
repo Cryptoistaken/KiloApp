@@ -59,3 +59,8 @@ fun isBubbleRowComplete(row: SheetRow, preset: SheetPreset): Boolean {
 /** First unlocked incomplete row; -1 means the file has no writable active row. */
 fun findBubbleActiveRow(rows: List<SheetRow>, preset: SheetPreset): Int =
     rows.indexOfFirst { !it.locked && !isBubbleRowComplete(it, preset) }
+
+/** Bubble infinite scroll: grow the file when this many trailing empty rows remain. */
+const val BUBBLE_MIN_TRAILING = 4
+/** Empty rows appended per bubble growth. */
+const val BUBBLE_GROW_ROWS = 5

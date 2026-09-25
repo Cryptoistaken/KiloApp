@@ -32,6 +32,26 @@ import androidx.compose.foundation.Image
 // Shared bits for the Sheet port. Icons are 1:1 ports of the website SVGs
 // (res/drawable/ic_ss_*.xml); status colors match the site tokens.
 
+internal fun parseHexColor(hex: String?): Color? {
+    if (hex == null) return null
+    var h = hex.trim().removePrefix("#")
+    if (h.length == 3) {
+        h = h.map { "$it$it" }.joinToString("")
+    }
+    if (h.length != 6) return null
+    return try {
+        Color(
+            red = h.substring(0, 2).toInt(16),
+            green = h.substring(2, 4).toInt(16),
+            blue = h.substring(4, 6).toInt(16)
+        )
+    } catch (e: Exception) {
+        null
+    }
+}
+
+internal fun styleKey(rowIdx: Int, colKey: String): String = "$rowIdx:$colKey"
+
 val AliveGreen = Color(0xFF229342)
 val DeadRed = Color(0xFFE33B2E)
 val DupYellow = Color(0xFFEAB308)

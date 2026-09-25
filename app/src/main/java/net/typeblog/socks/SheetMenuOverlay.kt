@@ -2,14 +2,12 @@ package net.typeblog.socks
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.text.TextUtils
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -20,34 +18,58 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.TextView
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.ViewTreeLifecycleOwner
+import androidx.lifecycle.ViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.ViewTreeSavedStateRegistryOwner
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import net.typeblog.socks.ui.screens.sheet.SheetGrid
+import net.typeblog.socks.ui.theme.KiloProxyTheme
+import net.typeblog.socks.ui.screens.sheet.SheetGrid
+import net.typeblog.socks.ui.theme.KiloProxyTheme
 import net.typeblog.socks.util.ThemeMode
-import net.typeblog.socks.util.sheet.NO_2FA
 import net.typeblog.socks.util.sheet.SheetBubbleSnapshot
-import net.typeblog.socks.util.sheet.SheetColumn
 import net.typeblog.socks.util.sheet.SheetPreset
-import net.typeblog.socks.util.sheet.SheetRow
-import net.typeblog.socks.util.sheet.isNo2Fa
 
 /**
  * Sheet file window for the floating Circle menu. Same shell as the
  * proxy/SMS popups: fixed 230x280dp panel on menu_panel_bg, the same 44dp
- * top bar (file identity only — no close or "..." buttons, a tap outside
- * dismisses), the same smart four-side placement and grow-in.
+ * top bar (file identity plus undo / redo / Check split button — no close
+ * or "..." buttons, a tap outside dismisses), the same smart four-side
+ * placement and grow-in.
  *
- * Below the bar sits the in-app Check split button (one joined 6dp pill:
- * Check action left, options arrow right, spinner while checking, UID /
- * Simple / Advanced switches in the menu — same prefs and exclusivity as
- * the app) and then the in-app file grid at compact bubble size: fixed
- * header row plus every row of the file (all 500, empty ones included) in
- * a scrollable list — 24dp rows, 24dp row-number/dot rails, 10sp centered
- * monospace cells, site status colors, approved/hold fills, dup marks,
- * per-cell styles, and hidden columns. The 500 rows inflate in small
- * chunks across frames so the tap never freezes; after every render the
- * list scrolls to the active row, so newly captured clipboard data is
- * always on screen.
+ * The grid is the shared SheetGrid component hosted in a ComposeView — the
+ * exact file view from the app, read-only, at compact bubble metrics
+ * (24dp rows/rails, 10sp cells). LazyColumn virtualization means only
+ * visible rows compose, so the tap never freezes no matter the file size.
+ * Smart scroll recenters only on first paint and actual active-row moves;
+ * undo/redo/check re-renders stay put.
  */
 class SheetMenuOverlay(
     private val context: Context,
@@ -60,9 +82,7 @@ class SheetMenuOverlay(
     private var windowManager: WindowManager = createWindowManager()
     private val handler = Handler(Looper.getMainLooper())
     private var rootView: FrameLayout? = null
-    private var headerView: LinearLayout? = null
-    private var rowsView: LinearLayout? = null
-    private var scrollView: ScrollView? = null
+    private var composeView: ComposeView? = null
     private var emptyView: TextView? = null
     private var iconView: ImageView? = null
     private var nameView: TextView? = null
@@ -76,9 +96,15 @@ class SheetMenuOverlay(
     private var menuView: LinearLayout? = null
     private var lastSnapshot: SheetBubbleSnapshot? = null
     private var scrolledOnce = false
-    // Bumped on every render()/hide() so an in-flight chunked inflation
-    // stops as soon as a newer render (or dismiss) supersedes it.
-    private var renderSeq = 0
+    private var lastScrolledActive = Int.MIN_VALUE
+    // Composition state: the grid content reads the snapshot; scrollGen
+    // bumps only when a recenter is actually wanted (smart scroll).
+    private var snapshotState = mutableStateOf<SheetBubbleSnapshot?>(null)
+    private var scrollGenState = mutableIntStateOf(0)
+    private var scrollTarget = 0
+    private val gridListState = androidx.compose.foundation.lazy.LazyListState()
+    private var overlayScope: CoroutineScope? = null
+    private var lifecycleOwner: OverlayLifecycleOwner? = null
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
 
@@ -96,9 +122,7 @@ class SheetMenuOverlay(
             return
         }
         val panel = root.findViewById<LinearLayout>(R.id.bubble_sheet_panel) ?: return
-        val header = root.findViewById<LinearLayout>(R.id.bubble_sheet_header_row) ?: return
-        val rows = root.findViewById<LinearLayout>(R.id.bubble_sheet_rows) ?: return
-        val scroll = root.findViewById<ScrollView>(R.id.bubble_sheet_scroll)
+        val compose = root.findViewById<ComposeView>(R.id.bubble_sheet_grid)
         val empty = root.findViewById<TextView>(R.id.bubble_sheet_empty) ?: return
         val icon = root.findViewById<ImageView>(R.id.bubble_sheet_icon)
         val name = root.findViewById<TextView>(R.id.bubble_sheet_name)
@@ -111,9 +135,7 @@ class SheetMenuOverlay(
         val arrow = root.findViewById<ImageButton>(R.id.bubble_tool_arrow)
         val menu = root.findViewById<LinearLayout>(R.id.bubble_check_menu)
         rootView = root
-        headerView = header
-        rowsView = rows
-        scrollView = scroll
+        composeView = compose
         emptyView = empty
         iconView = icon
         nameView = name
@@ -127,6 +149,9 @@ class SheetMenuOverlay(
         menuView = menu
         lastSnapshot = null
         scrolledOnce = false
+        lastScrolledActive = Int.MIN_VALUE
+        snapshotState.value = null
+        scrollGenState.intValue = 0
         // Placeholder identity until the service renders the loaded snapshot
         // right after attach (DB load + clipboard capture + auto-check).
         icon?.setImageResource(R.drawable.ic_tab_sheet)
@@ -150,6 +175,66 @@ class SheetMenuOverlay(
         try {
             menu?.background = pillDrawable(surfaceColor())
         } catch (_: Exception) {
+        }
+        // Overlay windows provide no lifecycle owners on their own, and
+        // ComposeView needs all three trees (rememberSaveable included).
+        overlayScope?.cancel()
+        overlayScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val owner = OverlayLifecycleOwner()
+        lifecycleOwner = owner
+        compose?.let { cv ->
+            cv.visibility = View.GONE
+            ViewTreeLifecycleOwner.set(cv, owner)
+            ViewTreeViewModelStoreOwner.set(cv, owner)
+            ViewTreeSavedStateRegistryOwner.set(cv, owner)
+            owner.create()
+            cv.setContent {
+                KiloProxyTheme {
+                    val snap = snapshotState.value
+                    if (snap != null) {
+                        val cols =
+                            snap.file.preset.columns.filter { !snap.hidden.contains(it.key) }
+                        val dataCount =
+                            snap.rows.count { it.isData(snap.file.preset.columns) }
+                        SheetGrid(
+                            rows = snap.rows,
+                            visibleCols = cols,
+                            styles = snap.styles,
+                            crossDups = snap.dups,
+                            modifier = Modifier.fillMaxSize(),
+                            railWidth = 24.dp,
+                            rowHeight = 24.dp,
+                            cellTextSize = 10.sp,
+                            headerTextSize = 10.sp,
+                            railTextSize = 9.sp,
+                            listState = gridListState,
+                            footer = {
+                                Text(
+                                    text = "$dataCount rows",
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                    fontSize = 11.sp,
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        )
+                    }
+                    val gen = scrollGenState.intValue
+                    LaunchedEffect(gen) {
+                        if (gen > 0) {
+                            val n = snapshotState.value?.rows?.size ?: 0
+                            if (n > 0) {
+                                try {
+                                    gridListState.scrollToItem(scrollTarget.coerceIn(0, n - 1))
+                                } catch (_: Exception) {
+                                }
+                            }
+                            scrolledOnce = true
+                        }
+                    }
+                }
+            }
+            owner.resume()
         }
         refreshMenuRows()
         renderToolbar(canUndo = false, canRedo = false, checking = false)
@@ -221,70 +306,39 @@ class SheetMenuOverlay(
     }
 
     fun render(snapshot: SheetBubbleSnapshot?) {
-        // A newer render (or dismiss) cancels any in-flight chunk pump.
-        renderSeq++
         if (snapshot == null) {
             hide()
             return
         }
-        val header = headerView ?: return
-        val rows = rowsView ?: return
         val empty = emptyView ?: return
-        val scroll = scrollView
         lastSnapshot = snapshot
-        header.removeAllViews()
-        rows.removeAllViews()
         val file = snapshot.file
         iconView?.setImageResource(iconFor(file.preset))
         nameView?.text = file.name
         descriptionView?.text = file.preset.desc
         val cols = file.preset.columns.filter { !snapshot.hidden.contains(it.key) }
         val dataCount = snapshot.rows.count { it.isData(file.preset.columns) }
-        if (cols.isEmpty()) {
-            empty.text = "All columns hidden. Use the menu."
+        if (cols.isEmpty() || dataCount == 0) {
+            empty.text = if (cols.isEmpty()) "All columns hidden. Use the menu." else "No rows yet"
             empty.visibility = View.VISIBLE
-            scroll?.visibility = View.GONE
-            return
-        }
-        if (dataCount == 0) {
-            empty.text = "No rows yet"
-            empty.visibility = View.VISIBLE
-            scroll?.visibility = View.GONE
+            composeView?.visibility = View.GONE
             return
         }
         empty.visibility = View.GONE
-        scroll?.visibility = View.VISIBLE
-        header.addView(headerRow(cols))
-        // Every row of the file, empty ones included — like the in-app grid.
-        // The viewport shows what fits; the rest stays scrollable. All ~500
-        // rows at ~5 views each would freeze the tap for seconds if inflated
-        // at once, so the first chunk goes in synchronously (instant paint)
-        // and the rest append across frames.
-        val seq = renderSeq
-        val allRows = snapshot.rows
-        val active = snapshot.activeRow
-        var index = 0
-        fun pump() {
-            if (seq != renderSeq || !isShowing()) return
-            val end = minOf(index + ROW_CHUNK, allRows.size)
-            while (index < end) {
-                rows.addView(dataRow(snapshot, cols, allRows[index], index == active))
-                index++
-            }
-            if (index < allRows.size) {
-                rows.post { pump() }
-                return
-            }
-            rows.addView(countFooter(dataCount))
-            val target = if (active >= 0) active else allRows.size - 1
-            scroll?.post {
-                if (seq != renderSeq || !isShowing()) return@post
-                val y = target.coerceAtLeast(0) * dp(ROW_H_DP)
-                if (scrolledOnce) scroll.smoothScrollTo(0, y) else scroll.scrollTo(0, y)
-                scrolledOnce = true
-            }
+        composeView?.visibility = View.VISIBLE
+        // The composition reads this state: same rows, same cells, same
+        // status dots as the app — LazyColumn only composes the visible
+        // ones, so any file size paints instantly.
+        snapshotState.value = snapshot
+        // Smart scroll: first paint and actual active-row moves recenter on
+        // the new data; undo/redo/check re-renders with the same active row
+        // stay exactly where the user left them.
+        val shouldScroll = !scrolledOnce || snapshot.activeRow != lastScrolledActive
+        lastScrolledActive = snapshot.activeRow
+        if (shouldScroll && isShowing()) {
+            scrollTarget = snapshot.activeRow
+            scrollGenState.intValue++
         }
-        pump()
     }
 
     /**
@@ -373,7 +427,7 @@ class SheetMenuOverlay(
         val track = LinearLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(dp(36f), dp(20f))
             orientation = LinearLayout.HORIZONTAL
-            gravity = if (checked) Gravity.END else Gravity.START
+            gravity = (if (checked) Gravity.END else Gravity.START) or Gravity.CENTER_VERTICAL
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = dpF(10f)
@@ -420,9 +474,20 @@ class SheetMenuOverlay(
     }
 
     fun hide() {
-        // Stop any in-flight chunked inflation with the dead window.
-        renderSeq++
         handler.removeCallbacksAndMessages(null)
+        overlayScope?.cancel()
+        overlayScope = null
+        try {
+            composeView?.disposeComposition()
+        } catch (_: Exception) {
+        }
+        try {
+            lifecycleOwner?.pause()
+            lifecycleOwner?.stop()
+            lifecycleOwner?.destroy()
+        } catch (_: Exception) {
+        }
+        lifecycleOwner = null
         val root = rootView
         rootView = null
         if (root != null) {
@@ -436,9 +501,7 @@ class SheetMenuOverlay(
     }
 
     private fun clearReferences() {
-        headerView = null
-        rowsView = null
-        scrollView = null
+        composeView = null
         emptyView = null
         iconView = null
         nameView = null
@@ -451,129 +514,7 @@ class SheetMenuOverlay(
         arrowView = null
         menuView = null
         lastSnapshot = null
-    }
-
-    private fun headerRow(cols: List<SheetColumn>): LinearLayout {
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(ROW_H_DP))
-            setBackgroundColor(headerColor())
-        }
-        row.addView(headerCell("", RAIL_DP))
-        cols.forEach { column -> row.addView(headerCell(column.label, 0f, 1f)) }
-        row.addView(headerCell("", RAIL_DP))
-        return row
-    }
-
-    private fun headerCell(value: String, widthDp: Float, weight: Float = 0f): TextView =
-        TextView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                if (widthDp > 0f) dp(widthDp) else 0,
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                weight
-            )
-            background = colorDrawable(headerColor(), gridLineColor())
-            text = value
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            setPadding(dp(4f), 0, dp(4f), 0)
-            textSize = 10f
-            setTextColor(headerTextColor())
-            typeface = Typeface.DEFAULT_BOLD
-        }
-
-    private fun dataRow(
-        snapshot: SheetBubbleSnapshot,
-        cols: List<SheetColumn>,
-        row: SheetRow,
-        active: Boolean
-    ): LinearLayout {
-        val statusFill: Int? = when {
-            row.dead || row.status == "bad" -> DeadRed
-            row.status == "eligible" -> PageBlue
-            row.status == "good" || row.status == "done" -> AliveGreen
-            else -> null
-        }
-        val line = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(ROW_H_DP))
-        }
-        // Row-number rail: surfaceVariant, status-filled when approved.
-        val numBg = if (row.approved && statusFill != null) statusFill else surfaceVariantColor()
-        line.addView(TextView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(RAIL_DP), LinearLayout.LayoutParams.MATCH_PARENT)
-            background = colorDrawable(numBg, gridLineColor())
-            text = (row.rowIdx + 1).toString()
-            maxLines = 1
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            textSize = 9f
-            setTextColor(mutedTextColor())
-            typeface = Typeface.DEFAULT
-        })
-        cols.forEach { column ->
-            val raw = if (column.key == "twofakey" && isNo2Fa(row.twofakey)) NO_2FA else row.cell(column.key)
-            val style = snapshot.styles["${row.rowIdx}:${column.key}"]
-            val customBg = parseHexColor(style?.bg)
-            val fg = parseHexColor(style?.color)
-            val isDup = snapshot.dups.contains(Pair(row.rowIdx, column.key))
-            // In-app fill order: custom style > dup tint > hold/approved
-            // status > transparent.
-            val fill = when {
-                customBg != null -> customBg
-                isDup -> dupTint()
-                (row.hold || row.approved) && statusFill != null -> statusFill
-                active -> activeRowColor()
-                else -> surfaceColor()
-            }
-            val border = when {
-                isDup -> DupYellow
-                else -> gridLineColor()
-            }
-            line.addView(TextView(context).apply {
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
-                background = colorDrawable(fill, border)
-                text = raw
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                includeFontPadding = false
-                gravity = Gravity.CENTER
-                setPadding(dp(4f), 0, dp(4f), 0)
-                textSize = 10f
-                setTextColor(fg ?: textColor())
-                typeface = if (style?.bold == true) Typeface.DEFAULT_BOLD else Typeface.MONOSPACE
-                if (row.approved) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
-            })
-        }
-        // Status rail: surface cell with the site status mark (rounded square,
-        // never a circle).
-        line.addView(FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(RAIL_DP), dp(ROW_H_DP))
-            background = colorDrawable(surfaceColor(), gridLineColor())
-            addView(View(context).apply {
-                layoutParams = FrameLayout.LayoutParams(dp(DOT_DP), dp(DOT_DP), Gravity.CENTER)
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dpF(2.5f)
-                    setColor(dotColor(row))
-                }
-            })
-        })
-        return line
-    }
-
-    private fun countFooter(dataCount: Int): TextView = TextView(context).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        )
-        text = "$dataCount rows"
-        gravity = Gravity.CENTER
-        setPadding(0, dp(8f), 0, dp(8f))
-        textSize = 11f
-        setTextColor(mutedTextColor())
+        snapshotState.value = null
     }
 
     private fun iconFor(preset: SheetPreset): Int = when (preset) {
@@ -582,63 +523,16 @@ class SheetMenuOverlay(
         SheetPreset.PAGE -> R.drawable.ic_ss_page
     }
 
-    private fun dotColor(row: SheetRow): Int = when {
-        row.dead || row.status == "bad" -> DeadRed
-        row.status == "eligible" -> PageBlue
-        row.status == "good" || row.status == "done" -> AliveGreen
-        row.status == "pending" -> StatusYellow
-        else -> gridLineColor()
-    }
-
-    private fun parseHexColor(hex: String?): Int? {
-        if (hex == null) return null
-        var h = hex.trim().removePrefix("#")
-        if (h.length == 3) h = h.map { "$it$it" }.joinToString("")
-        if (h.length != 6) return null
-        return try {
-            Color.rgb(
-                h.substring(0, 2).toInt(16),
-                h.substring(2, 4).toInt(16),
-                h.substring(4, 6).toInt(16)
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    // Exact app theme tokens (KiloProxyTheme monochrome); status colors are
-    // the shared site tokens from SheetUi.
+    // Exact app theme tokens (KiloProxyTheme monochrome); the grid itself
+    // is the shared SheetGrid component, so no cell colors live here.
     private fun isDark(): Boolean = ThemeMode.isDarkTheme(context)
     private fun surfaceColor(): Int = if (isDark()) Color.rgb(0x0A, 0x0A, 0x0A) else Color.WHITE
     private fun surfaceVariantColor(): Int = if (isDark()) Color.rgb(0x1A, 0x1A, 0x1A) else Color.rgb(0xF5, 0xF5, 0xF5)
-    private fun headerColor(): Int = surfaceVariantColor()
-    private fun activeRowColor(): Int = if (isDark()) Color.rgb(0x14, 0x33, 0x2A) else Color.rgb(0xEC, 0xFD, 0xF5)
     private fun gridLineColor(): Int = if (isDark()) Color.rgb(0x22, 0x22, 0x22) else Color.rgb(0xEE, 0xEE, 0xEE)
     private fun textColor(): Int = if (isDark()) Color.WHITE else Color.BLACK
     private fun headerTextColor(): Int = if (isDark()) Color.rgb(0xAA, 0xAA, 0xAA) else Color.rgb(0x55, 0x55, 0x55)
-    private fun mutedTextColor(): Int = if (isDark()) Color.argb(153, 0xAA, 0xAA, 0xAA) else Color.argb(153, 0x55, 0x55, 0x55)
     private fun primaryColor(): Int = if (isDark()) Color.WHITE else Color.BLACK
     private fun onPrimaryColor(): Int = if (isDark()) Color.BLACK else Color.WHITE
-
-    private companion object {
-        const val ROW_H_DP = 24f
-        const val RAIL_DP = 24f
-        const val DOT_DP = 7f
-        // Rows inflated per frame: 500 rows x ~5 views never land at once.
-        const val ROW_CHUNK = 60
-        val DeadRed = Color.rgb(0xE3, 0x3B, 0x2E)
-        val PageBlue = Color.rgb(0x25, 0x63, 0xEB)
-        val AliveGreen = Color.rgb(0x22, 0x93, 0x42)
-        val StatusYellow = Color.rgb(0xF5, 0xA6, 0x23)
-        val DupYellow = Color.rgb(0xF5, 0xA6, 0x23)
-        fun dupTint(): Int = Color.argb(38, 0xF5, 0xA6, 0x23)
-    }
-
-    private fun colorDrawable(fill: Int, stroke: Int): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        setColor(fill)
-        setStroke(dp(1f), stroke)
-    }
 
     private fun pillDrawable(fill: Int): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
@@ -682,4 +576,48 @@ class SheetMenuOverlay(
 
     private fun dp(value: Float): Int = (value * context.resources.displayMetrics.density).toInt()
     private fun dpF(value: Float): Float = value * context.resources.displayMetrics.density
+}
+
+/**
+ * Manual lifecycle for the overlay window: a plain Service has no
+ * LifecycleOwner, and ComposeView needs all three view-tree owners
+ * (Lifecycle, ViewModelStore, SavedStateRegistry for rememberSaveable).
+ * Created + resumed on show, torn down on hide.
+ */
+private class OverlayLifecycleOwner :
+    LifecycleOwner,
+    ViewModelStoreOwner,
+    SavedStateRegistryOwner {
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private val vmStore = ViewModelStore()
+    private val savedStateController = SavedStateRegistryController.create(this)
+
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val viewModelStore: ViewModelStore get() = vmStore
+    override val savedStateRegistry: SavedStateRegistry
+        get() = savedStateController.savedStateRegistry
+
+    fun create() {
+        savedStateController.performAttach()
+        savedStateController.performRestore(null)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+    }
+
+    fun resume() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
+
+    fun pause() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+    }
+
+    fun stop() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+    }
+
+    fun destroy() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        vmStore.clear()
+    }
 }
