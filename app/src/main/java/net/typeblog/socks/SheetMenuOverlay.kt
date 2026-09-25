@@ -50,8 +50,7 @@ class SheetMenuOverlay(
     private val onDismissed: () -> Unit = {},
     private val onUndo: () -> Unit = {},
     private val onRedo: () -> Unit = {},
-    private val onCheck: () -> Unit = {},
-    private val onAutoToggle: () -> Unit = {}
+    private val onCheck: () -> Unit = {}
 ) {
     private var windowManager: WindowManager = createWindowManager()
     private val handler = Handler(Looper.getMainLooper())
@@ -66,7 +65,11 @@ class SheetMenuOverlay(
     private var undoView: ImageButton? = null
     private var redoView: ImageButton? = null
     private var checkView: TextView? = null
-    private var autoView: TextView? = null
+    private var arrowView: ImageButton? = null
+    private var menuView: LinearLayout? = null
+    private var menuUid: TextView? = null
+    private var menuSimple: TextView? = null
+    private var menuAdv: TextView? = null
     private var lastSnapshot: SheetBubbleSnapshot? = null
     private var scrolledOnce = false
 
@@ -96,7 +99,8 @@ class SheetMenuOverlay(
         val undo = root.findViewById<ImageButton>(R.id.bubble_tool_undo)
         val redo = root.findViewById<ImageButton>(R.id.bubble_tool_redo)
         val check = root.findViewById<TextView>(R.id.bubble_tool_check)
-        val auto = root.findViewById<TextView>(R.id.bubble_tool_auto)
+        val arrow = root.findViewById<ImageButton>(R.id.bubble_tool_arrow)
+        val menu = root.findViewById<LinearLayout>(R.id.bubble_check_menu)
         rootView = root
         headerView = header
         rowsView = rows
@@ -108,7 +112,8 @@ class SheetMenuOverlay(
         undoView = undo
         redoView = redo
         checkView = check
-        autoView = auto
+        arrowView = arrow
+        menuView = menu
         lastSnapshot = null
         scrolledOnce = false
         // Placeholder identity until the service renders the loaded snapshot
@@ -124,8 +129,11 @@ class SheetMenuOverlay(
         undo?.setOnClickListener { onUndo() }
         redo?.setOnClickListener { onRedo() }
         check?.setOnClickListener { onCheck() }
-        auto?.setOnClickListener { onAutoToggle() }
-        renderToolbar(canUndo = false, canRedo = false, checking = false, autoCheck = true)
+        arrow?.setColorFilter(onPrimaryColor())
+        arrow?.setOnClickListener { toggleMenu() }
+        buildMenuRows()
+        refreshMenuRows()
+        renderToolbar(canUndo = false, canRedo = false, checking = false)
 
         val bounds = contentBounds()
         val margin = dp(8f)
@@ -170,7 +178,7 @@ class SheetMenuOverlay(
         // The panel consumes interior touches so a tap on a cell never reaches
         // the outside-dismiss listener. The children remain non-clickable.
         panel.isClickable = true
-        panel.setOnClickListener { }
+        panel.setOnClickListener { hideMenu() }
         root.animate().alpha(1f).setDuration(100).start()
         panel.scaleX = 0.55f
         panel.scaleY = 0.55f
@@ -245,7 +253,7 @@ class SheetMenuOverlay(
      * Toolbar states. Check arms only while a checkable row exists and no
      * check is running — same rule as the in-app Check split button.
      */
-    fun renderToolbar(canUndo: Boolean, canRedo: Boolean, checking: Boolean, autoCheck: Boolean) {
+    fun renderToolbar(canUndo: Boolean, canRedo: Boolean, checking: Boolean) {
         undoView?.let {
             it.isEnabled = canUndo && !checking
             it.alpha = if (canUndo && !checking) 1f else 0.38f
@@ -265,14 +273,84 @@ class SheetMenuOverlay(
             it.alpha = if (enabled) 1f else 0.38f
             it.text = if (checking) "Checking" else "Check"
         }
-        autoView?.let {
-            it.setTextColor(if (autoCheck) AliveGreen else mutedTextColor())
-            it.paintFlags = if (autoCheck) {
-                it.paintFlags or Paint.UNDERLINE_TEXT_FLAG
-            } else {
-                it.paintFlags and Paint.UNDERLINE_TEXT_FLAG.inv()
-            }
+        refreshMenuRows()
+    }
+
+    /** In-app check menu parity: UID toggles freely, Simple/Advanced are exclusive. */
+    private fun toggleMenu() {
+        val menu = menuView ?: return
+        menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+    }
+
+    private fun hideMenu() {
+        menuView?.visibility = View.GONE
+    }
+
+    private fun menuPrefs(): android.content.SharedPreferences =
+        androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+
+    private fun buildMenuRows() {
+        val menu = menuView ?: return
+        menu.removeAllViews()
+        menuUid = menuRow("UID check") { toggleUid() }
+        menuSimple = menuRow("Simple check") { togglePage(simple = true) }
+        menuAdv = menuRow("Advanced check") { togglePage(simple = false) }
+        menuUid?.let { menu.addView(it) }
+        menuSimple?.let { menu.addView(it) }
+        menuAdv?.let { menu.addView(it) }
+    }
+
+    private fun menuRow(label: String, onTap: () -> Unit): TextView = TextView(context).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(28f)
+        )
+        setPadding(dp(10f), 0, dp(10f), 0)
+        gravity = Gravity.CENTER_VERTICAL
+        textSize = 11f
+        setTextColor(textColor())
+        tag = label
+        isClickable = true
+        setOnClickListener { onTap() }
+    }
+
+    private fun refreshMenuRows() {
+        val prefs = try { menuPrefs() } catch (_: Exception) { return }
+        val uid = prefs.getBoolean("ss_autoCheck", true)
+        val simple = prefs.getBoolean("ss_pageSimple", false)
+        val adv = prefs.getBoolean("ss_pageAdvanced", false)
+        menuUid?.text = "UID check   " + if (uid) "✓" else "○"
+        menuSimple?.text = "Simple check   " + if (simple) "✓" else "○"
+        menuAdv?.text = "Advanced check   " + if (adv) "✓" else "○"
+        menuUid?.setTextColor(if (uid) AliveGreen else mutedTextColor())
+        menuSimple?.setTextColor(if (simple) AliveGreen else mutedTextColor())
+        menuAdv?.setTextColor(if (adv) AliveGreen else mutedTextColor())
+    }
+
+    private fun toggleUid() {
+        try {
+            val prefs = menuPrefs()
+            prefs.edit().putBoolean("ss_autoCheck", !prefs.getBoolean("ss_autoCheck", true)).apply()
+        } catch (_: Exception) {
         }
+        refreshMenuRows()
+    }
+
+    private fun togglePage(simple: Boolean) {
+        try {
+            val prefs = menuPrefs()
+            if (simple) {
+                val on = !prefs.getBoolean("ss_pageSimple", false)
+                prefs.edit().putBoolean("ss_pageSimple", on).apply()
+                if (on) prefs.edit().putBoolean("ss_pageAdvanced", false).apply()
+            } else {
+                val on = !prefs.getBoolean("ss_pageAdvanced", false)
+                prefs.edit().putBoolean("ss_pageAdvanced", on).apply()
+                if (on) prefs.edit().putBoolean("ss_pageSimple", false).apply()
+            }
+        } catch (_: Exception) {
+        }
+        refreshMenuRows()
     }
 
     fun hide() {
@@ -300,7 +378,11 @@ class SheetMenuOverlay(
         undoView = null
         redoView = null
         checkView = null
-        autoView = null
+        arrowView = null
+        menuView = null
+        menuUid = null
+        menuSimple = null
+        menuAdv = null
         lastSnapshot = null
     }
 

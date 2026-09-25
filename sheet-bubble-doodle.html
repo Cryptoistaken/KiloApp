@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sheet bubble doodle</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #dedee2; font: 14px/1.4 system-ui, sans-serif;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .bubble { width: 56px; height: 56px; border-radius: 50%; background: #27272a;
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 22px; margin-right: 8px; }
+  .stage { display: flex; align-items: flex-start; }
+  .popup { width: 230px; height: 280px; background: #fff; border-radius: 12px;
+    box-shadow: 0 18px 50px rgba(24,24,27,.16); overflow: hidden;
+    display: flex; flex-direction: column; }
+  .bar { height: 44px; display: flex; align-items: center; padding: 0 8px 0 8px; gap: 2px; }
+  .bar .icon { font-size: 18px; }
+  .bar .names { flex: 1; min-width: 0; margin-left: 6px; }
+  .bar .names b { display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar .names span { display: block; font-size: 9px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tbtn { border: 0; background: none; font-size: 13px; width: 24px; height: 24px;
+    cursor: pointer; color: #18181b; border-radius: 6px; }
+  .tbtn:disabled { opacity: .38; cursor: default; }
+  .check { border: 0; background: #18181b; color: #fff; font-size: 10px; font-weight: 700;
+    border-radius: 6px; padding: 4px 8px; cursor: pointer; margin-left: 4px; }
+  .check:disabled { opacity: .38; cursor: default; }
+  .menu { border-top: 1px solid #e4e4e7; display: none; }
+  .menu.open { display: block; }
+  .menu button { display: flex; width: 100%; border: 0; background: none; font-size: 11px;
+    padding: 7px 10px; cursor: pointer; color: #18181b; justify-content: space-between; }
+  .menu button .st { color: #229342; font-weight: 700; }
+  .menu button.off .st { color: #a1a1aa; }
+  .gridhead, .gridrow { display: flex; height: 24px; }
+  .gridhead { background: #f5f5f5; font-size: 10px; font-weight: 700; color: #555; }
+  .gridhead div, .gridrow div { border: 1px solid #eee; display: flex; align-items: center;
+    justify-content: center; overflow: hidden; white-space: nowrap; }
+  .rail { width: 24px; flex: none; font-size: 9px; color: #555; }
+  .gridhead .rail { color: transparent; }
+  .cell { flex: 1; font: 10px ui-monospace, monospace; padding: 0 4px; }
+  .gridhead .cell { font-family: system-ui; }
+  .dotcell { width: 24px; flex: none; }
+  .dot { width: 7px; height: 7px; border-radius: 2.5px; background: #eee; }
+  .grid { overflow-y: auto; flex: 1; }
+  .r-active { background: #ecfdf5; }
+  .controls { position: fixed; bottom: 16px; display: flex; gap: 8px; }
+  .controls button { padding: 8px 14px; border-radius: 8px; border: 1px solid #ccc; cursor: pointer; }
+  .note { position: fixed; top: 14px; color: #555; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="note">doodle: header actions + check menu + compact grid, auto-scrolls to new data</div>
+<div class="stage">
+  <div class="bubble">◉</div>
+  <div class="popup">
+    <div class="bar">
+      <span class="icon">📄</span>
+      <div class="names"><b>combo-july.xlsx</b><span>cookies and 2fa and uid</span></div>
+      <button class="tbtn" id="undo" title="Undo">↩</button>
+      <button class="tbtn" id="redo" title="Redo" disabled>↪</button>
+      <button class="check" id="check">Check</button>
+      <button class="tbtn" id="arrow" title="Check options" style="width:20px">▾</button>
+    </div>
+    <div class="menu" id="menu">
+      <button data-k="uid"><span>UID check</span><span class="st">✓</span></button>
+      <button data-k="simple" class="off"><span>Simple check</span><span class="st">○</span></button>
+      <button data-k="adv" class="off"><span>Advanced check</span><span class="st">○</span></button>
+    </div>
+    <div class="gridhead"><div class="rail"></div><div class="cell">cookies</div><div class="cell">2fa</div><div class="cell">uid</div><div class="rail"></div></div>
+    <div class="grid" id="grid"></div>
+  </div>
+</div>
+<div class="controls">
+  <button id="paste">simulate paste (new cookie)</button>
+  <button id="undobtn">simulate undo state</button>
+</div>
+<script>
+const grid = document.getElementById('grid');
+const N = 500;
+let rows = [];
+for (let i = 0; i < N; i++) rows.push({ cookies: '', fa: '', uid: '', st: '' });
+rows[0] = { cookies: 'c_user=1001…', fa: 'JBSW…', uid: '1001', st: 'good' };
+rows[1] = { cookies: 'c_user=1002…', fa: 'No_2Fa', uid: '1002', st: 'eligible' };
+rows[2] = { cookies: 'c_user=1003…', fa: '', uid: '', st: 'pending' };
+let active = 2, serial = 1004;
+const colors = { good: '#229342', eligible: '#2563eb', bad: '#e33b2e', pending: '#f5a623' };
+function draw(scroll) {
+  grid.innerHTML = '';
+  rows.forEach((r, i) => {
+    const d = document.createElement('div');
+    d.className = 'gridrow' + (i === active ? ' r-active' : '');
+    d.innerHTML = `<div class="rail">${i + 1}</div><div class="cell">${r.cookies}</div>` +
+      `<div class="cell">${r.fa}</div><div class="cell">${r.uid}</div>` +
+      `<div class="dotcell"><div class="dot" style="background:${colors[r.st] || '#eee'}"></div></div>`;
+    grid.appendChild(d);
+  });
+  if (scroll) grid.children[active]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+draw(false);
+grid.scrollTop = active * 24;
+document.getElementById('paste').onclick = () => {
+  rows[active] = { cookies: `c_user=${serial}…`, fa: '', uid: String(serial), st: 'pending' };
+  serial++;
+  active = rows.findIndex(r => r.cookies && !r.fa);
+  if (active < 0) active = rows.findIndex(r => !r.cookies);
+  document.getElementById('undo').disabled = false;
+  draw(true);
+};
+document.getElementById('undobtn').onclick = () => {
+  document.getElementById('redo').disabled = false;
+};
+const menu = document.getElementById('menu');
+document.getElementById('arrow').onclick = () => menu.classList.toggle('open');
+menu.querySelectorAll('button').onclick = (e) => {
+  const b = e.currentTarget, k = b.dataset.k;
+  if (k === 'simple' || k === 'adv') {
+    const other = k === 'simple' ? 'adv' : 'simple';
+    const on = b.classList.contains('off');
+    document.querySelector(`[data-k="${other}"]`).classList.add('off');
+    document.querySelector(`[data-k="${other}"] .st`).textContent = '○';
+    b.classList.toggle('off', !on);
+    b.querySelector('.st').textContent = on ? '✓' : '○';
+  } else {
+    const on = b.classList.contains('off');
+    b.classList.toggle('off', !on);
+    b.querySelector('.st').textContent = on ? '✓' : '○';
+  }
+};
+document.getElementById('check').onclick = () => alert('runs whole-file UID check (UID/simple/advanced per menu)');
+</script>
+</body>
+</html>

@@ -331,8 +331,7 @@ class FloatingControlService : Service() {
             },
             onUndo = { runSheetHistory(redo = false) },
             onRedo = { runSheetHistory(redo = true) },
-            onCheck = { runSheetBubbleCheck() },
-            onAutoToggle = { toggleSheetBubbleAuto() }
+            onCheck = { runSheetBubbleCheck() }
         )
         circleMenu = CircleBubbleMenu(
             this,
@@ -1970,13 +1969,6 @@ class FloatingControlService : Service() {
         }
     }
 
-    /** Bubble Auto toggle: the same ss_autoCheck switch the app honors. */
-    private fun toggleSheetBubbleAuto() {
-        val on = !sheetBubbleCoordinator.isAutoCheckOn()
-        sheetBubbleCoordinator.setAutoCheckOn(on)
-        syncSheetToolbar(sheetOverlaySnapshot())
-    }
-
     private fun sheetOverlaySnapshot(): net.typeblog.socks.util.sheet.SheetBubbleSnapshot? =
         lastSheetSnapshot
 
@@ -1989,8 +1981,7 @@ class FloatingControlService : Service() {
         overlay.renderToolbar(
             canUndo = snapshot?.canUndo == true,
             canRedo = snapshot?.canRedo == true,
-            checking = checking ?: store.checking.value,
-            autoCheck = sheetBubbleCoordinator.isAutoCheckOn()
+            checking = checking ?: store.checking.value
         )
     }
 
