@@ -5,12 +5,17 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
+private const val SHEET_HISTORY_LIMIT = 20
+
 // Local-first SQLite store for the Sheet tab. This database is the source of
 // truth: every mutation writes here first, so sheets survive offline use,
 // crashes and app updates. Online sync (when added) only backs this up.
 // Note: Android deletes app-private data on uninstall, so uninstall survival
 // needs a SAF export copy or an online backup, never this DB alone.
 class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3) {
+    init {
+        setWriteAheadLoggingEnabled(true)
+    }
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE files(id TEXT PRIMARY KEY, name TEXT NOT NULL, preset TEXT NOT NULL, password TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0, deletedAt INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, seq INTEGER NOT NULL DEFAULT 0)")
@@ -73,29 +78,29 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
         }
     }
 
-    fun recordOp(db: SQLiteDatabase, fileId: String, op: String) {
-        db.insert("outbox", null, cv("ts" to System.currentTimeMillis(), "op" to op))
-        db.insert("journal", null, cv("fileId" to fileId, "ts" to System.currentTimeMillis(), "op" to op))
-        db.execSQL("DELETE FROM journal WHERE fileId=? AND rowid NOT IN (SELECT rowid FROM journal WHERE fileId=? ORDER BY ts DESC LIMIT 200)", arrayOf(fileId, fileId))
-    }
 
     fun insertFile(db: SQLiteDatabase, f: SheetFile) {
         db.insertOrThrow(
             "files", null,
-            cv("id" to f.id, "name" to f.name, "preset" to f.preset.name, "password" to f.password,
+            cv(
+                "id" to f.id, "name" to f.name, "preset" to f.preset.name, "password" to f.password,
                 "archived" to if (f.archived) 1 else 0, "deletedAt" to f.deletedAt,
-                "createdAt" to f.createdAt, "updatedAt" to f.updatedAt, "seq" to f.seq)
+                "createdAt" to f.createdAt, "updatedAt" to f.updatedAt, "seq" to f.seq
+            )
         )
     }
 
     fun updateFile(db: SQLiteDatabase, f: SheetFile) {
-        db.update(
+        val updated = db.update(
             "files",
-            cv("name" to f.name, "preset" to f.preset.name, "password" to f.password,
+            cv(
+                "name" to f.name, "preset" to f.preset.name, "password" to f.password,
                 "archived" to if (f.archived) 1 else 0, "deletedAt" to f.deletedAt,
-                "updatedAt" to f.updatedAt, "seq" to f.seq),
+                "updatedAt" to f.updatedAt, "seq" to f.seq
+            ),
             "id=?", arrayOf(f.id)
         )
+        if (updated != 1) throw IllegalStateException("Sheet file update failed: ${f.id}")
     }
 
     fun listFiles(archived: Boolean): List<SheetFile> {
@@ -173,20 +178,17 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
 
     fun saveAllRows(db: SQLiteDatabase, fileId: String, rows: List<SheetRow>) {
         db.delete("rows", "fileId=?", arrayOf(fileId))
-        for (r in rows) {
-            upsertRow(db, fileId, r)
+        for (row in meaningfulSheetRows(rows)) {
+            db.insertOrThrow(
+                "rows", null,
+                cv(
+                    "fileId" to fileId, "rowIdx" to row.rowIdx, "cookies" to row.cookies,
+                    "twofakey" to row.twofakey, "uid" to row.uid, "status" to row.status,
+                    "hold" to if (row.hold) 1 else 0, "approved" to if (row.approved) 1 else 0,
+                    "dead" to if (row.dead) 1 else 0
+                )
+            )
         }
-    }
-
-    fun upsertRow(db: SQLiteDatabase, fileId: String, row: SheetRow) {
-        db.insertWithOnConflict(
-            "rows", null,
-            cv("fileId" to fileId, "rowIdx" to row.rowIdx, "cookies" to row.cookies,
-                "twofakey" to row.twofakey, "uid" to row.uid, "status" to row.status,
-                "hold" to if (row.hold) 1 else 0, "approved" to if (row.approved) 1 else 0,
-                "dead" to if (row.dead) 1 else 0),
-            SQLiteDatabase.CONFLICT_REPLACE
-        )
     }
 
     // Cross-file duplicates: open-file (rowIdx, colKey) cells whose uid,
@@ -240,25 +242,29 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
         db.delete("row_checks", "fileId=?", arrayOf(fileId))
         db.delete("check_reqs", "fileId=?", arrayOf(fileId))
         for ((ri, c) in checks) {
-            db.insert(
+            db.insertOrThrow(
                 "row_checks", null,
-                cv("fileId" to fileId, "rowIdx" to ri, "checkedAt" to c.checkedAt,
+                cv(
+                    "fileId" to fileId, "rowIdx" to ri, "checkedAt" to c.checkedAt,
                     "uidOk" to c.uidOk, "uidError" to c.uidError,
                     "simplePage" to c.simplePage, "simpleNumber" to c.simpleNumber,
                     "simpleError" to c.simpleError,
                     "advEligible" to if (c.advEligible) 1 else 0, "advPage" to c.advPage,
-                    "advNumber" to c.advNumber, "advBan" to c.advBan, "advError" to c.advError)
+                    "advNumber" to c.advNumber, "advBan" to c.advBan, "advError" to c.advError
+                )
             )
         }
         for ((ri, list) in reqs) {
             for ((i, q) in list.withIndex()) {
-                db.insert(
+                db.insertOrThrow(
                     "check_reqs", null,
-                    cv("fileId" to fileId, "rowIdx" to ri, "seq" to i,
+                    cv(
+                        "fileId" to fileId, "rowIdx" to ri, "seq" to i,
                         "kind" to q.kind, "method" to q.method, "url" to q.url,
                         "status" to q.status, "durationMs" to q.durationMs,
                         "reqNote" to q.reqNote, "resNote" to q.resNote,
-                        "error" to q.error, "at" to q.at)
+                        "error" to q.error, "at" to q.at
+                    )
                 )
             }
         }
@@ -334,8 +340,8 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
             if (value.isEmpty() || (col == "twofakey" && isNo2Fa(value))) return
             readableDatabase.rawQuery(
                 "SELECT f.name, o.rowIdx, r.checkedAt FROM rows o JOIN files f ON f.id=o.fileId " +
-                    "LEFT JOIN row_checks r ON r.fileId=o.fileId AND r.rowIdx=o.rowIdx " +
-                    "WHERE o.fileId != ? AND o.$col = ? ORDER BY f.name, o.rowIdx LIMIT 20",
+                        "LEFT JOIN row_checks r ON r.fileId=o.fileId AND r.rowIdx=o.rowIdx " +
+                        "WHERE o.fileId != ? AND o.$col = ? ORDER BY f.name, o.rowIdx LIMIT 20",
                 arrayOf(fileId, value)
             ).use { c ->
                 while (c.moveToNext()) {
@@ -374,8 +380,8 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
                 val q = chunk.joinToString(",") { "?" }
                 readableDatabase.rawQuery(
                     "SELECT o.$col, f.name, o.rowIdx, r.checkedAt FROM rows o JOIN files f ON f.id=o.fileId " +
-                        "LEFT JOIN row_checks r ON r.fileId=o.fileId AND r.rowIdx=o.rowIdx " +
-                        "WHERE o.fileId != ? AND o.$col IN ($q) ORDER BY f.name, o.rowIdx LIMIT 200",
+                            "LEFT JOIN row_checks r ON r.fileId=o.fileId AND r.rowIdx=o.rowIdx " +
+                            "WHERE o.fileId != ? AND o.$col IN ($q) ORDER BY f.name, o.rowIdx LIMIT 200",
                     arrayOf(fileId) + chunk.toTypedArray()
                 ).use { c ->
                     while (c.moveToNext() && out.size < 200) {
@@ -414,12 +420,15 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
         if (s == null || (s.bg == null && s.color == null && !s.bold)) {
             db.delete("styles", "fileId=? AND rowIdx=? AND colKey=?", arrayOf(fileId, rowIdx.toString(), colKey))
         } else {
-            db.insertWithOnConflict(
+            val inserted = db.insertWithOnConflict(
                 "styles", null,
-                cv("fileId" to fileId, "rowIdx" to rowIdx, "colKey" to colKey,
-                    "bg" to s.bg, "color" to s.color, "bold" to if (s.bold) 1 else 0),
+                cv(
+                    "fileId" to fileId, "rowIdx" to rowIdx, "colKey" to colKey,
+                    "bg" to s.bg, "color" to s.color, "bold" to if (s.bold) 1 else 0
+                ),
                 SQLiteDatabase.CONFLICT_REPLACE
             )
+            if (inserted == -1L) throw IllegalStateException("Sheet style insert failed: $fileId/$rowIdx/$colKey")
         }
     }
 
@@ -433,50 +442,30 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
 
     fun saveHidden(db: SQLiteDatabase, fileId: String, hidden: Set<String>) {
         db.delete("hidden_cols", "fileId=?", arrayOf(fileId))
-        for (k in hidden) db.insert("hidden_cols", null, cv("fileId" to fileId, "colKey" to k))
+        for (k in hidden) db.insertOrThrow("hidden_cols", null, cv("fileId" to fileId, "colKey" to k))
     }
 
-    fun saveSnapshot(db: SQLiteDatabase, fileId: String, seq: Long, data: String) {
-        db.insertWithOnConflict(
-            "snapshots", null,
-            cv("fileId" to fileId, "seq" to seq, "ts" to System.currentTimeMillis(), "data" to data),
-            SQLiteDatabase.CONFLICT_REPLACE
-        )
-        db.execSQL(
-            "DELETE FROM snapshots WHERE fileId=? AND seq NOT IN (SELECT seq FROM snapshots WHERE fileId=? ORDER BY seq DESC LIMIT 3)",
-            arrayOf(fileId, fileId)
-        )
-    }
-
-    fun latestSnapshot(fileId: String): Pair<Long, String>? {
-        readableDatabase.rawQuery(
-            "SELECT seq,data FROM snapshots WHERE fileId=? ORDER BY seq DESC LIMIT 1", arrayOf(fileId)
-        ).use { c ->
-            if (!c.moveToFirst()) return null
-            return c.getLong(0) to c.getString(1)
-        }
-    }
 
     // Persistent undo/redo: pre/post row states per file, survives app
     // restarts. Memory stacks mirror these tables while a file is open.
     fun insertUndo(db: SQLiteDatabase, fileId: String, data: String) {
-        db.insert("undo_hist", null, cv("fileId" to fileId, "ts" to System.currentTimeMillis(), "data" to data))
+        db.insertOrThrow("undo_hist", null, cv("fileId" to fileId, "ts" to System.currentTimeMillis(), "data" to data))
         db.execSQL(
-            "DELETE FROM undo_hist WHERE fileId=? AND id NOT IN (SELECT id FROM undo_hist WHERE fileId=? ORDER BY id DESC LIMIT 50)",
+            "DELETE FROM undo_hist WHERE fileId=? AND id NOT IN (SELECT id FROM undo_hist WHERE fileId=? ORDER BY id DESC LIMIT $SHEET_HISTORY_LIMIT)",
             arrayOf(fileId, fileId)
         )
     }
 
-    fun loadUndoStack(fileId: String, limit: Int = 50): List<String> {
-        val out = mutableListOf<String>()
+    fun loadUndoStack(fileId: String, limit: Int = SHEET_HISTORY_LIMIT): List<String> {
+        val bounded = limit.coerceIn(0, SHEET_HISTORY_LIMIT)
+        if (bounded == 0) return emptyList()
+        val newestFirst = mutableListOf<String>()
         readableDatabase.rawQuery(
-            "SELECT data FROM undo_hist WHERE fileId=? ORDER BY id ASC LIMIT $limit", arrayOf(fileId)
+            "SELECT data FROM undo_hist WHERE fileId=? ORDER BY id DESC LIMIT $bounded", arrayOf(fileId)
         ).use { c ->
-            while (c.moveToNext()) out.add(c.getString(0) ?: "")
+            while (c.moveToNext()) newestFirst.add(c.getString(0) ?: "")
         }
-        // Table keeps oldest-first pruning above, but cap the load to the
-        // newest entries when oversized.
-        return if (out.size > limit) out.takeLast(limit) else out
+        return newestFirst.asReversed()
     }
 
     fun popUndo(db: SQLiteDatabase, fileId: String) {
@@ -487,21 +476,23 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
     }
 
     fun insertRedo(db: SQLiteDatabase, fileId: String, data: String) {
-        db.insert("redo_hist", null, cv("fileId" to fileId, "ts" to System.currentTimeMillis(), "data" to data))
+        db.insertOrThrow("redo_hist", null, cv("fileId" to fileId, "ts" to System.currentTimeMillis(), "data" to data))
         db.execSQL(
-            "DELETE FROM redo_hist WHERE fileId=? AND id NOT IN (SELECT id FROM redo_hist WHERE fileId=? ORDER BY id DESC LIMIT 50)",
+            "DELETE FROM redo_hist WHERE fileId=? AND id NOT IN (SELECT id FROM redo_hist WHERE fileId=? ORDER BY id DESC LIMIT $SHEET_HISTORY_LIMIT)",
             arrayOf(fileId, fileId)
         )
     }
 
-    fun loadRedoStack(fileId: String, limit: Int = 50): List<String> {
-        val out = mutableListOf<String>()
+    fun loadRedoStack(fileId: String, limit: Int = SHEET_HISTORY_LIMIT): List<String> {
+        val bounded = limit.coerceIn(0, SHEET_HISTORY_LIMIT)
+        if (bounded == 0) return emptyList()
+        val newestFirst = mutableListOf<String>()
         readableDatabase.rawQuery(
-            "SELECT data FROM redo_hist WHERE fileId=? ORDER BY id ASC LIMIT $limit", arrayOf(fileId)
+            "SELECT data FROM redo_hist WHERE fileId=? ORDER BY id DESC LIMIT $bounded", arrayOf(fileId)
         ).use { c ->
-            while (c.moveToNext()) out.add(c.getString(0) ?: "")
+            while (c.moveToNext()) newestFirst.add(c.getString(0) ?: "")
         }
-        return if (out.size > limit) out.takeLast(limit) else out
+        return newestFirst.asReversed()
     }
 
     fun popRedo(db: SQLiteDatabase, fileId: String) {
@@ -523,10 +514,11 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
     }
 
     fun setWalletBalance(db: SQLiteDatabase, v: Double) {
-        db.insertWithOnConflict(
+        val inserted = db.insertWithOnConflict(
             "wallet_kv", null, cv("k" to "balance", "v" to v.toString()),
             SQLiteDatabase.CONFLICT_REPLACE
         )
+        if (inserted == -1L) throw IllegalStateException("Wallet balance write failed")
     }
 
     fun walletTxs(): List<WalletTx> {
@@ -551,9 +543,11 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
     fun insertWalletTx(db: SQLiteDatabase, t: WalletTx) {
         db.insertOrThrow(
             "wallet_tx", null,
-            cv("id" to t.id, "createdAt" to t.createdAt, "type" to t.type,
+            cv(
+                "id" to t.id, "createdAt" to t.createdAt, "type" to t.type,
                 "amount" to t.amount, "balanceAfter" to t.balanceAfter,
-                "title" to t.title, "detail" to t.detail)
+                "title" to t.title, "detail" to t.detail
+            )
         )
     }
 
@@ -582,10 +576,10 @@ class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3)
     private fun countDups(fileId: String): Int {
         readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM rows r WHERE fileId=? AND (" +
-                "(uid<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.uid<>'' AND o.uid = r.uid)) OR " +
-                "(cookies<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.cookies<>'' AND o.cookies = r.cookies)) OR " +
-                "(r.twofakey NOT IN ('', 'No_2Fa') AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.twofakey NOT IN ('', 'No_2Fa') AND o.twofakey = r.twofakey))" +
-                ")",
+                    "(uid<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.uid<>'' AND o.uid = r.uid)) OR " +
+                    "(cookies<>'' AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.cookies<>'' AND o.cookies = r.cookies)) OR " +
+                    "(r.twofakey NOT IN ('', 'No_2Fa') AND EXISTS (SELECT 1 FROM rows o WHERE o.fileId != r.fileId AND o.twofakey NOT IN ('', 'No_2Fa') AND o.twofakey = r.twofakey))" +
+                    ")",
             arrayOf(fileId)
         ).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
     }

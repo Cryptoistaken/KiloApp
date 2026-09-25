@@ -93,7 +93,12 @@ fun SheetFilesTab(
     val files by store.files.collectAsState()
     val bubbleFileId by store.bubbleFileId.collectAsState()
     val prefs = remember(appCtx) { androidx.preference.PreferenceManager.getDefaultSharedPreferences(appCtx) }
-    var fileView by net.typeblog.socks.ui.components.rememberPref(prefs, "ss_fileView") { it.getString("ss_fileView", "grid") ?: "grid" }
+    var fileView by net.typeblog.socks.ui.components.rememberPref(prefs, "ss_fileView") {
+        it.getString(
+            "ss_fileView",
+            "grid"
+        ) ?: "grid"
+    }
     val isList = fileView == "list"
     fun setView(list: Boolean) {
         prefs.edit().putString("ss_fileView", if (list) "list" else "grid").apply()
@@ -151,7 +156,12 @@ fun SheetFilesTab(
                     }
                     appCtx.cacheDir.listFiles { file ->
                         file.isFile && file.name.startsWith("share-") && file.name.endsWith(".xlsx")
-                    }?.forEach { try { it.delete() } catch (_: Exception) { } }
+                    }?.forEach {
+                        try {
+                            it.delete()
+                        } catch (_: Exception) {
+                        }
+                    }
                     val out = java.io.File(appCtx.cacheDir, "share-" + sanitizeFileName(full.name) + ".xlsx")
                     out.writeBytes(SheetXlsx.build(full.preset.columns, rows))
                     uri = androidx.core.content.FileProvider.getUriForFile(
@@ -461,7 +471,7 @@ fun SheetFilesTab(
                                 store.createFile(ask.preset, password)
                                 presetTitle(ask.preset) + " file created."
                             } else {
-                                importDraft(appCtx, store, ask.preset, password, up)
+                                importDraft(store, ask.preset, password, up)
                             }
                         } catch (e: Exception) {
                             if (up == null) "Create failed."

@@ -1,23 +1,71 @@
 package net.typeblog.socks.util.sheet
 
 import android.content.Context
+import android.util.Log
 import androidx.preference.PreferenceManager
-import net.typeblog.socks.util.Constants.PREF_SHEET_BUBBLE_FILE_ID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import net.typeblog.socks.util.Constants.PREF_SHEET_BUBBLE_FILE_ID
 
-// In-memory working state over SheetDb. Every mutation writes the DB first
-// (local-first), then refreshes the exposed flows. Undo/redo is per open
-// file and persisted in undo_hist/redo_hist, so it survives app restarts.
+private const val HISTORY_LIMIT = 20
+private const val TAG = "SheetStore"
+
+internal enum class SheetHistoryAction {
+    NONE,
+    PUSH,
+    UNDO,
+    REDO
+}
+
+internal data class SheetCheckDetails(
+    val checks: Map<Int, RowCheck>,
+    val reqs: Map<Int, List<CheckReq>>
+)
+
+private data class OpenSnapshot(
+    val file: SheetFile,
+    val rows: List<SheetRow>,
+    val styles: Map<String, CellStyle>,
+    val hidden: Set<String>,
+    val checks: Map<Int, RowCheck>,
+    val reqs: Map<Int, List<CheckReq>>,
+    val dups: Set<Pair<Int, String>>,
+    val undo: List<List<SheetRow>>,
+    val redo: List<List<SheetRow>>
+)
+
+private data class RefreshSnapshot(
+    val files: List<SheetFile>,
+    val archive: List<SheetFile>,
+    val balance: Double,
+    val txs: List<WalletTx>
+)
+
+private data class CheckContext(
+    val token: Long,
+    val fileId: String,
+    val sequence: Long,
+    val generation: Long,
+    val preset: SheetPreset,
+    val rows: List<SheetRow>
+)
+
+// Local-first SQLite state for the Sheet tab. All row writes go through the
+// serialized mutation path below so file sequence, history, and check records
+// cannot diverge.
 class SheetStore private constructor(context: Context) {
     private val db = SheetDb(context.applicationContext)
     private val bubbleFilePrefs = PreferenceManager.getDefaultSharedPreferences(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val mutationLock = Any()
+    private val openGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    private var openingFileId: String? = null
+    private var refreshGeneration = 0L
+    private var checkToken = 0L
 
     val files = MutableStateFlow<List<SheetFile>>(emptyList())
     val archive = MutableStateFlow<List<SheetFile>>(emptyList())
@@ -26,22 +74,14 @@ class SheetStore private constructor(context: Context) {
 
     val openFile = MutableStateFlow<SheetFile?>(null)
     val openRows = MutableStateFlow<List<SheetRow>>(emptyList())
-    // UUID of the file the floating Sheet bubble mirrors. Observed by the
-    // file cards so the active file shows a badge and the menu offers
-    // remove instead of select. Null means the bubble has no file.
-    val bubbleFileId = MutableStateFlow<String?>(null)
     val openStyles = MutableStateFlow<Map<String, CellStyle>>(emptyMap())
     val openHidden = MutableStateFlow<Set<String>>(emptySet())
-    // Cross-file duplicate marks for the open file ((rowIdx, colKey) cells).
-    // Same-file repeats are blocked at entry — only collisions with OTHER
-    // files flag, per cell.
     val openCrossDups = MutableStateFlow<Set<Pair<Int, String>>>(emptySet())
-    // Check records behind the dot popup, keyed by rowIdx. Refreshed on
-    // open and after every check; row edits drop stale rows (see
-    // persistRows), reindexing ops drop the file.
     val openChecks = MutableStateFlow<Map<Int, RowCheck>>(emptyMap())
     val openCheckReqs = MutableStateFlow<Map<Int, List<CheckReq>>>(emptyMap())
     val checking = MutableStateFlow(false)
+
+    val bubbleFileId = MutableStateFlow<String?>(null)
 
     private val undoStack = ArrayDeque<List<SheetRow>>()
     private val redoStack = ArrayDeque<List<SheetRow>>()
@@ -53,345 +93,652 @@ class SheetStore private constructor(context: Context) {
         refresh()
     }
 
+    private inline fun <T> locked(block: () -> T): T = synchronized(mutationLock, block)
+
     fun refresh() {
+        val generation = locked { ++refreshGeneration }
         scope.launch {
-            files.value = db.listFiles(false)
-            archive.value = db.listFiles(true)
-            balance.value = db.walletBalance()
-            txs.value = db.walletTxs()
+            try {
+                val next = locked {
+                    RefreshSnapshot(
+                        files = db.listFiles(false),
+                        archive = db.listFiles(true),
+                        balance = db.walletBalance(),
+                        txs = db.walletTxs()
+                    )
+                }
+                locked {
+                    if (generation == refreshGeneration) {
+                        files.value = next.files
+                        archive.value = next.archive
+                        balance.value = next.balance
+                        txs.value = next.txs
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to refresh Sheet state", e)
+            }
         }
     }
 
-    /** Select the one active file exposed by the floating Sheet bubble. */
-    fun selectBubbleFile(id: String): Boolean {
-        val file = db.getFile(id) ?: return false
-        if (file.archived) return false
+    fun selectBubbleFile(id: String): Boolean = locked {
+        val file = try {
+            db.getFile(id)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load bubble Sheet file $id", e)
+            null
+        }
+        if (file == null || file.archived) return@locked false
         bubbleFilePrefs.edit().putString(PREF_SHEET_BUBBLE_FILE_ID, id).apply()
         bubbleFileId.value = id
-        return true
+        true
     }
 
-    /** Re-resolve the remembered file on every use and clear stale pointers. */
-    fun getActiveBubbleFile(): SheetFile? {
-        val id = bubbleFilePrefs.getString(PREF_SHEET_BUBBLE_FILE_ID, null) ?: run {
+    fun getActiveBubbleFile(): SheetFile? = locked {
+        val id = bubbleFilePrefs.getString(PREF_SHEET_BUBBLE_FILE_ID, null)
+        if (id == null) {
             bubbleFileId.value = null
-            return null
+            return@locked null
         }
-        val file = db.getFile(id)
+        val file = try {
+            db.getFile(id)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to resolve active bubble Sheet file $id", e)
+            null
+        }
         if (file == null || file.archived) {
             bubbleFilePrefs.edit().remove(PREF_SHEET_BUBBLE_FILE_ID).apply()
             bubbleFileId.value = null
-            return null
+            null
+        } else {
+            file
         }
-        return file
     }
 
-    /** Detach the bubble from any file (from the active card's menu). */
-    fun clearBubbleFile() {
+    fun clearBubbleFile() = locked {
         bubbleFilePrefs.edit().remove(PREF_SHEET_BUBBLE_FILE_ID).apply()
         bubbleFileId.value = null
     }
 
-    fun clearBubbleFileIfSelected(id: String) {
+    fun clearBubbleFileIfSelected(id: String) = locked {
         if (bubbleFilePrefs.getString(PREF_SHEET_BUBBLE_FILE_ID, null) == id) {
             bubbleFilePrefs.edit().remove(PREF_SHEET_BUBBLE_FILE_ID).apply()
             bubbleFileId.value = null
         }
     }
 
-    private fun pushUndo() {
-        val prev = openRows.value.map { it.copy() }
-        undoStack.addLast(prev)
-        if (undoStack.size > 50) undoStack.removeFirst()
-        redoStack.clear()
-        canUndo.value = undoStack.isNotEmpty()
-        canRedo.value = false
-        // Persist pre-state so undo survives app restarts. New edits drop
-        // the redo chain, same as memory.
-        val fid = openFile.value?.id ?: return
-        try {
-            db.tx { d ->
-                db.insertUndo(d, fid, rowsToJson(prev))
-                db.clearRedo(d, fid)
+    private fun readHistoryLocked(fileId: String): Pair<List<List<SheetRow>>, List<List<SheetRow>>> {
+        val undo = db.loadUndoStack(fileId, HISTORY_LIMIT).mapNotNull { data ->
+            try {
+                rowsFromJson(data).map { it.copy() }
+            } catch (e: Exception) {
+                Log.w(TAG, "Skipping corrupt undo history for $fileId", e)
+                null
             }
-        } catch (e: Exception) {
-            // Memory stack already updated; DB is best-effort here.
-        }
+        }.asReversed()
+        val redo = db.loadRedoStack(fileId, HISTORY_LIMIT).mapNotNull { data ->
+            try {
+                rowsFromJson(data).map { it.copy() }
+            } catch (e: Exception) {
+                Log.w(TAG, "Skipping corrupt redo history for $fileId", e)
+                null
+            }
+        }.asReversed()
+        return undo to redo
     }
 
-    fun undo(): Boolean {
-        val prev = undoStack.removeLastOrNull() ?: return false
-        val cur = openRows.value.map { it.copy() }
-        redoStack.addLast(cur)
-        val fid = openFile.value?.id
-        if (fid != null) {
-            try {
-                db.tx { d ->
-                    db.insertRedo(d, fid, rowsToJson(cur))
-                    db.popUndo(d, fid)
-                }
-            } catch (e: Exception) {
-            }
-        }
-        persistRows(prev, "undo")
-        canUndo.value = undoStack.isNotEmpty()
-        canRedo.value = true
-        return true
-    }
 
-    fun redo(): Boolean {
-        val next = redoStack.removeLastOrNull() ?: return false
-        val cur = openRows.value.map { it.copy() }
-        undoStack.addLast(cur)
-        if (undoStack.size > 50) undoStack.removeFirst()
-        val fid = openFile.value?.id
-        if (fid != null) {
-            try {
-                db.tx { d ->
-                    db.insertUndo(d, fid, rowsToJson(cur))
-                    db.popRedo(d, fid)
-                }
-            } catch (e: Exception) {
-            }
-        }
-        persistRows(next, "redo")
-        canUndo.value = true
+    private fun publishHistoryLocked() {
+        canUndo.value = undoStack.isNotEmpty()
         canRedo.value = redoStack.isNotEmpty()
-        return true
     }
 
-    fun createFile(preset: SheetPreset, password: String): SheetFile {
+    fun undo(): Boolean = locked {
+        val file = openFile.value ?: return@locked false
+        val target = undoStack.firstOrNull() ?: return@locked false
+        val previous = openRows.value.map { it.copy() }
+        persistRowsLocked(
+            fileId = file.id,
+            previous = previous,
+            rows = topUp(target, file.preset),
+            history = SheetHistoryAction.UNDO,
+            expectedSequence = file.seq,
+            expectedGeneration = openGeneration.get()
+        )
+    }
+
+    fun redo(): Boolean = locked {
+        val file = openFile.value ?: return@locked false
+        val target = redoStack.firstOrNull() ?: return@locked false
+        val previous = openRows.value.map { it.copy() }
+        persistRowsLocked(
+            fileId = file.id,
+            previous = previous,
+            rows = topUp(target, file.preset),
+            history = SheetHistoryAction.REDO,
+            expectedSequence = file.seq,
+            expectedGeneration = openGeneration.get()
+        )
+    }
+
+    fun createFile(preset: SheetPreset, password: String): SheetFile = locked {
         val now = System.currentTimeMillis()
         val names = files.value.map { it.name } + archive.value.map { it.name }
-        val f = SheetFile(
-            id = newFileId(), name = autoFileName(preset, names), preset = preset,
-            password = password, archived = false, deletedAt = 0,
-            createdAt = now, updatedAt = now, seq = 0
+        val file = SheetFile(
+            id = newFileId(),
+            name = autoFileName(preset, names),
+            preset = preset,
+            password = password,
+            archived = false,
+            deletedAt = 0,
+            createdAt = now,
+            updatedAt = now,
+            seq = 0
         )
-        db.tx { d ->
-            db.insertFile(d, f)
-            db.recordOp(d, f.id, "create")
+        try {
+            db.tx { d -> db.insertFile(d, file) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create Sheet file", e)
+            throw e
         }
         refresh()
-        return f
+        file
     }
 
-    fun renameFile(id: String, name: String): Boolean {
-        val f = db.getFile(id) ?: return false
+    fun renameFile(id: String, name: String): Boolean = locked {
+        val file = try {
+            db.getFile(id)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load Sheet file $id for rename", e)
+            null
+        } ?: return@locked false
         val now = System.currentTimeMillis()
-        db.tx { d ->
-            db.updateFile(d, f.copy(name = name, updatedAt = now, seq = f.seq + 1))
-            db.recordOp(d, id, "rename")
+        val renamed = file.copy(name = name, updatedAt = now, seq = file.seq + 1)
+        try {
+            db.tx { d -> db.updateFile(d, renamed) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to rename Sheet file $id", e)
+            return@locked false
         }
-        if (openFile.value?.id == id) openFile.value = db.getFile(id)
+        if (openFile.value?.id == id) openFile.value = renamed
         refresh()
-        return true
+        true
     }
 
-    fun archiveFile(id: String, toArchive: Boolean) {
-        val f = db.getFile(id) ?: return
+    fun archiveFile(id: String, toArchive: Boolean) = locked {
+        val file = try {
+            db.getFile(id)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load Sheet file $id for archive change", e)
+            null
+        } ?: return@locked
         val now = System.currentTimeMillis()
-        db.tx { d ->
-            db.updateFile(
-                d,
-                f.copy(
-                    archived = toArchive, deletedAt = if (toArchive) now else 0,
-                    updatedAt = now, seq = f.seq + 1
-                )
-            )
-            db.recordOp(d, id, if (toArchive) "archive" else "restore")
+        val changed = file.copy(
+            archived = toArchive,
+            deletedAt = if (toArchive) now else 0,
+            updatedAt = now,
+            seq = file.seq + 1
+        )
+        try {
+            db.tx { d -> db.updateFile(d, changed) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to archive Sheet file $id", e)
+            return@locked
         }
         if (toArchive) clearBubbleFileIfSelected(id)
-        if (openFile.value?.id == id && toArchive) closeFile()
+        if (openFile.value?.id == id && toArchive) closeFile(id)
         refresh()
     }
 
-    fun deleteForever(id: String) {
-        db.tx { d ->
-            db.deleteFileAll(d, id)
-            db.recordOp(d, id, "purge")
+    fun deleteForever(id: String) = locked {
+        try {
+            db.tx { d -> db.deleteFileAll(d, id) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete Sheet file $id", e)
+            return@locked
         }
         clearBubbleFileIfSelected(id)
-        if (openFile.value?.id == id) closeFile()
+        if (openFile.value?.id == id) closeFile(id)
         refresh()
     }
 
     fun open(id: String): Boolean {
-        val f = db.getFile(id) ?: return false
-        // Atomic publish: load everything first, then flip all flows at
-        // once. Publishing file/rows/styles/hidden one at a time (with DB
-        // work between) recomposed the grid mid-load — a flash of hidden
-        // columns and empty text before the file rendered.
-        val rows = topUp(db.loadRows(id).ifEmpty { emptyPad(f.preset) }, f.preset)
-        val styles = db.loadStyles(id)
-        val hidden = db.loadHidden(id)
-        val checks = db.loadRowChecks(id)
-        val reqs = db.loadCheckReqs(id)
-        val dups = try {
-            db.crossDupCells(id, rows)
-        } catch (e: Exception) {
-            emptySet()
-        }
-        // Restore persisted undo/redo (survives app restarts). Corrupt
-        // entries are skipped, never crash open.
-        val savedUndo = try {
-            db.loadUndoStack(id, 50)
-        } catch (e: Exception) {
-            emptyList()
-        }
-        val savedRedo = try {
-            db.loadRedoStack(id, 50)
-        } catch (e: Exception) {
-            emptyList()
-        }
-        undoStack.clear()
-        redoStack.clear()
-        for (data in savedUndo) {
-            try {
-                undoStack.addLast(rowsFromJson(data).map { it.copy() })
+        val request = openGeneration.incrementAndGet()
+        return locked {
+            if (request != openGeneration.get()) return@locked false
+            openingFileId = id
+            checkToken++
+            checking.value = false
+            val file = try {
+                db.getFile(id)
             } catch (e: Exception) {
+                Log.e(TAG, "Failed to open Sheet file $id", e)
+                null
             }
-        }
-        for (data in savedRedo) {
-            try {
-                redoStack.addLast(rowsFromJson(data).map { it.copy() })
+            if (file == null) {
+                openingFileId = null
+                return@locked false
+            }
+            val snapshot = try {
+                loadOpenSnapshot(file)
             } catch (e: Exception) {
+                Log.e(TAG, "Failed to load Sheet snapshot $id", e)
+                null
             }
+            if (snapshot == null) {
+                openingFileId = null
+                return@locked false
+            }
+            if (request != openGeneration.get() || openingFileId != id) {
+                if (request == openGeneration.get() && openingFileId == id) openingFileId = null
+                return@locked false
+            }
+            publishOpenSnapshotLocked(snapshot)
+            openingFileId = null
+            true
         }
-        canUndo.value = undoStack.isNotEmpty()
-        canRedo.value = redoStack.isNotEmpty()
-        openFile.value = f
-        openRows.value = rows
-        openStyles.value = styles
-        openHidden.value = hidden
-        openChecks.value = checks
-        openCheckReqs.value = reqs
-        openCrossDups.value = dups
-        return true
     }
 
-    fun reloadChecks() {
-        val f = openFile.value ?: run {
-            openChecks.value = emptyMap()
-            openCheckReqs.value = emptyMap()
-            return
-        }
-        openChecks.value = db.loadRowChecks(f.id)
-        openCheckReqs.value = db.loadCheckReqs(f.id)
-    }
-
-    // Wholesale drop (reindexing ops, import replace): DB + flows.
-    fun dropCheckData() {
-        val f = openFile.value ?: return
-        db.tx { d -> db.clearCheckData(d, f.id) }
-        openChecks.value = emptyMap()
-        openCheckReqs.value = emptyMap()
-    }
-
-    /** Refresh editor flows only when a file-scoped background write targeted the open file. */
-    fun reloadOpenFileIfMatches(fileId: String): Boolean {
-        if (openFile.value?.id != fileId) return false
-        val file = db.getFile(fileId) ?: return false
-        val rows = topUp(db.loadRows(fileId).ifEmpty { emptyPad(file.preset) }, file.preset)
-        openFile.value = file
-        openRows.value = rows
-        openStyles.value = db.loadStyles(fileId)
-        openHidden.value = db.loadHidden(fileId)
-        openChecks.value = db.loadRowChecks(fileId)
-        openCheckReqs.value = db.loadCheckReqs(fileId)
-        openCrossDups.value = try { db.crossDupCells(fileId, rows) } catch (_: Exception) { emptySet() }
-        return true
-    }
 
     fun closeFile(expectedFileId: String? = null) {
-        if (expectedFileId != null && openFile.value?.id != expectedFileId) return
-        openFile.value = null
-        openRows.value = emptyList()
-        openStyles.value = emptyMap()
-        openHidden.value = emptySet()
-        openCrossDups.value = emptySet()
-        openChecks.value = emptyMap()
-        openCheckReqs.value = emptyMap()
-        undoStack.clear()
-        redoStack.clear()
-        canUndo.value = false
-        canRedo.value = false
-    }
-
-    private fun emptyPad(preset: SheetPreset, n: Int = MAX_GRID_ROWS): List<SheetRow> {
-        val cols = preset.columns
-        return List(n) { i -> SheetRow(rowIdx = i).let { r -> if (cols.isEmpty()) r else r } }
-    }
-
-    private fun topUp(rows: List<SheetRow>, preset: SheetPreset): List<SheetRow> {
-        val lastData = rows.indexOfLast { it.isData(preset.columns) }
-        val want = (lastData + 51).coerceAtLeast(MAX_GRID_ROWS)
-        if (rows.size >= want) return rows
-        return rows + (rows.size until want).map { SheetRow(rowIdx = it) }
-    }
-
-    private fun persistRows(rows: List<SheetRow>, op: String) {
-        val f = openFile.value ?: return
-        val now = System.currentTimeMillis()
-        val seq = f.seq + 1
-        val snapshot = rowsToJson(rows)
-        val prevByIdx = openRows.value.associateBy { it.rowIdx }
-        // Check records follow the verdict: any row whose identity or
-        // verdict changed leaves stale details behind, so drop them.
-        // Reindexing ops (delete-dead, compact, restore, import) clear
-        // the file explicitly — rowIdx keys would otherwise orphan.
-        val stale = rows.mapNotNull { nr ->
-            val o = prevByIdx[nr.rowIdx]
-            if (o == null || o.cookies != nr.cookies || o.uid != nr.uid ||
-                o.status != nr.status || o.dead != nr.dead
-            ) nr.rowIdx else null
-        }.toSet()
-        db.tx { d ->
-            db.saveAllRows(d, f.id, rows)
-            db.saveSnapshot(d, f.id, seq, snapshot)
-            db.updateFile(d, f.copy(updatedAt = now, seq = seq))
-            db.recordOp(d, f.id, op)
-            if (stale.isNotEmpty()) db.deleteRowCheckData(d, f.id, stale)
-        }
-        if (stale.isNotEmpty() && (openChecks.value.keys.any { it in stale } || openCheckReqs.value.keys.any { it in stale })) {
-            openChecks.value = openChecks.value.filterKeys { it !in stale }
-            openCheckReqs.value = openCheckReqs.value.filterKeys { it !in stale }
-        }
-        openFile.value = db.getFile(f.id)
-        openRows.value = rows
-        refreshCrossDups(rows)
-        refresh()
-    }
-
-    // Recomputes cross-file dup marks. Callers already run on Dispatchers.IO
-    // (open/persist paths), so the cross-file scan stays off the main thread.
-    private fun refreshCrossDups(rows: List<SheetRow> = openRows.value) {
-        val f = openFile.value ?: run {
+        locked {
+            if (expectedFileId != null) {
+                val openingMatches = openingFileId == expectedFileId
+                val publishedMatches = openFile.value?.id == expectedFileId
+                if (!openingMatches && !publishedMatches) return@locked
+                // A newer open request owns the generation. Closing the old
+                // screen must clear only the old publication, not cancel it.
+                if (openingMatches || openingFileId == null) openGeneration.incrementAndGet()
+                if (openingMatches) openingFileId = null
+            } else {
+                openGeneration.incrementAndGet()
+                openingFileId = null
+            }
+            checkToken++
+            checking.value = false
+            openFile.value = null
+            openRows.value = emptyList()
+            openStyles.value = emptyMap()
+            openHidden.value = emptySet()
             openCrossDups.value = emptySet()
-            return
+            openChecks.value = emptyMap()
+            openCheckReqs.value = emptyMap()
+            undoStack.clear()
+            redoStack.clear()
+            canUndo.value = false
+            canRedo.value = false
         }
-        openCrossDups.value = try {
-            db.crossDupCells(f.id, rows)
+    }
+
+    private fun loadOpenSnapshot(file: SheetFile): OpenSnapshot {
+        val rows = topUp(db.loadRows(file.id), file.preset)
+        val dups = try {
+            db.crossDupCells(file.id, rows)
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to calculate cross-file duplicates for ${file.id}", e)
             emptySet()
         }
+        val (undo, redo) = readHistoryLocked(file.id)
+        return OpenSnapshot(
+            file = file,
+            rows = rows,
+            styles = db.loadStyles(file.id),
+            hidden = db.loadHidden(file.id),
+            checks = db.loadRowChecks(file.id),
+            reqs = db.loadCheckReqs(file.id),
+            dups = dups,
+            undo = undo,
+            redo = redo
+        )
     }
 
-    // In-file duplicates are blocked, never marked: there is no yellow
-    // indicator because a duplicate value can never be saved. The uid is
-    // derived, not typed: with a cookie present any uid edit (paste, type
-    // or clear) is rejected, and the cookie always overwrites it.
-    // Returns the exact message to show when the value must be rejected,
-    // null when OK. (Locked rows are messaged by the caller, so they pass
-    // here.)
-    fun rejectReason(rowIdx: Int, colKey: String, value: String): String? {
-        val rows = openRows.value
-        val cur = rows.getOrNull(rowIdx) ?: return "Couldn't save. Please try again."
-        if (cur.locked) return null
-        if (cur.cell(colKey) == value) return null
-        if (colKey == "uid" && cur.cookies.isNotEmpty()) {
-            return "UID comes from the cookie."
+    private fun publishOpenSnapshotLocked(snapshot: OpenSnapshot) {
+        openRows.value = snapshot.rows
+        openStyles.value = snapshot.styles
+        openHidden.value = snapshot.hidden
+        openChecks.value = snapshot.checks
+        openCheckReqs.value = snapshot.reqs
+        openCrossDups.value = snapshot.dups
+        undoStack.clear()
+        redoStack.clear()
+        snapshot.undo.forEach { undoStack.addLast(it) }
+        snapshot.redo.forEach { redoStack.addLast(it) }
+        publishHistoryLocked()
+        openFile.value = snapshot.file
+    }
+
+
+    private fun topUp(rows: List<SheetRow>, preset: SheetPreset): List<SheetRow> {
+        val normalized = meaningfulSheetRows(rows).mapIndexed { index, row ->
+            if (row.rowIdx == index) row else row.copy(rowIdx = index)
         }
+        val lastData = normalized.indexOfLast { it.isData(preset.columns) }
+        val want = (lastData + 51).coerceAtLeast(MAX_GRID_ROWS)
+        if (normalized.size >= want) return normalized
+        return normalized + (normalized.size until want).map { SheetRow(rowIdx = it) }
+    }
+
+    private fun normalizedRows(rows: List<SheetRow>): List<SheetRow> =
+        rows.take(MAX_GRID_ROWS).mapIndexed { index, row -> row.copy(rowIdx = index) }
+
+    private fun staleChecks(previous: List<SheetRow>, rows: List<SheetRow>): Set<Int> {
+        val before = previous.associateBy { it.rowIdx }
+        val after = rows.associateBy { it.rowIdx }
+        return (before.keys + after.keys).filter { before[it] != after[it] }.toSet()
+    }
+
+    private fun persistRowsLocked(
+        fileId: String,
+        previous: List<SheetRow>,
+        rows: List<SheetRow>,
+        history: SheetHistoryAction = SheetHistoryAction.PUSH,
+        clearChecks: Boolean = false,
+        checkDetails: SheetCheckDetails? = null,
+        expectedSequence: Long? = null,
+        expectedGeneration: Long? = null
+    ): Boolean {
+        if (openingFileId != null) return false
+        if (expectedGeneration != null && expectedGeneration != openGeneration.get()) return false
+        if (rows.size > MAX_GRID_ROWS) {
+            Log.e(TAG, "Rejected Sheet row mutation over the $MAX_GRID_ROWS row limit for $fileId")
+            return false
+        }
+        val current = try {
+            db.getFile(fileId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load Sheet file $fileId before mutation", e)
+            return false
+        } ?: return false
+        if (expectedSequence != null && current.seq != expectedSequence) return false
+
+        val previousMeaningful = meaningfulSheetRows(previous)
+        val nextMeaningful = meaningfulSheetRows(rows)
+        val rowsChanged = previousMeaningful != nextMeaningful
+        if (!rowsChanged && checkDetails != null && !clearChecks) {
+            try {
+                db.tx { d -> db.saveCheckDetails(d, fileId, checkDetails.checks, checkDetails.reqs) }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist Sheet check details for $fileId", e)
+                return false
+            }
+            val publish = openFile.value?.id == fileId &&
+                    (expectedGeneration == null || expectedGeneration == openGeneration.get())
+            if (publish) {
+                openChecks.value = checkDetails.checks
+                openCheckReqs.value = checkDetails.reqs
+            }
+            return true
+        }
+        if (!rowsChanged && checkDetails == null && !clearChecks && history == SheetHistoryAction.PUSH) {
+            if (openFile.value?.id == fileId &&
+                (expectedGeneration == null || expectedGeneration == openGeneration.get())
+            ) {
+                openRows.value = topUp(rows, current.preset)
+            }
+            return true
+        }
+
+        val now = System.currentTimeMillis()
+        val sequence = current.seq + 1
+        val updated = current.copy(updatedAt = now, seq = sequence)
+        val stale = if (clearChecks) emptySet() else staleChecks(previous, rows)
+        try {
+            db.tx { d ->
+                db.saveAllRows(d, fileId, rows)
+                db.updateFile(d, updated)
+                when (history) {
+                    SheetHistoryAction.PUSH -> {
+                        db.insertUndo(d, fileId, rowsToJson(previous))
+                        db.clearRedo(d, fileId)
+                    }
+
+                    SheetHistoryAction.UNDO -> {
+                        db.insertRedo(d, fileId, rowsToJson(previous))
+                        db.popUndo(d, fileId)
+                    }
+
+                    SheetHistoryAction.REDO -> {
+                        db.insertUndo(d, fileId, rowsToJson(previous))
+                        db.popRedo(d, fileId)
+                    }
+
+                    SheetHistoryAction.NONE -> Unit
+                }
+                if (checkDetails != null) {
+                    db.saveCheckDetails(d, fileId, checkDetails.checks, checkDetails.reqs)
+                } else if (clearChecks) {
+                    db.clearCheckData(d, fileId)
+                } else if (stale.isNotEmpty()) {
+                    db.deleteRowCheckData(d, fileId, stale)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist Sheet rows for $fileId", e)
+            return false
+        }
+
+        val publish = openFile.value?.id == fileId &&
+                (expectedGeneration == null || expectedGeneration == openGeneration.get())
+        if (publish) {
+            openFile.value = updated
+            openRows.value = topUp(rows, updated.preset)
+            when {
+                checkDetails != null -> {
+                    openChecks.value = checkDetails.checks
+                    openCheckReqs.value = checkDetails.reqs
+                }
+
+                clearChecks -> {
+                    openChecks.value = emptyMap()
+                    openCheckReqs.value = emptyMap()
+                }
+
+                stale.isNotEmpty() -> {
+                    openChecks.value = openChecks.value.filterKeys { it !in stale }
+                    openCheckReqs.value = openCheckReqs.value.filterKeys { it !in stale }
+                }
+            }
+            openCrossDups.value = crossDuplicates(fileId, openRows.value)
+            when (history) {
+                SheetHistoryAction.PUSH -> {
+                    undoStack.addFirst(previousMeaningful)
+                    while (undoStack.size > HISTORY_LIMIT) undoStack.removeLast()
+                    redoStack.clear()
+                }
+
+                SheetHistoryAction.UNDO -> {
+                    undoStack.removeFirstOrNull()
+                    redoStack.addFirst(previousMeaningful)
+                    while (redoStack.size > HISTORY_LIMIT) redoStack.removeLast()
+                }
+
+                SheetHistoryAction.REDO -> {
+                    redoStack.removeFirstOrNull()
+                    undoStack.addFirst(previousMeaningful)
+                    while (undoStack.size > HISTORY_LIMIT) undoStack.removeLast()
+                }
+
+                SheetHistoryAction.NONE -> Unit
+            }
+            publishHistoryLocked()
+        }
+        refresh()
+        return true
+    }
+
+    /** File-scoped bubble write; it shares the same transaction path as editor writes. */
+    internal fun persistRowsForFile(
+        fileId: String,
+        previous: List<SheetRow>,
+        rows: List<SheetRow>,
+        expectedSequence: Long,
+        history: SheetHistoryAction = SheetHistoryAction.PUSH,
+        clearChecks: Boolean = false,
+        checkDetails: SheetCheckDetails? = null
+    ): Boolean = locked {
+        persistRowsLocked(
+            fileId = fileId,
+            previous = previous,
+            rows = rows,
+            history = history,
+            clearChecks = clearChecks,
+            checkDetails = checkDetails,
+            expectedSequence = expectedSequence
+        )
+    }
+
+    internal fun undoFile(fileId: String): Boolean = locked {
+        val file = try {
+            db.getFile(fileId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load Sheet file $fileId for undo", e)
+            null
+        } ?: return@locked false
+        val data = try {
+            db.loadUndoStack(fileId, 1).lastOrNull()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load undo history for $fileId", e)
+            null
+        } ?: return@locked false
+        val restored = try {
+            rowsFromJson(data)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to decode undo history for $fileId", e)
+            return@locked false
+        }
+        val before = try {
+            db.loadRows(fileId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load rows before undo for $fileId", e)
+            return@locked false
+        }
+        persistRowsLocked(
+            fileId = fileId,
+            previous = before,
+            rows = topUp(restored, file.preset),
+            history = SheetHistoryAction.UNDO,
+            expectedSequence = file.seq
+        )
+    }
+
+    internal fun redoFile(fileId: String): Boolean = locked {
+        val file = try {
+            db.getFile(fileId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load Sheet file $fileId for redo", e)
+            null
+        } ?: return@locked false
+        val data = try {
+            db.loadRedoStack(fileId, 1).lastOrNull()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load redo history for $fileId", e)
+            null
+        } ?: return@locked false
+        val restored = try {
+            rowsFromJson(data)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to decode redo history for $fileId", e)
+            null
+        } ?: return@locked false
+        val before = try {
+            db.loadRows(fileId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load rows before redo for $fileId", e)
+            null
+        } ?: return@locked false
+        persistRowsLocked(
+            fileId = fileId,
+            previous = before,
+            rows = topUp(restored, file.preset),
+            history = SheetHistoryAction.REDO,
+            expectedSequence = file.seq
+        )
+    }
+
+    fun replaceRows(fileId: String, rows: List<SheetRow>): Int = locked {
+        val file = try {
+            db.getFile(fileId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load Sheet file $fileId for replace", e)
+            null
+        } ?: return@locked 0
+        if (file.archived) return@locked 0
+        if (rows.size > MAX_GRID_ROWS) {
+            Log.e(TAG, "Rejected Sheet replace over the $MAX_GRID_ROWS row limit for $fileId")
+            return@locked 0
+        }
+        val bounded = normalizedRows(rows)
+        val before = try {
+            db.loadRows(fileId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load rows before replace for $fileId", e)
+            return@locked 0
+        }
+        val saved = meaningfulSheetRows(bounded).size
+        if (!persistRowsLocked(
+                fileId = fileId,
+                previous = before,
+                rows = bounded,
+                history = SheetHistoryAction.PUSH,
+                clearChecks = true,
+                expectedSequence = file.seq
+            )
+        ) return@locked 0
+        saved
+    }
+
+    fun mergeRows(fileId: String, incoming: List<SheetRow>): Int = locked {
+        val file = try {
+            db.getFile(fileId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load Sheet file $fileId for merge", e)
+            null
+        } ?: return@locked 0
+        if (file.archived) return@locked 0
+        val loaded = try {
+            db.loadRows(fileId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load rows before merge for $fileId", e)
+            return@locked 0
+        }
+        val previous = topUp(loaded, file.preset)
+        val current = meaningfulSheetRows(loaded).mapIndexed { index, row ->
+            row.copy(rowIdx = index)
+        }
+        val reindexed = loaded.indices.any { loaded[it].rowIdx != it } || loaded.size != current.size
+        val room = MAX_GRID_ROWS - current.size
+        if (room <= 0) return@locked 0
+        val addition = meaningfulSheetRows(normalizedRows(incoming)).take(room)
+        val merged = (current + addition).mapIndexed { index, row -> row.copy(rowIdx = index) }
+        if (!reindexed && addition.isEmpty()) return@locked 0
+        if (!persistRowsLocked(
+                fileId = fileId,
+                previous = previous,
+                rows = merged,
+                history = SheetHistoryAction.PUSH,
+                clearChecks = reindexed,
+                expectedSequence = file.seq
+            )
+        ) return@locked 0
+        addition.size
+    }
+
+    private fun crossDuplicates(fileId: String, rows: List<SheetRow>): Set<Pair<Int, String>> = try {
+        db.crossDupCells(fileId, rows)
+    } catch (e: Exception) {
+        Log.e(TAG, "Failed to calculate cross-file duplicates for $fileId", e)
+        emptySet()
+    }
+
+    fun rejectReason(rowIdx: Int, colKey: String, value: String): String? = locked {
+        rejectReasonLocked(rowIdx, colKey, value)
+    }
+
+    private fun rejectReasonLocked(rowIdx: Int, colKey: String, value: String): String? {
+        val rows = openRows.value
+        val current = rows.getOrNull(rowIdx) ?: return "Couldn't save. Please try again."
+        if (current.locked || current.cell(colKey) == value) return null
+        if (colKey == "uid" && current.cookies.isNotEmpty()) return "UID comes from the cookie."
         if (colKey == "twofakey" && value.isNotEmpty() && !isValidTwoFaValue(value)) {
             return "Invalid 2fa key."
         }
@@ -405,8 +752,6 @@ class SheetStore private constructor(context: Context) {
                 else -> "uid."
             }
         }
-        // Same account under a different cookie string: its c_user already
-        // lives as another row's uid, so the cookie is refused as well.
         if (colKey == "cookies" && value.isNotEmpty()) {
             val extracted = extractCUser(value)
             if (extracted != null && rows.any { it.rowIdx != rowIdx && it.uid == extracted }) {
@@ -416,301 +761,316 @@ class SheetStore private constructor(context: Context) {
         return null
     }
 
-    fun setCell(rowIdx: Int, colKey: String, value: String): Boolean {
-        val f = openFile.value ?: return false
-        val rows = openRows.value.toMutableList()
-        if (rowIdx !in rows.indices) return false
-        val cur = rows[rowIdx]
-        if (cur.locked) return false
-        if (cur.cell(colKey) == value) return true
-        if (rejectReason(rowIdx, colKey, value) != null) return false
-        // UID comes from the cookie, never from typing: committing a cookie
-        // overwrites the uid with its c_user (or blanks it when the cookie
-        // carries none), and clearing the cookie clears the uid with it.
-        // The verdict goes with the identity: any cookie write also clears
-        // the dot (status/dead), the auto-check re-verdicts right after.
-        // Centralized here so every entry point (formula bar, double-tap
-        // paste, quick paste button) behaves the same.
-        if (colKey == "cookies") {
-            pushUndo()
-            rows[rowIdx] = if (value.isEmpty()) {
-                cur.withCell(colKey, value).withCell("uid", "")
-                    .copy(status = "", dead = false)
+    fun setCell(rowIdx: Int, colKey: String, value: String): Boolean = locked {
+        val file = openFile.value ?: return@locked false
+        val before = openRows.value
+        if (rowIdx !in before.indices) return@locked false
+        val current = before[rowIdx]
+        if (current.locked) return@locked false
+        if (current.cell(colKey) == value) return@locked true
+        if (rejectReasonLocked(rowIdx, colKey, value) != null) return@locked false
+        val rows = before.toMutableList()
+        rows[rowIdx] = if (colKey == "cookies") {
+            if (value.isEmpty()) {
+                current.withCell(colKey, value).withCell("uid", "").copy(status = "", dead = false)
             } else {
-                cur.withCell(colKey, value).withCell("uid", extractCUser(value) ?: "")
+                current.withCell(colKey, value).withCell("uid", extractCUser(value) ?: "")
                     .copy(status = "", dead = false)
             }
-            persistRows(topUp(rows, f.preset), "edit")
-            return true
-        }
-        pushUndo()
-        rows[rowIdx] = if (colKey == "uid") {
-            cur.withCell(colKey, value).copy(status = "", dead = false)
+        } else if (colKey == "uid") {
+            current.withCell(colKey, value).copy(status = "", dead = false)
         } else {
-            cur.withCell(colKey, value)
+            current.withCell(colKey, value)
         }
-        persistRows(topUp(rows, f.preset), "edit")
-        return true
+        persistRowsLocked(
+            fileId = file.id,
+            previous = before,
+            rows = rows,
+            expectedSequence = file.seq,
+            expectedGeneration = openGeneration.get()
+        )
     }
 
-    // Internal grid clipboard: set by Copy, read by Paste, survives file
-    // switches (open/close never clear it).
     val copiedGrid = MutableStateFlow<CopiedGrid?>(null)
 
     fun copyGrid(grid: CopiedGrid) {
         copiedGrid.value = grid
     }
 
-    // Google-Sheets-style paste. The clipboard tiles from the anchor to fill
-    // a bigger selection and overflows past a smaller one (or no selection).
-    // Same preset pastes positionally; across presets values map by column
-    // key and unknown keys skip. Cookies drag their c_user along (uid
-    // derivation); every other cell goes through the same entry rules as
-    // typing (duplicates, 2fa, locked rows skip). Single undo, single
-    // persist. Returns PasteResult(pasted, skipped, cookiesWritten, note).
     fun pasteGrid(
         grid: CopiedGrid,
         anchor: Pair<Int, String>,
         area: Set<Pair<Int, String>>?,
         order: List<String>
+    ): PasteResult = locked {
+        pasteGridLocked(grid, anchor, area, order)
+    }
+
+    private fun pasteGridLocked(
+        grid: CopiedGrid,
+        anchor: Pair<Int, String>,
+        area: Set<Pair<Int, String>>?,
+        order: List<String>
     ): PasteResult {
-        val f = openFile.value ?: return PasteResult(0, 0, false)
-        if (grid.cells.isEmpty() || grid.columns.isEmpty() || order.isEmpty()) return PasteResult(0, 0, false)
-        val rows = openRows.value
-        if (rows.isEmpty()) return PasteResult(0, 0, false)
-        val samePreset = grid.preset == f.preset.name
-        val selRows: List<Int>
-        val selCols: List<String>
-        if (!area.isNullOrEmpty()) {
-            selRows = area.map { it.first }.distinct().sorted()
-            selCols = order.filter { k -> area.any { it.second == k } }
-        } else {
-            selRows = emptyList()
-            selCols = emptyList()
+        val file = openFile.value ?: return PasteResult(0, 0, false)
+        if (grid.cells.isEmpty() || grid.columns.isEmpty() || order.isEmpty()) {
+            return PasteResult(0, 0, false)
         }
-        val aRow = if (selRows.isNotEmpty()) selRows.first() else anchor.first
-        val aKey = if (selCols.isNotEmpty()) selCols.first() else anchor.second
-        val aCol = order.indexOf(aKey).let { if (it < 0) 0 else it }
-        val rCount = grid.cells.size
-        val cCount = grid.columns.size
-        data class Write(val ri: Int, val ck: String, val value: String)
-        val pass1 = mutableListOf<Write>() // everything except uid
-        val pass2 = mutableListOf<Write>() // uid last, sees dragged cookies
+        val before = openRows.value
+        if (before.isEmpty()) return PasteResult(0, 0, false)
+        val samePreset = grid.preset == file.preset.name
+        val selectedRows: List<Int>
+        val selectedCols: List<String>
+        if (!area.isNullOrEmpty()) {
+            selectedRows = area.map { it.first }.distinct().sorted()
+            selectedCols = order.filter { key -> area.any { it.second == key } }
+        } else {
+            selectedRows = emptyList()
+            selectedCols = emptyList()
+        }
+        val anchorRow = if (selectedRows.isNotEmpty()) selectedRows.first() else anchor.first
+        val anchorKey = if (selectedCols.isNotEmpty()) selectedCols.first() else anchor.second
+        val anchorColumn = order.indexOf(anchorKey).let { if (it < 0) 0 else it }
+        val rowCount = grid.cells.size
+        val columnCount = grid.columns.size
+
+        data class Write(val row: Int, val key: String, val value: String)
+
+        val firstPass = mutableListOf<Write>()
+        val secondPass = mutableListOf<Write>()
         var skipped = 0
-        for (i in 0 until maxOf(selRows.size, rCount)) {
-            val ri = aRow + i
-            if (ri !in rows.indices) {
-                skipped += maxOf(selCols.size, cCount)
+        for (i in 0 until maxOf(selectedRows.size, rowCount)) {
+            val rowIndex = anchorRow + i
+            if (rowIndex !in before.indices) {
+                skipped += maxOf(selectedCols.size, columnCount)
                 continue
             }
-            for (j in 0 until maxOf(selCols.size, cCount)) {
-                val targetKey = if (j < selCols.size) selCols[j]
-                else order.getOrNull(aCol + j)
+            for (j in 0 until maxOf(selectedCols.size, columnCount)) {
+                val targetKey = if (j < selectedCols.size) selectedCols[j]
+                else order.getOrNull(anchorColumn + j)
                 if (targetKey == null) {
                     skipped++
                     continue
                 }
-                val srcRow = grid.cells[i % rCount]
+                val sourceRow = grid.cells[i % rowCount]
                 val value = if (samePreset) {
-                    srcRow.getOrNull(j % cCount)?.second
+                    sourceRow.getOrNull(j % columnCount)?.second
                 } else {
-                    srcRow.firstOrNull { it.first == targetKey }?.second
+                    sourceRow.firstOrNull { it.first == targetKey }?.second
                 }
                 if (value == null) {
                     skipped++
                     continue
                 }
-                (if (targetKey == "uid") pass2 else pass1).add(Write(ri, targetKey, value))
+                (if (targetKey == "uid") secondPass else firstPass)
+                    .add(Write(rowIndex, targetKey, value))
             }
         }
-        val w = rows.toMutableList()
+
+        val rows = before.toMutableList()
         var pasted = 0
         var cookiesWritten = false
         var dirty = false
-        // First notable skip message, for the result toast.
         var note: String? = null
-        fun noteDup(ck: String) {
-            if (note == null) note = "Duplicate " + when (ck) {
-                "cookies" -> "cookie."
-                "twofakey" -> "2fa."
-                else -> "uid."
+        fun noteDuplicate(key: String) {
+            if (note == null) {
+                note = "Duplicate " + when (key) {
+                    "cookies" -> "cookie."
+                    "twofakey" -> "2fa."
+                    else -> "uid."
+                }
             }
         }
-        for (t in pass1) {
-            val cur = w.getOrNull(t.ri) ?: run { skipped++; continue }
-            if (cur.locked) {
+
+        for (write in firstPass) {
+            val current = rows.getOrNull(write.row) ?: run {
                 skipped++
                 continue
             }
-            if (cur.cell(t.ck) == t.value) {
+            if (current.locked) {
+                skipped++
+                continue
+            }
+            if (current.cell(write.key) == write.value) {
                 pasted++
                 continue
             }
-            if (t.ck == "twofakey" && t.value.isNotEmpty() && !isValidTwoFaValue(t.value)) {
+            if (write.key == "twofakey" && write.value.isNotEmpty() && !isValidTwoFaValue(write.value)) {
                 skipped++
                 continue
             }
-            if ((t.ck == "cookies" || t.ck == "twofakey") && t.value.isNotEmpty() &&
-                !(t.ck == "twofakey" && isNo2Fa(t.value)) &&
-                w.any { it.rowIdx != t.ri && it.cell(t.ck) == t.value }
+            if ((write.key == "cookies" || write.key == "twofakey") && write.value.isNotEmpty() &&
+                !(write.key == "twofakey" && isNo2Fa(write.value)) &&
+                rows.any { it.rowIdx != write.row && it.cell(write.key) == write.value }
             ) {
-                noteDup(t.ck)
+                noteDuplicate(write.key)
                 skipped++
                 continue
             }
-            w[t.ri] = if (t.ck == "cookies") {
+            rows[write.row] = if (write.key == "cookies") {
                 cookiesWritten = true
-                cur.withCell(t.ck, t.value).withCell("uid", extractCUser(t.value) ?: "")
+                current.withCell(write.key, write.value)
+                    .withCell("uid", extractCUser(write.value) ?: "")
                     .copy(status = "", dead = false)
             } else {
-                cur.withCell(t.ck, t.value)
+                current.withCell(write.key, write.value)
             }
             dirty = true
             pasted++
         }
-        for (t in pass2) {
-            val cur = w.getOrNull(t.ri) ?: run { skipped++; continue }
-            if (cur.locked) {
+        for (write in secondPass) {
+            val current = rows.getOrNull(write.row) ?: run {
                 skipped++
                 continue
             }
-            if (cur.cookies.isNotEmpty()) {
-                // Derived: only the cookie's own c_user may stand.
-                if (cur.uid == t.value) pasted++
+            if (current.locked) {
+                skipped++
+                continue
+            }
+            if (current.cookies.isNotEmpty()) {
+                if (current.uid == write.value) pasted++
                 else {
                     if (note == null) note = "UID comes from the cookie."
                     skipped++
                 }
                 continue
             }
-            if (cur.uid == t.value) {
+            if (current.uid == write.value) {
                 pasted++
                 continue
             }
-            if (t.value.isNotEmpty() && w.any { it.rowIdx != t.ri && it.uid == t.value }) {
-                noteDup("uid")
+            if (write.value.isNotEmpty() && rows.any { it.rowIdx != write.row && it.uid == write.value }) {
+                noteDuplicate("uid")
                 skipped++
                 continue
             }
-            w[t.ri] = cur.withCell("uid", t.value).copy(status = "", dead = false)
+            rows[write.row] = current.withCell("uid", write.value).copy(status = "", dead = false)
             dirty = true
             pasted++
         }
         if (!dirty) return PasteResult(pasted, skipped, false, note)
-        pushUndo()
-        persistRows(topUp(w, f.preset), "paste")
+        val saved = persistRowsLocked(
+            fileId = file.id,
+            previous = before,
+            rows = rows,
+            expectedSequence = file.seq,
+            expectedGeneration = openGeneration.get()
+        )
+        if (!saved) return PasteResult(0, 0, false, note)
         return PasteResult(pasted, skipped, cookiesWritten, note)
     }
 
-    fun addRow(): Boolean {
-        val f = openFile.value ?: return false
-        if (openRows.value.size >= MAX_GRID_ROWS) return false
-        pushUndo()
-        val rows = openRows.value + SheetRow(rowIdx = openRows.value.size)
-        persistRows(rows, "add-row")
-        return true
+    fun addRow(): Boolean = locked {
+        val file = openFile.value ?: return@locked false
+        if (openRows.value.size >= MAX_GRID_ROWS) return@locked false
+        val before = openRows.value
+        val rows = before + SheetRow(rowIdx = before.size)
+        persistRowsLocked(
+            fileId = file.id,
+            previous = before,
+            rows = rows,
+            expectedSequence = file.seq,
+            expectedGeneration = openGeneration.get()
+        )
     }
 
-    // Infinite scroll: append empty rows when the user nears the end.
-    fun growRows(count: Int): Boolean {
-        val f = openFile.value ?: return false
-        val room = MAX_GRID_ROWS - openRows.value.size
-        if (room <= 0 || count <= 0) return false
-        pushUndo()
-        val n = minOf(count, room)
-        val rows = openRows.value + (openRows.value.size until openRows.value.size + n).map {
-            SheetRow(rowIdx = it)
-        }
-        persistRows(rows, "grow")
-        return true
+    fun growRows(count: Int): Boolean = locked {
+        val file = openFile.value ?: return@locked false
+        if (count <= 0 || openRows.value.size >= MAX_GRID_ROWS) return@locked false
+        val before = openRows.value
+        val amount = minOf(count, MAX_GRID_ROWS - before.size)
+        val rows = before + (before.size until before.size + amount).map { SheetRow(rowIdx = it) }
+        persistRowsLocked(
+            fileId = file.id,
+            previous = before,
+            rows = rows,
+            expectedSequence = file.seq,
+            expectedGeneration = openGeneration.get()
+        )
     }
 
-    fun clearCells(cells: Set<Pair<Int, String>>) {
-        val f = openFile.value ?: return
-        val rows = openRows.value.toMutableList()
+    fun clearCells(cells: Set<Pair<Int, String>>) = locked {
+        val file = openFile.value ?: return@locked
+        val before = openRows.value
+        val rows = before.toMutableList()
         var touched = false
-        for ((ri, ck) in cells) {
-            if (ri !in rows.indices || rows[ri].locked) continue
-            // UID is derived: it can only go away with its cookie, never
-            // alone — and clearing a cookie takes its uid with it.
-            if (ck == "uid" && rows[ri].cookies.isNotEmpty()) continue
-            if (rows[ri].cell(ck).isNotEmpty()) {
-                rows[ri] = rows[ri].withCell(ck, "")
-                // The verdict goes with the identity: clearing a cookie
-                // (which takes its uid) or a uid also clears the dot.
-                if (ck == "cookies") rows[ri] = rows[ri].withCell("uid", "")
-                if (ck == "cookies" || ck == "uid") {
-                    rows[ri] = rows[ri].copy(status = "", dead = false)
-                }
-                touched = true
+        for ((rowIndex, key) in cells) {
+            if (rowIndex !in rows.indices || rows[rowIndex].locked) continue
+            if (key == "uid" && rows[rowIndex].cookies.isNotEmpty()) continue
+            if (rows[rowIndex].cell(key).isEmpty()) continue
+            rows[rowIndex] = rows[rowIndex].withCell(key, "")
+            if (key == "cookies") rows[rowIndex] = rows[rowIndex].withCell("uid", "")
+            if (key == "cookies" || key == "uid") {
+                rows[rowIndex] = rows[rowIndex].copy(status = "", dead = false)
             }
+            touched = true
         }
-        if (!touched) return
-        pushUndo()
-        persistRows(rows, "clear")
-    }
-
-    fun deleteDeadRows(): Int {
-        val f = openFile.value ?: return 0
-        val cols = f.preset.columns
-        val dead = openRows.value.filter { it.status == "bad" || it.dead }
-        if (dead.isEmpty()) return 0
-        pushUndo()
-        val kept = openRows.value.filterNot { it.status == "bad" || it.dead }
-            .mapIndexed { i, r -> r.copy(rowIdx = i) }
-        // Reindexed: rowIdx keys would orphan, drop the file's records.
-        dropCheckData()
-        persistRows(topUp(kept.ifEmpty { emptyPad(f.preset, 0) }, f.preset).ifEmpty { emptyPad(f.preset) }, "delete-dead")
-        voidUnused(cols)
-        return dead.size
-    }
-
-    private fun voidUnused(@Suppress("UNUSED_PARAMETER") cols: List<SheetColumn>) {
-    }
-
-    fun compactRows() {
-        val f = openFile.value ?: return
-        val cols = f.preset.columns
-        val data = openRows.value.filter { it.isData(cols) }.mapIndexed { i, r -> r.copy(rowIdx = i) }
-        pushUndo()
-        // Reindexed: rowIdx keys would orphan, drop the file's records.
-        dropCheckData()
-        persistRows(topUp(data, f.preset).ifEmpty { emptyPad(f.preset) }, "compact")
-    }
-
-    fun setStyle(rowIdx: Int, colKey: String, style: CellStyle?) {
-        val f = openFile.value ?: return
-        db.tx { d ->
-            db.saveStyle(d, f.id, rowIdx, colKey, style)
-            db.recordOp(d, f.id, "style")
+        if (touched) {
+            persistRowsLocked(
+                fileId = file.id,
+                previous = before,
+                rows = rows,
+                expectedSequence = file.seq,
+                expectedGeneration = openGeneration.get()
+            )
         }
-        openStyles.value = db.loadStyles(f.id)
     }
 
-    fun setHidden(hidden: Set<String>) {
-        val f = openFile.value ?: return
-        db.tx { d ->
-            db.saveHidden(d, f.id, hidden)
-            db.recordOp(d, f.id, "columns")
+    fun deleteDeadRows(): Int = locked {
+        val file = openFile.value ?: return@locked 0
+        val before = openRows.value
+        val dead = before.filter { it.status == "bad" || it.dead }
+        if (dead.isEmpty()) return@locked 0
+        val kept = before.filterNot { it.status == "bad" || it.dead }
+            .mapIndexed { index, row -> row.copy(rowIdx = index) }
+        val saved = persistRowsLocked(
+            fileId = file.id,
+            previous = before,
+            rows = topUp(kept, file.preset),
+            history = SheetHistoryAction.PUSH,
+            clearChecks = true,
+            expectedSequence = file.seq,
+            expectedGeneration = openGeneration.get()
+        )
+        if (saved) dead.size else 0
+    }
+
+    fun compactRows() = locked {
+        val file = openFile.value ?: return@locked
+        val before = openRows.value
+        val data = before.filter { it.isData(file.preset.columns) }
+            .mapIndexed { index, row -> row.copy(rowIdx = index) }
+        persistRowsLocked(
+            fileId = file.id,
+            previous = before,
+            rows = topUp(data, file.preset),
+            history = SheetHistoryAction.PUSH,
+            clearChecks = true,
+            expectedSequence = file.seq,
+            expectedGeneration = openGeneration.get()
+        )
+    }
+
+    fun setStyle(rowIdx: Int, colKey: String, style: CellStyle?) = locked {
+        val file = openFile.value ?: return@locked
+        try {
+            db.tx { d -> db.saveStyle(d, file.id, rowIdx, colKey, style) }
+            openStyles.value = db.loadStyles(file.id)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save Sheet style for ${file.id}", e)
         }
-        openHidden.value = hidden
     }
 
-    fun restoreSnapshot(): Boolean {
-        val f = openFile.value ?: return false
-        val snap = db.latestSnapshot(f.id) ?: return false
-        pushUndo()
-        val rows = rowsFromJson(snap.second).mapIndexed { i, r -> r.copy(rowIdx = i) }
-        // Reindexed: rowIdx keys would orphan, drop the file's records.
-        dropCheckData()
-        persistRows(topUp(rows, f.preset).ifEmpty { emptyPad(f.preset) }, "restore")
-        return true
+    fun setHidden(hidden: Set<String>) = locked {
+        val file = openFile.value ?: return@locked
+        try {
+            db.tx { d -> db.saveHidden(d, file.id, hidden) }
+            openHidden.value = hidden
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save hidden columns for ${file.id}", e)
+        }
     }
 
-    fun hasSnapshot(): Boolean {
-        val f = openFile.value ?: return false
-        return db.latestSnapshot(f.id) != null
-    }
 
     fun runCheck(
         uidOn: Boolean = true,
@@ -719,170 +1079,230 @@ class SheetStore private constructor(context: Context) {
         isPageFile: Boolean = false,
         done: (valid: Int, dead: Int) -> Unit
     ) {
-        val f = openFile.value ?: return
-        if (checking.value) return
-        checking.value = true
+        val context = locked {
+            if (checking.value) return@locked null
+            val file = openFile.value ?: return@locked null
+            val token = ++checkToken
+            checking.value = true
+            CheckContext(
+                token = token,
+                fileId = file.id,
+                sequence = file.seq,
+                generation = openGeneration.get(),
+                preset = file.preset,
+                rows = openRows.value.map { it.copy() }
+            )
+        } ?: return
+
         scope.launch {
-            val cols = f.preset.columns
             var valid = 0
             var dead = 0
-            var rows = openRows.value
+            var rows = context.rows
             val now = System.currentTimeMillis()
-            // Records behind the dot popup, keyed by rowIdx. Saved after
-            // persistRows (which drops the stale ones first).
             val checks = mutableMapOf<Int, RowCheck>()
             val reqs = mutableMapOf<Int, MutableList<CheckReq>>()
-            fun reqList(ri: Int) = reqs.getOrPut(ri) { mutableListOf() }
-            // 1. UID liveness: one batched direct request (worker checkUids).
-            // Falls back to the local format heuristic when offline.
-            if (uidOn) {
-                fun effUid(r: SheetRow): String = r.uid.ifEmpty {
-                    Regex("c_user=(\\d+)").find(r.cookies)?.groupValues?.get(1) ?: ""
-                }
-                val batch: SheetChecker.UidBatch? = try {
-                    SheetChecker.checkUids(
-                        rows.filter { r -> r.isData(cols) && !r.locked && effUid(r).isNotEmpty() }
-                            .map { effUid(it) }.distinct()
-                    )
-                } catch (e: Exception) {
-                    null
-                }
-                val verdict = batch?.dead
-                rows = rows.map { r ->
-                    if (!r.isData(cols) || r.locked) {
-                        r
-                    } else if (r.cookies.isNotEmpty() && effUid(r).isNotEmpty()) {
-                        // Dead wins over everything: a dead UID overwrites
-                        // even "eligible" — never alive, never page, just dead.
-                        // A live UID never downgrades "eligible" back to
-                        // "good" (eligible rows are never page-checked again).
-                        val uid = effUid(r)
-                        val alive = if (verdict == null) isValidUid(uid) else !verdict.contains(uid)
-                        if (alive) valid++ else dead++
-                        checks[r.rowIdx] = RowCheck(checkedAt = now, uidOk = alive)
-                        if (batch != null) {
-                            reqList(r.rowIdx).add(
-                                batch.trace.toCheckReq(
-                                    if (alive) "valid" else (batch.names[uid] ?: "dead")
-                                )
-                            )
-                        }
-                        if (alive) {
-                            r.copy(status = if (r.status == "eligible") "eligible" else "good", dead = false)
-                        } else {
-                            r.copy(status = "bad", dead = true)
-                        }
-                    } else if (r.uid.isNotEmpty() && !isValidUid(r.uid)) {
-                        dead++
-                        checks[r.rowIdx] = RowCheck(checkedAt = now, uidOk = false)
-                        r.copy(status = "bad", dead = true)
-                    } else {
-                        r.copy(status = if (r.status == "good" || r.status == "done") r.status else "pending")
-                    }
-                }
+            fun requestList(rowIndex: Int): MutableList<CheckReq> =
+                reqs.getOrPut(rowIndex) { mutableListOf() }
+
+            fun effectiveUid(row: SheetRow): String = row.uid.ifEmpty {
+                Regex("c_user=(\\d+)").find(row.cookies)?.groupValues?.get(1) ?: ""
             }
-            // 2. Page sweeps: direct per-row scrapes, sequential like the
-            // worker (first 25 candidates per run to avoid rate limits).
-            // Eligible rows are never swept again — once eligible, only a
-            // dead UID verdict (above) can move them. With the UID check
-            // off, fresh unchecked rows are swept directly so a new cookie
-            // is still page-checked.
-            if (isPageFile && (simpleOn || advancedOn)) {
-                fun effUid(r: SheetRow): String = r.uid.ifEmpty {
-                    Regex("c_user=(\\d+)").find(r.cookies)?.groupValues?.get(1) ?: ""
-                }
-                val cands = rows.filter { r ->
-                    r.isData(cols) && !r.locked && !r.approved && !r.hold && !r.dead &&
-                        "c_user=" in r.cookies && effUid(r).isNotEmpty() &&
-                        (r.status == "good" || (!uidOn && (r.status.isEmpty() || r.status == "pending")))
-                }.take(25)
-                var updated = rows
-                for (r in cands) {
-                    try {
-                        if (simpleOn) {
-                            val (res, traces) = SheetChecker.pageSimple(r.cookies)
-                            val base = checks.getOrPut(r.rowIdx) { RowCheck(checkedAt = now) }
-                            checks[r.rowIdx] = base.copy(
-                                checkedAt = now,
-                                simplePage = res.pageName, simpleNumber = res.linkedNumber,
-                                simpleError = res.error
-                            )
-                            for (t in traces) {
-                                reqList(r.rowIdx).add(
-                                    t.toCheckReq(
-                                        res.pageName?.let { "Page \"$it\"" }
-                                            ?: res.error ?: "No page"
+
+            try {
+                val columns = context.preset.columns
+                if (uidOn) {
+                    val targets = rows.filter { row ->
+                        row.isData(columns) && !row.locked && effectiveUid(row).isNotEmpty()
+                    }.map { effectiveUid(it) }.distinct()
+                    val batch = if (targets.isNotEmpty()) {
+                        try {
+                            SheetChecker.checkUids(targets)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "UID check failed; using local validation", e)
+                            null
+                        }
+                    } else {
+                        null
+                    }
+                    val deadUids = batch?.dead
+                    rows = rows.map { row ->
+                        if (!row.isData(columns) || row.locked) {
+                            row
+                        } else if (row.cookies.isNotEmpty() && effectiveUid(row).isNotEmpty()) {
+                            val uid = effectiveUid(row)
+                            val alive = if (deadUids == null) isValidUid(uid) else uid !in deadUids
+                            if (alive) valid++ else dead++
+                            checks[row.rowIdx] = RowCheck(checkedAt = now, uidOk = alive)
+                            if (batch != null) {
+                                requestList(row.rowIdx).add(
+                                    batch.trace.toCheckReq(
+                                        if (alive) "valid" else (batch.names[uid] ?: "dead")
                                     )
                                 )
                             }
-                            if (res.error == null && res.eligible) {
-                                updated = updated.map {
-                                    if (it.rowIdx == r.rowIdx) it.copy(status = "eligible") else it
-                                }
-                            }
-                        } else {
-                            val (res, traces) = SheetChecker.pageAdvanced(r.cookies)
-                            val base = checks.getOrPut(r.rowIdx) { RowCheck(checkedAt = now) }
-                            checks[r.rowIdx] = base.copy(
-                                checkedAt = now,
-                                advEligible = res.eligible,
-                                advPage = res.pageName, advNumber = res.linkedNumber,
-                                advBan = res.banReason, advError = res.error
-                            )
-                            for (t in traces) {
-                                reqList(r.rowIdx).add(
-                                    when (t.kind) {
-                                        "graphql" -> t.toCheckReq(
-                                            if (res.eligible) "Eligible"
-                                            else (res.error ?: res.banReason ?: "Not eligible")
-                                        )
-                                        else -> t.toCheckReq(t.error ?: "Page shell")
-                                    }
+                            if (alive) {
+                                row.copy(
+                                    status = if (row.status == "eligible") "eligible" else "good",
+                                    dead = false
                                 )
+                            } else {
+                                row.copy(status = "bad", dead = true)
                             }
-                            if (res.error == null && res.eligible) {
-                                updated = updated.map {
-                                    if (it.rowIdx == r.rowIdx) it.copy(status = "eligible") else it
-                                }
+                        } else if (row.uid.isNotEmpty() && !isValidUid(row.uid)) {
+                            dead++
+                            checks[row.rowIdx] = RowCheck(checkedAt = now, uidOk = false)
+                            row.copy(status = "bad", dead = true)
+                        } else {
+                            val status = if (row.status == "good" || row.status == "done") {
+                                row.status
+                            } else {
+                                "pending"
                             }
+                            row.copy(status = status)
                         }
-                    } catch (e: Exception) {
-                        // Challenges/rate limits: leave the row, try next.
                     }
                 }
-                rows = updated
-            }
-            withContext(Dispatchers.IO) {
-                pushUndo()
-                persistRows(rows, "check")
-                if (checks.isNotEmpty() || reqs.isNotEmpty()) {
-                    db.tx { d -> db.saveCheckDetails(d, f.id, checks, reqs) }
-                    openChecks.value = checks.mapValues { it.value }
-                    openCheckReqs.value = reqs.mapValues { it.value.toList() }
+
+                if (isPageFile && (simpleOn || advancedOn)) {
+                    val candidates = rows.filter { row ->
+                        row.isData(columns) && !row.locked && !row.approved && !row.hold && !row.dead &&
+                                "c_user=" in row.cookies && effectiveUid(row).isNotEmpty() &&
+                                (row.status == "good" || (!uidOn && (row.status.isEmpty() || row.status == "pending")))
+                    }.take(25)
+                    val updated = rows.toMutableList()
+                    for (row in candidates) {
+                        try {
+                            if (simpleOn) {
+                                val (result, traces) = SheetChecker.pageSimple(row.cookies)
+                                val base = checks[row.rowIdx] ?: RowCheck(checkedAt = now)
+                                checks[row.rowIdx] = base.copy(
+                                    checkedAt = now,
+                                    simplePage = result.pageName,
+                                    simpleNumber = result.linkedNumber,
+                                    simpleError = result.error
+                                )
+                                traces.forEach { trace ->
+                                    requestList(row.rowIdx).add(
+                                        trace.toCheckReq(
+                                            result.pageName?.let { "Page \"$it\"" }
+                                                ?: result.error ?: "No page"
+                                        )
+                                    )
+                                }
+                                if (result.error == null && result.eligible) {
+                                    updated[row.rowIdx] = updated[row.rowIdx].copy(status = "eligible")
+                                }
+                            } else {
+                                val (result, traces) = SheetChecker.pageAdvanced(row.cookies)
+                                val base = checks[row.rowIdx] ?: RowCheck(checkedAt = now)
+                                checks[row.rowIdx] = base.copy(
+                                    checkedAt = now,
+                                    advEligible = result.eligible,
+                                    advPage = result.pageName,
+                                    advNumber = result.linkedNumber,
+                                    advBan = result.banReason,
+                                    advError = result.error
+                                )
+                                traces.forEach { trace ->
+                                    requestList(row.rowIdx).add(
+                                        trace.toCheckReq(
+                                            when (trace.kind) {
+                                                "graphql" -> if (result.eligible) "Eligible"
+                                                else (result.error ?: result.banReason ?: "Not eligible")
+
+                                                else -> trace.error ?: "Page shell"
+                                            }
+                                        )
+                                    )
+                                }
+                                if (result.error == null && result.eligible) {
+                                    updated[row.rowIdx] = updated[row.rowIdx].copy(status = "eligible")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Page check failed for a Sheet row", e)
+                        }
+                    }
+                    rows = updated
+                }
+
+                val details = if (checks.isNotEmpty() || reqs.isNotEmpty()) {
+                    SheetCheckDetails(
+                        checks = checks.toMap(),
+                        reqs = reqs.mapValues { (_, list) -> list.toList() }
+                    )
+                } else {
+                    null
+                }
+                if (rows != context.rows || details != null) {
+                    val persisted = locked {
+                        if (checkToken != context.token ||
+                            openGeneration.get() != context.generation ||
+                            openFile.value?.id != context.fileId
+                        ) {
+                            Log.i(TAG, "Skipped stale Sheet check for ${context.fileId}")
+                            false
+                        } else {
+                            persistRowsLocked(
+                                fileId = context.fileId,
+                                previous = context.rows,
+                                rows = rows,
+                                checkDetails = details,
+                                expectedSequence = context.sequence,
+                                expectedGeneration = context.generation
+                            )
+                        }
+                    }
+                    if (!persisted) Log.i(TAG, "Sheet check result was not persisted for ${context.fileId}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Sheet check failed", e)
+            } finally {
+                locked {
+                    if (checkToken == context.token) checking.value = false
                 }
             }
-            checking.value = false
-            done(valid, dead)
+            try {
+                done(valid, dead)
+            } catch (e: Exception) {
+                Log.e(TAG, "Sheet check completion callback failed", e)
+            }
         }
     }
 
-    fun requestWithdraw(amount: Double, method: String, account: String): Boolean {
-        val bal = db.walletBalance()
-        if (amount <= 0 || amount > bal) return false
-        if (account.trim().isEmpty()) return false
+    fun requestWithdraw(amount: Double, method: String, account: String): Boolean = locked {
+        if (!amount.isFinite() || amount <= 0.0) return@locked false
+        val trimmedAccount = account.trim()
+        if (trimmedAccount.isEmpty()) return@locked false
+        val balanceBefore = try {
+            db.walletBalance()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read wallet balance", e)
+            return@locked false
+        }
+        if (!balanceBefore.isFinite() || amount > balanceBefore) return@locked false
         val now = System.currentTimeMillis()
-        val after = bal - amount
-        val t = WalletTx(
-            id = newFileId(), createdAt = now, type = "DEBIT", amount = amount,
-            balanceAfter = after, title = "Withdrawal: $method", detail = maskAccount(account)
+        val after = balanceBefore - amount
+        val transaction = WalletTx(
+            id = newFileId(),
+            createdAt = now,
+            type = "DEBIT",
+            amount = amount,
+            balanceAfter = after,
+            title = "Withdrawal: $method",
+            detail = maskAccount(trimmedAccount)
         )
-        db.tx { d ->
-            db.setWalletBalance(d, after)
-            db.insertWalletTx(d, t)
-            db.recordOp(d, "wallet", "withdraw")
+        try {
+            db.tx { d ->
+                db.setWalletBalance(d, after)
+                db.insertWalletTx(d, transaction)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist wallet withdrawal", e)
+            return@locked false
         }
         refresh()
-        return true
+        true
     }
 
     companion object {
@@ -902,9 +1322,9 @@ class SheetStore private constructor(context: Context) {
 }
 
 fun maskAccount(account: String): String {
-    val a = account.trim()
-    if (a.isEmpty()) return "-"
-    if (a.length > 12) return "${a.take(6)}...${a.takeLast(4)}"
-    if (a.length > 4) return ".... ${a.takeLast(4)}"
-    return a
+    val value = account.trim()
+    if (value.isEmpty()) return "-"
+    if (value.length > 12) return "${value.take(6)}...${value.takeLast(4)}"
+    if (value.length > 4) return ".... ${value.takeLast(4)}"
+    return value
 }

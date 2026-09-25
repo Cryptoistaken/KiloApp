@@ -35,10 +35,10 @@ import androidx.compose.ui.unit.sp
 import net.typeblog.socks.R
 import net.typeblog.socks.util.sheet.DGD_PASSWORD
 import net.typeblog.socks.util.sheet.LOVE_PASSWORD
+import net.typeblog.socks.util.sheet.MAX_GRID_ROWS
 import net.typeblog.socks.util.sheet.SheetPreset
 import net.typeblog.socks.util.sheet.SheetRow
 import net.typeblog.socks.util.sheet.SheetStore
-import net.typeblog.socks.util.sheet.SheetDb
 import net.typeblog.socks.util.sheet.extractCUser
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -81,51 +81,34 @@ fun FabMenuPopup(
             .width(240.dp)
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant,
+                androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+            )
             .padding(4.dp)
     ) {
-            Row(
-                modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Image(
-                    painter = painterResource(R.drawable.ic_ss_facebook),
-                    contentDescription = null,
-                    modifier = Modifier.size(13.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    "Facebook",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            for (p in SheetPreset.values()) {
-                CreateOptionRow(
-                    title = presetTitle(p),
-                    desc = PRESET_DESC[p] ?: "",
-                    icon = {
-                        Box(
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            PresetIcon(preset = p, sizeDp = 15)
-                        }
-                    },
-                    onClick = { onPickPreset(p) }
-                )
-            }
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
-                color = MaterialTheme.colorScheme.outlineVariant
+        Row(
+            modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(
+                painter = painterResource(R.drawable.ic_ss_facebook),
+                contentDescription = null,
+                modifier = Modifier.size(13.dp)
             )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                "Facebook",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        for (p in SheetPreset.values()) {
             CreateOptionRow(
-                title = "Upload xlsx",
-                desc = "Import data from file",
+                title = presetTitle(p),
+                desc = PRESET_DESC[p] ?: "",
                 icon = {
                     Box(
                         modifier = Modifier
@@ -134,16 +117,37 @@ fun FabMenuPopup(
                             .background(MaterialTheme.colorScheme.surfaceVariant),
                         contentAlignment = Alignment.Center
                     ) {
-                        Image(
-                            painter = painterResource(R.drawable.ic_ss_upload),
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp)
-                        )
+                        PresetIcon(preset = p, sizeDp = 15)
                     }
                 },
-                onClick = onPickUpload
+                onClick = { onPickPreset(p) }
             )
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
+        CreateOptionRow(
+            title = "Upload xlsx",
+            desc = "Import data from file",
+            icon = {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_ss_upload),
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            },
+            onClick = onPickUpload
+        )
+    }
 }
 
 @Composable
@@ -385,7 +389,11 @@ private fun PasswordOptionRow(
             .fillMaxWidth()
             .defaultMinSize(minHeight = 56.dp)
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant,
+                androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
@@ -423,30 +431,26 @@ private fun PasswordOptionRow(
 }
 
 fun importDraft(
-    appCtx: Context,
     store: SheetStore,
     preset: SheetPreset,
     password: String,
     draft: UploadDraft
 ): String {
+    if (draft.rows.size > MAX_GRID_ROWS) {
+        return "Too many rows. Maximum $MAX_GRID_ROWS rows allowed. Please split the file."
+    }
     val created = store.createFile(preset, password)
     val cols = preset.columns
-    val rows = draft.rows.mapIndexed { i, r ->
+    val rows = draft.rows.mapIndexed { index, row ->
         SheetRow(
-            rowIdx = i,
-            cookies = r.cookies,
-            twofakey = if (cols.any { it.key == "twofakey" }) r.twofakey else "",
-            uid = r.uid
+            rowIdx = index,
+            cookies = row.cookies,
+            twofakey = if (cols.any { it.key == "twofakey" }) row.twofakey else "",
+            uid = row.uid
         )
     }
-    val db = SheetDb(appCtx)
-    db.tx { d ->
-        db.saveAllRows(d, created.id, rows)
-        db.recordOp(d, created.id, "import")
-    }
-    store.refresh()
-    val n = rows.count { it.isData(cols) }
-    return "Successfully imported " + n + " rows."
+    val saved = store.replaceRows(created.id, rows)
+    return "Successfully imported $saved rows."
 }
 
 fun parseUpload(appCtx: Context, uri: Uri): UploadDraft? {
@@ -569,9 +573,11 @@ private fun parseSharedStrings(xml: ByteArray): List<String> {
                         inItem = true
                         buf.clear()
                     }
+
                     "t" -> if (inItem) inText = true
                 }
             }
+
             org.xmlpull.v1.XmlPullParser.TEXT -> if (inText) buf.append(p.text)
             org.xmlpull.v1.XmlPullParser.END_TAG -> {
                 when (p.name) {
@@ -623,12 +629,14 @@ private fun parseSheet(xml: ByteArray, shared: List<String>): List<List<String>>
                         cellCol = colRefToIndex(p.getAttributeValue(null, "r"))
                         buf.clear()
                     }
+
                     "v", "t" -> {
                         reading = true
                         buf.clear()
                     }
                 }
             }
+
             org.xmlpull.v1.XmlPullParser.TEXT -> if (reading) buf.append(p.text)
             org.xmlpull.v1.XmlPullParser.END_TAG -> {
                 when (p.name) {
@@ -651,6 +659,7 @@ private fun parseSheet(xml: ByteArray, shared: List<String>): List<List<String>>
                         }
                         buf.clear()
                     }
+
                     "row" -> {
                         val row = cur
                         if (row != null) {

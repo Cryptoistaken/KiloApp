@@ -493,7 +493,7 @@ fun SheetDetailScreen(
     LaunchedEffect(fileId, readOnly) {
         snapshotFlow {
             gridState.isScrollInProgress to
-                (gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1)
+                    (gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1)
         }.collect { (scrolling, lastIdx) ->
             if (readOnly || !scrolling || lastIdx < 0) return@collect
             val total = store.openRows.value.size
@@ -513,7 +513,7 @@ fun SheetDetailScreen(
         // double-tap / keyboard-path guard for the same state.
         val checkable = rows.any { r ->
             r.isData(columns) && !r.locked &&
-                (r.uid.isNotEmpty() || extractCUser(r.cookies) != null)
+                    (r.uid.isNotEmpty() || extractCUser(r.cookies) != null)
         }
         if (!checkable) {
             toast(appCtx, "No UID to check.")
@@ -545,7 +545,7 @@ fun SheetDetailScreen(
 
     fun autoCheckArmed(): Boolean =
         !readOnly &&
-            (autoCheck || (openFile?.preset == SheetPreset.PAGE && (simpleCheck || advancedCheck)))
+                (autoCheck || (openFile?.preset == SheetPreset.PAGE && (simpleCheck || advancedCheck)))
 
     fun maybeAutoCheck(colKey: String) {
         if (colKey != "cookies") return
@@ -595,6 +595,7 @@ fun SheetDetailScreen(
         val byRow = selectedItems.groupBy { it.first }.toSortedMap()
         fun sortedKeys(cells: Set<Pair<Int, String>>): List<String> =
             cells.map { it.second }.sortedBy { order.indexOf(it).let { i -> if (i < 0) 999 else i } }
+
         val gridRows = byRow.entries.map { (ri, cells) ->
             val r = rows.getOrNull(ri)
             sortedKeys(cells.toSet()).map { k -> Pair(k, r?.cell(k) ?: "") }
@@ -804,6 +805,7 @@ fun SheetDetailScreen(
     }
 
     var detailUploadMode by remember { mutableStateOf("replace") }
+
     // "Send a copy": same content as Download, dropped in cache and opened
     // in the system share sheet (Telegram, Drive, ...).
     fun shareOpenFile() {
@@ -820,7 +822,12 @@ fun SheetDetailScreen(
                     }
                     appCtx.cacheDir.listFiles { file ->
                         file.isFile && file.name.startsWith("share-") && file.name.endsWith(".xlsx")
-                    }?.forEach { try { it.delete() } catch (_: Exception) { } }
+                    }?.forEach {
+                        try {
+                            it.delete()
+                        } catch (_: Exception) {
+                        }
+                    }
                     val out = java.io.File(appCtx.cacheDir, "share-" + sanitizeFileName(f.name) + ".xlsx")
                     out.writeBytes(SheetXlsx.build(cols, data))
                     uri = androidx.core.content.FileProvider.getUriForFile(
@@ -850,6 +857,7 @@ fun SheetDetailScreen(
             }
         }
     }
+
     val detailUploadLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -859,47 +867,35 @@ fun SheetDetailScreen(
             val msg = withContext(Dispatchers.IO) {
                 try {
                     val draft = parseUpload(appCtx, uri) ?: return@withContext "Import failed."
-                    val f = openFile ?: return@withContext "Import failed."
-                    val cols = f.preset.columns
-                    val db = net.typeblog.socks.util.sheet.SheetDb(appCtx)
+                    val file = openFile ?: return@withContext "Import failed."
+                    val columns = file.preset.columns
                     if (mode == "merge") {
-                        val existing = db.loadRows(f.id)
-                        val dataExisting = existing.filter { it.isData(cols) }
-                        val incoming = draft.rows.mapIndexed { i, r ->
+                        val incoming = draft.rows.mapIndexed { index, row ->
                             net.typeblog.socks.util.sheet.SheetRow(
-                                rowIdx = dataExisting.size + i,
-                                cookies = r.cookies,
-                                twofakey = if (cols.any { it.key == "twofakey" }) r.twofakey else "",
-                                uid = r.uid
+                                rowIdx = index,
+                                cookies = row.cookies,
+                                twofakey = if (columns.any { it.key == "twofakey" }) row.twofakey else "",
+                                uid = row.uid
                             )
                         }
-                        val merged = (dataExisting + incoming).take(net.typeblog.socks.util.sheet.MAX_GRID_ROWS)
-                        db.tx { d ->
-                            db.saveAllRows(d, f.id, merged.mapIndexed { idx, r -> r.copy(rowIdx = idx) })
-                            db.recordOp(d, f.id, "merge")
-                        }
-                        store.open(f.id)
-                        "Merged " + incoming.size + " rows."
+                        val saved = store.mergeRows(file.id, incoming)
+                        "Merged $saved rows."
                     } else {
                         if (draft.rows.size > net.typeblog.socks.util.sheet.MAX_GRID_ROWS) {
-                            return@withContext "Too many rows. Maximum " + net.typeblog.socks.util.sheet.MAX_GRID_ROWS + " rows allowed. Please split the file."
+                            return@withContext "Too many rows. Maximum " +
+                                    net.typeblog.socks.util.sheet.MAX_GRID_ROWS +
+                                    " rows allowed. Please split the file."
                         }
-                        val cleaned = draft.rows.take(net.typeblog.socks.util.sheet.MAX_GRID_ROWS).mapIndexed { i, r ->
+                        val cleaned = draft.rows.mapIndexed { index, row ->
                             net.typeblog.socks.util.sheet.SheetRow(
-                                rowIdx = i,
-                                cookies = r.cookies,
-                                twofakey = if (cols.any { it.key == "twofakey" }) r.twofakey else "",
-                                uid = r.uid
+                                rowIdx = index,
+                                cookies = row.cookies,
+                                twofakey = if (columns.any { it.key == "twofakey" }) row.twofakey else "",
+                                uid = row.uid
                             )
                         }
-                        db.tx { d ->
-                            db.saveAllRows(d, f.id, cleaned)
-                            // Wholesale replace: rowIdx keys would orphan.
-                            db.clearCheckData(d, f.id)
-                            db.recordOp(d, f.id, "replace")
-                        }
-                        store.open(f.id)
-                        "Imported " + cleaned.size + " rows."
+                        val saved = store.replaceRows(file.id, cleaned)
+                        "Imported $saved rows."
                     }
                 } catch (e: Exception) {
                     "Import failed."
@@ -937,48 +933,26 @@ fun SheetDetailScreen(
                 }
             )
         } else {
-        // Top row.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    painter = painterResource(R.drawable.lucide_arrow_left),
-                    contentDescription = "Back",
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
-            }
-            val fname = openFile?.name ?: "Sheet"
-            val fpreset = openFile?.preset
-            if (readOnly) {
-                Row(
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    if (fpreset != null) PresetIcon(preset = fpreset, sizeDp = 14)
-                    Text(
-                        text = fname,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+            // Top row.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        painter = painterResource(R.drawable.lucide_arrow_left),
+                        contentDescription = "Back",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurface
                     )
                 }
-            } else {
-                TextButton(
-                    onClick = {
-                        renameText = openFile?.name ?: ""
-                        renameOpen = true
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
+                val fname = openFile?.name ?: "Sheet"
+                val fpreset = openFile?.preset
+                if (readOnly) {
                     Row(
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
@@ -988,287 +962,309 @@ fun SheetDetailScreen(
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            renameText = openFile?.name ?: ""
+                            renameOpen = true
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (fpreset != null) PresetIcon(preset = fpreset, sizeDp = 14)
+                            Text(
+                                text = fname,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+                if (!readOnly) {
+                    IconButton(onClick = { io { store.undo() } }, enabled = canUndo) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_ss_undo),
+                            contentDescription = "Undo",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    IconButton(onClick = { io { store.redo() } }, enabled = canRedo) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_ss_redo),
+                            contentDescription = "Redo",
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
-            }
-            if (!readOnly) {
-                IconButton(onClick = { io { store.undo() } }, enabled = canUndo) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_ss_undo),
-                        contentDescription = "Undo",
-                        modifier = Modifier.size(18.dp)
-                    )
+                // Check split button. Disabled with no checkable uid/cookie
+                // (website checkAccounts throws "No UIDs found." in that state).
+                val hasUidToCheck = remember(rows, columns) {
+                    rows.any { r ->
+                        r.isData(columns) && !r.locked &&
+                                (r.uid.isNotEmpty() || extractCUser(r.cookies) != null)
+                    }
                 }
-                IconButton(onClick = { io { store.redo() } }, enabled = canRedo) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_ss_redo),
-                        contentDescription = "Redo",
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            // Check split button. Disabled with no checkable uid/cookie
-            // (website checkAccounts throws "No UIDs found." in that state).
-            val hasUidToCheck = remember(rows, columns) {
-                rows.any { r ->
-                    r.isData(columns) && !r.locked &&
-                        (r.uid.isNotEmpty() || extractCUser(r.cookies) != null)
-                }
-            }
-            val checkEnabled = !checking && hasUidToCheck
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-                    .background(
-                        if (checkEnabled) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
-                    )
-            ) {
-                Box(
+                val checkEnabled = !checking && hasUidToCheck
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .combinedClickable(
-                            enabled = checkEnabled,
-                            onClick = { doCheck() }
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                        .background(
+                            if (checkEnabled) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
                         )
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                    contentAlignment = Alignment.Center
                 ) {
-                    if (checking) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(12.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
+                    Box(
+                        modifier = Modifier
+                            .combinedClickable(
+                                enabled = checkEnabled,
+                                onClick = { doCheck() }
                             )
-                            Spacer(modifier = Modifier.width(5.dp))
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (checking) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(12.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Checking",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+                        } else {
                             Text(
-                                text = "Checking",
+                                text = "Check",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onPrimary
                             )
                         }
-                    } else {
+                    }
+                    if (!readOnly && !checking) {
+                        Box {
+                            Box(
+                                modifier = Modifier
+                                    .combinedClickable(onClick = { checkMenu = true })
+                                    .padding(horizontal = 7.dp, vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_ss_check_arrow),
+                                    contentDescription = "More check options",
+                                    modifier = Modifier.size(10.dp),
+                                    tint = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = checkMenu,
+                                onDismissRequest = { checkMenu = false }
+                            ) {
+                                CheckSwitchRow(
+                                    label = "UID check",
+                                    checked = autoCheck,
+                                    onToggle = {
+                                        autoCheck = !autoCheck
+                                        persistCheck("ss_autoCheck", autoCheck)
+                                    }
+                                )
+                                CheckSwitchRow(
+                                    label = "Simple check",
+                                    checked = simpleCheck,
+                                    onToggle = {
+                                        simpleCheck = !simpleCheck
+                                        persistCheck("ss_pageSimple", simpleCheck)
+                                        if (simpleCheck) {
+                                            advancedCheck = false
+                                            persistCheck("ss_pageAdvanced", false)
+                                        }
+                                    }
+                                )
+                                CheckSwitchRow(
+                                    label = "Advanced check",
+                                    checked = advancedCheck,
+                                    onToggle = {
+                                        advancedCheck = !advancedCheck
+                                        persistCheck("ss_pageAdvanced", advancedCheck)
+                                        if (advancedCheck) {
+                                            simpleCheck = false
+                                            persistCheck("ss_pageSimple", false)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                Box {
+                    TextButton(onClick = { overflowMenu = true }) {
                         Text(
-                            text = "Check",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onPrimary
+                            text = "⋮",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                }
-                if (!readOnly && !checking) {
-                    Box {
-                        Box(
-                            modifier = Modifier
-                                .combinedClickable(onClick = { checkMenu = true })
-                                .padding(horizontal = 7.dp, vertical = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_ss_check_arrow),
-                                contentDescription = "More check options",
-                                modifier = Modifier.size(10.dp),
-                                tint = MaterialTheme.colorScheme.onPrimary
+                    DropdownMenu(
+                        expanded = overflowMenu,
+                        onDismissRequest = { overflowMenu = false },
+                        modifier = Modifier.widthIn(min = 160.dp)
+                    ) {
+                        OverflowRow(
+                            label = "Inspector",
+                            leading = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_ss_info),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
+                            onClick = {
+                                overflowMenu = false
+                                filePopupOpen = true
+                            }
+                        )
+                        if (!readOnly) {
+                            OverflowRow(
+                                label = "Download xlsx",
+                                leading = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_ss_download),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    overflowMenu = false
+                                    val f = openFile
+                                    if (f == null) {
+                                        toast(appCtx, "Add content first.")
+                                        return@OverflowRow
+                                    }
+                                    if (rows.none { it.isData(f.preset.columns) }) {
+                                        toast(appCtx, "Add content first.")
+                                        return@OverflowRow
+                                    }
+                                    val nm = sanitizeFileName(f.name)
+                                    downloadName = nm
+                                    downloadLauncher.launch("$nm.xlsx")
+                                }
+                            )
+                            OverflowRow(
+                                label = "Send a copy",
+                                leading = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_ss_send),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    overflowMenu = false
+                                    shareOpenFile()
+                                }
+                            )
+                            OverflowRow(
+                                label = "Upload xlsx",
+                                leading = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_ss_upload),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    overflowMenu = false
+                                    detailUploadMode = "replace"
+                                    detailUploadLauncher.launch("*/*")
+                                }
+                            )
+                            OverflowRow(
+                                label = "Merge",
+                                leading = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_ss_merge),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    overflowMenu = false
+                                    detailUploadMode = "merge"
+                                    detailUploadLauncher.launch("*/*")
+                                }
+                            )
+                            OverflowRow(
+                                label = "Compact",
+                                leading = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_ss_compact),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    overflowMenu = false
+                                    confirmCompact = true
+                                }
+                            )
+                            OverflowRow(
+                                label = "Delete Dead",
+                                leading = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_ss_trash),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    overflowMenu = false
+                                    deleteDeadWithCount()
+                                }
                             )
                         }
-                        DropdownMenu(
-                            expanded = checkMenu,
-                            onDismissRequest = { checkMenu = false }
-                        ) {
-                            CheckSwitchRow(
-                                label = "UID check",
-                                checked = autoCheck,
-                                onToggle = {
-                                    autoCheck = !autoCheck
-                                    persistCheck("ss_autoCheck", autoCheck)
-                                }
-                            )
-                            CheckSwitchRow(
-                                label = "Simple check",
-                                checked = simpleCheck,
-                                onToggle = {
-                                    simpleCheck = !simpleCheck
-                                    persistCheck("ss_pageSimple", simpleCheck)
-                                    if (simpleCheck) {
-                                        advancedCheck = false
-                                        persistCheck("ss_pageAdvanced", false)
-                                    }
-                                }
-                            )
-                            CheckSwitchRow(
-                                label = "Advanced check",
-                                checked = advancedCheck,
-                                onToggle = {
-                                    advancedCheck = !advancedCheck
-                                    persistCheck("ss_pageAdvanced", advancedCheck)
-                                    if (advancedCheck) {
-                                        simpleCheck = false
-                                        persistCheck("ss_pageSimple", false)
-                                    }
+                        androidx.compose.material3.HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                        for (col in columns) {
+                            val visible = !hidden.contains(col.key)
+                            OverflowRow(
+                                label = col.label,
+                                labelSize = 12.sp,
+                                leading = { ColToggleBox(checked = visible) },
+                                onClick = {
+                                    val next = hidden.toMutableSet()
+                                    if (visible) next.add(col.key) else next.remove(col.key)
+                                    io { store.setHidden(next) }
                                 }
                             )
                         }
                     }
                 }
             }
-            Box {
-                TextButton(onClick = { overflowMenu = true }) {
-                    Text(
-                        text = "⋮",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                DropdownMenu(
-                    expanded = overflowMenu,
-                    onDismissRequest = { overflowMenu = false },
-                    modifier = Modifier.widthIn(min = 160.dp)
-                ) {
-                    OverflowRow(
-                        label = "Inspector",
-                        leading = {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_ss_info),
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        onClick = {
-                            overflowMenu = false
-                            filePopupOpen = true
-                        }
-                    )
-                    if (!readOnly) {
-                        OverflowRow(
-                            label = "Download xlsx",
-                            leading = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_ss_download),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                overflowMenu = false
-                                val f = openFile
-                                if (f == null) {
-                                    toast(appCtx, "Add content first.")
-                                    return@OverflowRow
-                                }
-                                if (rows.none { it.isData(f.preset.columns) }) {
-                                    toast(appCtx, "Add content first.")
-                                    return@OverflowRow
-                                }
-                                val nm = sanitizeFileName(f.name)
-                                downloadName = nm
-                                downloadLauncher.launch("$nm.xlsx")
-                            }
-                        )
-                        OverflowRow(
-                            label = "Send a copy",
-                            leading = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_ss_send),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                overflowMenu = false
-                                shareOpenFile()
-                            }
-                        )
-                        OverflowRow(
-                            label = "Upload xlsx",
-                            leading = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_ss_upload),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                overflowMenu = false
-                                detailUploadMode = "replace"
-                                detailUploadLauncher.launch("*/*")
-                            }
-                        )
-                        OverflowRow(
-                            label = "Merge",
-                            leading = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_ss_merge),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                overflowMenu = false
-                                detailUploadMode = "merge"
-                                detailUploadLauncher.launch("*/*")
-                            }
-                        )
-                        OverflowRow(
-                            label = "Compact",
-                            leading = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_ss_compact),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                overflowMenu = false
-                                confirmCompact = true
-                            }
-                        )
-                        OverflowRow(
-                            label = "Delete Dead",
-                            leading = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_ss_trash),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                overflowMenu = false
-                                deleteDeadWithCount()
-                            }
-                        )
-                    }
-                    androidx.compose.material3.HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                    for (col in columns) {
-                        val visible = !hidden.contains(col.key)
-                        OverflowRow(
-                            label = col.label,
-                            labelSize = 12.sp,
-                            leading = { ColToggleBox(checked = visible) },
-                            onClick = {
-                                val next = hidden.toMutableSet()
-                                if (visible) next.add(col.key) else next.remove(col.key)
-                                io { store.setHidden(next) }
-                            }
-                        )
-                    }
-                }
-            }
-        }
         }
 
         if (readOnly) {
@@ -1330,91 +1326,91 @@ fun SheetDetailScreen(
                 interactions = SheetGridInteractions(
                     onCellClick = cellClick@{ row, col ->
                         val selKey = Pair(row.rowIdx, col.key)
-if (readOnly) {
-                                                // Archived view: single tap selects,
-                                                // double-tap copies, slow re-tap shows
-                                                // the Copy bar. Empty cells stay silent.
-                                                val now = System.currentTimeMillis()
-                                                if (lastTapCell == selKey && now - lastTapTime < 400) {
-                                                    lastTapCell = null
-                                                    menuCell = null
-                                                    val v = row.cell(col.key)
-                                                    if (v.isNotEmpty()) {
-                                                        clipboard.setText(AnnotatedString(v))
-                                                        toast(appCtx, "Copied.")
-                                                    }
-                                                    return@cellClick
-                                                }
-                                                if (lastTapCell == selKey) {
-                                                    lastTapCell = null
-                                                    menuCell = selKey
-                                                    return@cellClick
-                                                }
-                                                lastTapCell = selKey
-                                                lastTapTime = now
-                                                selectedCell = selKey
-                                                draft = row.cell(col.key)
-                                                return@cellClick
-                                            }
-                                            if (selectionMode) {
-                                                selectedItems = if (selectedItems.contains(selKey)) {
-                                                    val next = selectedItems - selKey
-                                                    if (next.isEmpty()) selectionMode = false
-                                                    next
-                                                } else {
-                                                    selectedItems + selKey
-                                                }
-                                                return@cellClick
-                                            }
-                                            if (row.locked) {
-                                                toast(
-                                                    appCtx,
-                                                    if (row.hold) "On hold. Editing is locked." else "Approved."
-                                                )
-                                                return@cellClick
-                                            }
-                                            val now = System.currentTimeMillis()
-                                            if (lastTapCell == selKey && now - lastTapTime < 400) {
-                                                // Double-tap: copy the value, or paste into
-                                                // an empty cell. Selection already live
-                                                // from the first tap — no delay needed.
-                                                lastTapCell = null
-                                                menuCell = null
-                                                val v = row.cell(col.key)
-                                                if (v.isNotEmpty()) copyCell(selKey.first, selKey.second)
-                                                else pasteInto(selKey.first, selKey.second)
-                                                return@cellClick
-                                            }
-                                            if (lastTapCell == selKey) {
-                                                // Slow second tap on the same cell:
-                                                // Sheets-style Cut/Copy/Paste menu.
-                                                lastTapCell = null
-                                                menuCell = selKey
-                                                return@cellClick
-                                            }
-                                            if (selectedCell != null && selectedCell != selKey) {
-                                                commitDraft()
-                                            }
-                                            // Select instantly like the website — no
-                                            // 400ms wait; double-tap is detected above.
-                                            lastTapCell = selKey
-                                            lastTapTime = now
-                                            selectedCell = selKey
-                                            draft = row.cell(col.key)
+                        if (readOnly) {
+                            // Archived view: single tap selects,
+                            // double-tap copies, slow re-tap shows
+                            // the Copy bar. Empty cells stay silent.
+                            val now = System.currentTimeMillis()
+                            if (lastTapCell == selKey && now - lastTapTime < 400) {
+                                lastTapCell = null
+                                menuCell = null
+                                val v = row.cell(col.key)
+                                if (v.isNotEmpty()) {
+                                    clipboard.setText(AnnotatedString(v))
+                                    toast(appCtx, "Copied.")
+                                }
+                                return@cellClick
+                            }
+                            if (lastTapCell == selKey) {
+                                lastTapCell = null
+                                menuCell = selKey
+                                return@cellClick
+                            }
+                            lastTapCell = selKey
+                            lastTapTime = now
+                            selectedCell = selKey
+                            draft = row.cell(col.key)
+                            return@cellClick
+                        }
+                        if (selectionMode) {
+                            selectedItems = if (selectedItems.contains(selKey)) {
+                                val next = selectedItems - selKey
+                                if (next.isEmpty()) selectionMode = false
+                                next
+                            } else {
+                                selectedItems + selKey
+                            }
+                            return@cellClick
+                        }
+                        if (row.locked) {
+                            toast(
+                                appCtx,
+                                if (row.hold) "On hold. Editing is locked." else "Approved."
+                            )
+                            return@cellClick
+                        }
+                        val now = System.currentTimeMillis()
+                        if (lastTapCell == selKey && now - lastTapTime < 400) {
+                            // Double-tap: copy the value, or paste into
+                            // an empty cell. Selection already live
+                            // from the first tap — no delay needed.
+                            lastTapCell = null
+                            menuCell = null
+                            val v = row.cell(col.key)
+                            if (v.isNotEmpty()) copyCell(selKey.first, selKey.second)
+                            else pasteInto(selKey.first, selKey.second)
+                            return@cellClick
+                        }
+                        if (lastTapCell == selKey) {
+                            // Slow second tap on the same cell:
+                            // Sheets-style Cut/Copy/Paste menu.
+                            lastTapCell = null
+                            menuCell = selKey
+                            return@cellClick
+                        }
+                        if (selectedCell != null && selectedCell != selKey) {
+                            commitDraft()
+                        }
+                        // Select instantly like the website — no
+                        // 400ms wait; double-tap is detected above.
+                        lastTapCell = selKey
+                        lastTapTime = now
+                        selectedCell = selKey
+                        draft = row.cell(col.key)
                     },
                     onCellLongClick = cellLongClick@{ row, col ->
                         val selKey = Pair(row.rowIdx, col.key)
-if (!readOnly && row.locked) {
-                                                toast(
-                                                    appCtx,
-                                                    if (row.hold) "On hold. Editing is locked." else "Approved."
-                                                )
-                                                return@cellLongClick
-                                            }
-                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                            selectionMode = true
-                                            selectedCell = null
-                                            selectedItems = selectedItems + selKey
+                        if (!readOnly && row.locked) {
+                            toast(
+                                appCtx,
+                                if (row.hold) "On hold. Editing is locked." else "Approved."
+                            )
+                            return@cellLongClick
+                        }
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        selectionMode = true
+                        selectedCell = null
+                        selectedItems = selectedItems + selKey
                     },
                     onRowRailClick = { ri -> toggleMulti(rowCells(ri)) },
                     onRowRailLongClick = { ri ->
@@ -1433,20 +1429,20 @@ if (!readOnly && row.locked) {
                     },
                     onDotClick = dotClick@{ row ->
 // Tap-again on the open dot closes it, like
-                                            // the mock; otherwise tap copies the 2FA code.
-                                            if (dotRowIdx == row.rowIdx && !dotWide) {
-                                                dotRowIdx = null
-                                            } else {
-                                                val v = row.twofakey
-                                                if (v.isEmpty()) {
-                                                    toast(appCtx, "No 2FA to copy.")
-                                                } else {
-                                                    clipboard.setText(AnnotatedString(v))
-                                                    store.copyGrid(gridOf(row.rowIdx, "twofakey", v))
-                                                    toast(appCtx, "Copied.")
-                                                }
-                                            }
-                        },
+                        // the mock; otherwise tap copies the 2FA code.
+                        if (dotRowIdx == row.rowIdx && !dotWide) {
+                            dotRowIdx = null
+                        } else {
+                            val v = row.twofakey
+                            if (v.isEmpty()) {
+                                toast(appCtx, "No 2FA to copy.")
+                            } else {
+                                clipboard.setText(AnnotatedString(v))
+                                store.copyGrid(gridOf(row.rowIdx, "twofakey", v))
+                                toast(appCtx, "Copied.")
+                            }
+                        }
+                    },
                     onDotLongClick = { row ->
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                         dotRowIdx = row.rowIdx
@@ -1566,7 +1562,10 @@ if (!readOnly && row.locked) {
                     tonalElevation = 3.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(top = 6.dp, start = 12.dp, end = 12.dp, bottom = 10.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                            .padding(top = 6.dp, start = 12.dp, end = 12.dp, bottom = 10.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
@@ -1780,7 +1779,11 @@ if (!readOnly && row.locked) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                        .border(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant,
+                            androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                        )
                         .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
                 ) {
                     for (hex in PALETTE) {

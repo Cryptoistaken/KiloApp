@@ -1971,27 +1971,30 @@ class FloatingControlService : Service() {
         bubbleCheckRunning = true
         syncSheetToolbar(sheetOverlaySnapshot(), checking = true)
         sheetBubbleScope.launch {
-            val check = withContext(Dispatchers.IO) {
-                sheetBubbleCoordinator.checkFile(fileId, uidOn, simpleOn, advancedOn)
-            }
-            bubbleCheckRunning = false
-            if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
-            if (check.snapshot != null) {
-                lastSheetSnapshot = check.snapshot
-                sheetOverlay?.render(check.snapshot)
-                syncSheetToolbar(check.snapshot)
-            } else {
-                syncSheetToolbar(sheetOverlaySnapshot())
-            }
-            if (!check.checked) {
-                toast("Nothing to check.")
-            } else {
-                val parts = buildList {
-                    if (check.valid > 0) add("Alive ${check.valid}")
-                    if (check.dead > 0) add("Dead ${check.dead}")
-                    if (check.eligible > 0) add("Eligible ${check.eligible}")
+            try {
+                val check = withContext(Dispatchers.IO) {
+                    sheetBubbleCoordinator.checkFile(fileId, uidOn, simpleOn, advancedOn)
                 }
-                toast(if (parts.isEmpty()) "Check done." else parts.joinToString(", ") + ".")
+                if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
+                if (check.snapshot != null) {
+                    lastSheetSnapshot = check.snapshot
+                    sheetOverlay?.render(check.snapshot)
+                    syncSheetToolbar(check.snapshot)
+                } else {
+                    syncSheetToolbar(sheetOverlaySnapshot())
+                }
+                if (!check.checked) {
+                    toast("Nothing to check.")
+                } else {
+                    val parts = buildList {
+                        if (check.valid > 0) add("Alive ${check.valid}")
+                        if (check.dead > 0) add("Dead ${check.dead}")
+                        if (check.eligible > 0) add("Eligible ${check.eligible}")
+                    }
+                    toast(if (parts.isEmpty()) "Check done." else parts.joinToString(", ") + ".")
+                }
+            } finally {
+                bubbleCheckRunning = false
             }
         }
     }
