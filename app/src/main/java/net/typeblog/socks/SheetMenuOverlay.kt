@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.style.TextAlign
@@ -50,6 +51,8 @@ import kotlinx.coroutines.cancel
 import net.typeblog.socks.ui.screens.sheet.SheetGrid
 import net.typeblog.socks.ui.theme.KiloProxyTheme
 import net.typeblog.socks.util.ThemeMode
+import net.typeblog.socks.util.sheet.BUBBLE_WINDOW_ROWS
+import net.typeblog.socks.util.sheet.MAX_GRID_ROWS
 import net.typeblog.socks.util.sheet.SheetBubbleSnapshot
 import net.typeblog.socks.util.sheet.SheetPreset
 
@@ -62,10 +65,12 @@ import net.typeblog.socks.util.sheet.SheetPreset
  *
  * The grid is the shared SheetGrid component hosted in a ComposeView — the
  * exact file view from the app, read-only, at compact bubble metrics
- * (24dp rows/rails, 10sp cells). LazyColumn virtualization means only
- * visible rows compose, so the tap never freezes no matter the file size.
- * Smart scroll targets the last data row (never the empty capture slot)
- * and recenters only on first paint and newly landed data;
+ * (24dp rows/rails, 10sp cells). The popup renders a BUBBLE_WINDOW_ROWS
+ * (20) row window at first paint and grows it as data is saved (and when
+ * scrolled near its end); inside the window LazyColumn virtualizes, so
+ * the tap never freezes. Scroll targets the last data row (never the
+ * empty capture slot) and recenters only on first paint and newly
+ * landed data; undo/redo/check re-renders stay put.
  * undo/redo/check re-renders stay put.
  */
 class SheetMenuOverlay(
@@ -99,6 +104,11 @@ class SheetMenuOverlay(
     private var snapshotState = mutableStateOf<SheetBubbleSnapshot?>(null)
     private var scrollGenState = mutableIntStateOf(0)
     private var scrollTarget = 0
+    // Popup-only row window: first paint holds BUBBLE_WINDOW_ROWS rows and
+    // grows as data lands (and when scrolled near its end), so a small file
+    // is cheap without hiding history.
+    private var rowWindowState = mutableIntStateOf(BUBBLE_WINDOW_ROWS)
+    private var lastDataCount = 0
     private val gridListState = androidx.compose.foundation.lazy.LazyListState()
     private var overlayScope: CoroutineScope? = null
     private var lifecycleOwner: OverlayLifecycleOwner? = null
@@ -149,6 +159,8 @@ class SheetMenuOverlay(
         lastScrolledTarget = Int.MIN_VALUE
         snapshotState.value = null
         scrollGenState.intValue = 0
+        rowWindowState.intValue = BUBBLE_WINDOW_ROWS
+        lastDataCount = 0
         // Placeholder identity until the service renders the loaded snapshot
         // right after attach (DB load + clipboard capture + auto-check).
         icon?.setImageResource(R.drawable.ic_tab_sheet)
@@ -196,8 +208,9 @@ class SheetMenuOverlay(
                             snap.file.preset.columns.filter { !snap.hidden.contains(it.key) }
                         val dataCount =
                             snap.rows.count { it.isData(snap.file.preset.columns) }
+                        val visibleRows = snap.rows.take(rowWindowState.intValue)
                         SheetGrid(
-                            rows = snap.rows,
+                            rows = visibleRows,
                             visibleCols = cols,
                             styles = snap.styles,
                             crossDups = snap.dups,
@@ -222,7 +235,7 @@ class SheetMenuOverlay(
                     val gen = scrollGenState.intValue
                     LaunchedEffect(gen) {
                         if (gen > 0) {
-                            val n = snapshotState.value?.rows?.size ?: 0
+                            val n = rowWindowState.intValue
                             if (n > 0) {
                                 try {
                                     gridListState.scrollToItem(scrollTarget.coerceIn(0, n - 1))
@@ -230,6 +243,20 @@ class SheetMenuOverlay(
                                 }
                             }
                             scrolledOnce = true
+                        }
+                    }
+                    // Scrolling near the end of the window reveals more rows,
+                    // so saved history past the first 20 stays reachable.
+                    LaunchedEffect(snap) {
+                        snapshotFlow {
+                            gridListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                        }.collect { last ->
+                            val win = rowWindowState.intValue
+                            val total = snap?.rows?.size ?: 0
+                            if (last >= win - 3 && win < total) {
+                                rowWindowState.intValue =
+                                    (win + BUBBLE_WINDOW_ROWS).coerceAtMost(total)
+                            }
                         }
                     }
                 }
@@ -335,6 +362,14 @@ class SheetMenuOverlay(
         // status dots as the app — LazyColumn only composes the visible
         // ones, so any file size paints instantly.
         snapshotState.value = snapshot
+        // Windowed render: 20 rows at first, +20 as new data is saved (and
+        // on scroll-to-end), so opening a small file stays cheap.
+        if (dataCount > lastDataCount) {
+            val win = rowWindowState.intValue
+            rowWindowState.intValue =
+                (win + BUBBLE_WINDOW_ROWS).coerceAtMost(MAX_GRID_ROWS)
+        }
+        lastDataCount = dataCount
         // Scroll target is the last DATA row, never the empty capture slot:
         // opening with one row shows row 1, not row 2. Recenter only on
         // first paint and when new data actually lands; undo/redo/check

@@ -64,3 +64,5 @@ fun findBubbleActiveRow(rows: List<SheetRow>, preset: SheetPreset): Int =
 const val BUBBLE_MIN_TRAILING = 4
 /** Empty rows appended per bubble growth. */
 const val BUBBLE_GROW_ROWS = 5
+/** Popup grid window: first paint ends at the active row and holds this many rows. */
+const val BUBBLE_WINDOW_ROWS = 20
