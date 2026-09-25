@@ -25,7 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,8 +90,8 @@ fun SheetFilesTab(
     val appCtx = remember(context) { context.applicationContext }
     val store = remember(appCtx) { SheetStore.get(appCtx) }
     val scope = rememberCoroutineScope()
-    val files by store.files.collectAsState()
-    val bubbleFileId by store.bubbleFileId.collectAsState()
+    val files by store.files.collectAsStateWithLifecycle()
+    val bubbleFileId by store.bubbleFileId.collectAsStateWithLifecycle()
     val prefs = remember(appCtx) { androidx.preference.PreferenceManager.getDefaultSharedPreferences(appCtx) }
     var fileView by net.typeblog.socks.ui.components.rememberPref(prefs, "ss_fileView") {
         it.getString(
@@ -113,6 +113,7 @@ fun SheetFilesTab(
     BackHandler(enabled = selectionMode) { selectedIds = emptySet() }
 
     var createMenu by remember { mutableStateOf(false) }
+    BackHandler(enabled = createMenu) { createMenu = false }
     var typePick by remember { mutableStateOf<UploadDraft?>(null) }
     var pwAsk by remember { mutableStateOf<PwAsk?>(null) }
     var renameTarget by remember { mutableStateOf<SheetFile?>(null) }
@@ -406,7 +407,6 @@ fun SheetFilesTab(
             ) {
                 if (createMenu) {
                     FabMenuPopup(
-                        onDismiss = { createMenu = false },
                         onPickPreset = { p ->
                             createMenu = false
                             pwAsk = PwAsk(preset = p, upload = null)

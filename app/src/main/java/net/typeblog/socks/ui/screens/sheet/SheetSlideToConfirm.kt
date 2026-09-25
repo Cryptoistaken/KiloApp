@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -182,6 +183,10 @@ fun SlideToConfirmButton(
                         stateDescription =
                             if (confirmed) confirmedLabel
                             else "$label, ${(progress * 100).toInt()} percent"
+                        onClick(label = "Confirm withdrawal") {
+                            fire()
+                            true
+                        }
                     },
                 contentAlignment = Alignment.Center
             ) {

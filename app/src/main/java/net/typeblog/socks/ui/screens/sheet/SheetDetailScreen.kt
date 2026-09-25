@@ -47,7 +47,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -385,13 +385,13 @@ fun SheetDetailScreen(
     val clipboard = LocalClipboardManager.current
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
 
-    val openFile by store.openFile.collectAsState()
-    val rows by store.openRows.collectAsState()
-    val styles by store.openStyles.collectAsState()
-    val hidden by store.openHidden.collectAsState()
-    val checking by store.checking.collectAsState()
-    val canUndo by store.canUndo.collectAsState()
-    val canRedo by store.canRedo.collectAsState()
+    val openFile by store.openFile.collectAsStateWithLifecycle()
+    val rows by store.openRows.collectAsStateWithLifecycle()
+    val styles by store.openStyles.collectAsStateWithLifecycle()
+    val hidden by store.openHidden.collectAsStateWithLifecycle()
+    val checking by store.checking.collectAsStateWithLifecycle()
+    val canUndo by store.canUndo.collectAsStateWithLifecycle()
+    val canRedo by store.canRedo.collectAsStateWithLifecycle()
 
     DisposableEffect(fileId) {
         val job = scope.launch(Dispatchers.IO) { store.open(fileId) }
@@ -414,10 +414,10 @@ fun SheetDetailScreen(
     val columns = openFile?.preset?.columns ?: emptyList()
     val visibleCols = remember(columns, hidden) { columns.filter { !hidden.contains(it.key) } }
 
-    val crossDups by store.openCrossDups.collectAsState()
-    val openChecks by store.openChecks.collectAsState()
-    val openCheckReqs by store.openCheckReqs.collectAsState()
-    val gridClip by store.copiedGrid.collectAsState()
+    val crossDups by store.openCrossDups.collectAsStateWithLifecycle()
+    val openChecks by store.openChecks.collectAsStateWithLifecycle()
+    val openCheckReqs by store.openCheckReqs.collectAsStateWithLifecycle()
+    val gridClip by store.copiedGrid.collectAsStateWithLifecycle()
 
     var selectedCell by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var draft by remember { mutableStateOf("") }
@@ -908,14 +908,14 @@ fun SheetDetailScreen(
     Column(modifier = modifier.fillMaxSize()) {
         // Selection mode replaces the whole top bar (back, name, undo,
         // check, menu) with Select all | count | Cancel.
-        val allCellSet = remember(rows, visibleCols) {
-            buildSet {
-                for (r in rows) {
-                    for (c in visibleCols) add(Pair(r.rowIdx, c.key))
+        if (selectionMode) {
+            val allCellSet = remember(rows, visibleCols) {
+                buildSet {
+                    for (r in rows) {
+                        for (c in visibleCols) add(Pair(r.rowIdx, c.key))
+                    }
                 }
             }
-        }
-        if (selectionMode) {
             SelectHeader(
                 count = selectedItems.size,
                 total = allCellSet.size,

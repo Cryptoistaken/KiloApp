@@ -45,6 +45,11 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -94,7 +99,11 @@ internal fun DotPopup(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = if (androidx.compose.foundation.isSystemInDarkTheme()) 0.5f else 0.25f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                ),
             contentAlignment = Alignment.Center
         ) {
             DotPopupCard(
@@ -153,10 +162,10 @@ internal fun DotPopupCard(
         else -> StripState.SKIP
     }
     val simpleRan = check != null &&
-        (check.simplePage != null || check.simpleNumber != null || check.simpleError != null)
+            (check.simplePage != null || check.simpleNumber != null || check.simpleError != null)
     val simpleOk = simpleRan && check?.simpleError == null && check?.simplePage != null
     val advRan = check != null &&
-        (check.advPage != null || check.advNumber != null || check.advBan != null || check.advError != null)
+            (check.advPage != null || check.advNumber != null || check.advBan != null || check.advError != null)
     val advOk = advRan && (check?.advEligible == true)
     val simState = when {
         simpleRan && simpleOk -> StripState.OK
@@ -237,11 +246,19 @@ internal fun verdictFor(row: SheetRow, check: RowCheck?, checking: Boolean): Ver
     if (check == null && !checking) return VerdictKind.IDLE
     if (check?.uidOk == false) {
         val err = (check.advError ?: "") + " " + (check.simpleError ?: "")
-        return if (err.contains("2FA", ignoreCase = true) || err.contains("challenge", ignoreCase = true)) VerdictKind.CHALLENGE else VerdictKind.DEAD
+        return if (err.contains("2FA", ignoreCase = true) || err.contains(
+                "challenge",
+                ignoreCase = true
+            )
+        ) VerdictKind.CHALLENGE else VerdictKind.DEAD
     }
     if (row.dead || row.status == "bad") {
         val err = (check?.advError ?: "") + " " + (check?.simpleError ?: "")
-        return if (err.contains("2FA", ignoreCase = true) || err.contains("challenge", ignoreCase = true)) VerdictKind.CHALLENGE else VerdictKind.DEAD
+        return if (err.contains("2FA", ignoreCase = true) || err.contains(
+                "challenge",
+                ignoreCase = true
+            )
+        ) VerdictKind.CHALLENGE else VerdictKind.DEAD
     }
     if (row.status == "good" || row.status == "done" || row.status == "eligible") {
         return if (checking) VerdictKind.RUN else VerdictKind.LIVE
@@ -427,6 +444,18 @@ internal fun CheckStrip(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
                             .clickable { if (i == 3) onDupTap() else onStripTap() }
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = labels.getOrNull(i) ?: "Status"
+                                stateDescription = when (st) {
+                                    StripState.OK -> "Passed"
+                                    StripState.BAD -> "Failed"
+                                    StripState.WARN -> "Duplicate"
+                                    StripState.RUN -> "Running"
+                                    StripState.SKIP -> "Skipped"
+                                    StripState.MUTE -> "No data"
+                                }
+                            }
                             .padding(vertical = 2.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
@@ -484,12 +513,14 @@ internal fun StripDot(state: StripState) {
                 .clip(androidx.compose.foundation.shape.CircleShape)
                 .background(MaterialTheme.colorScheme.outlineVariant)
         )
+
         StripState.MUTE -> Box(
             modifier = Modifier
                 .size(10.dp)
                 .clip(androidx.compose.foundation.shape.CircleShape)
                 .background(MaterialTheme.colorScheme.outlineVariant)
         )
+
         StripState.RUN -> {
             val t = rememberInfiniteTransition(label = "run")
             val a by t.animateFloat(
@@ -517,6 +548,7 @@ internal fun StripDot(state: StripState) {
                 )
             }
         }
+
         else -> {
             val c = when (state) {
                 StripState.OK -> AliveGreen
@@ -699,7 +731,7 @@ internal fun DetailsPane(check: RowCheck?) {
         // advEligible defaults false, so only show it once advanced really
         // ran (any adv field present) or it is genuinely true.
         val advRan = check.advPage != null || check.advNumber != null ||
-            (check.advBan != null && check.advBan != "null") || check.advError != null
+                (check.advBan != null && check.advBan != "null") || check.advError != null
         if (check.advEligible || advRan) {
             ResRow("advanced.eligible", check.advEligible.toString())
         }
@@ -744,6 +776,7 @@ internal fun logLines(check: RowCheck?, reqs: List<CheckReq>): List<LogLine> {
                 }
                 out.add(LogLine(text, if (requestOk && alive) LogCls.OK else LogCls.BAD, t.at))
             }
+
             "simple" -> {
                 val requestOk = t.error == null && t.status in 200..299
                 val text = when {
@@ -753,6 +786,7 @@ internal fun logLines(check: RowCheck?, reqs: List<CheckReq>): List<LogLine> {
                 }
                 out.add(LogLine(text, if (requestOk) LogCls.OK else LogCls.BAD, t.at))
             }
+
             "advanced" -> {
                 val requestOk = t.error == null && t.status in 200..299
                 val advError = check?.advError?.takeIf { it.isNotBlank() }
@@ -760,11 +794,13 @@ internal fun logLines(check: RowCheck?, reqs: List<CheckReq>): List<LogLine> {
                     !requestOk -> "Page failed."
                     advError == null -> "Page loaded."
                     advError.contains("not eligible", ignoreCase = true) ||
-                        advError.contains("permission", ignoreCase = true) -> "Page not eligible."
+                            advError.contains("permission", ignoreCase = true) -> "Page not eligible."
+
                     else -> "Page error."
                 }
                 out.add(LogLine(text, if (requestOk) LogCls.OK else LogCls.BAD, t.at))
             }
+
             "graphql" -> {
                 val requestOk = t.error == null && t.status in 200..299
                 val eligible = check?.advEligible == true || t.resNote.equals("Eligible", ignoreCase = true)
@@ -928,7 +964,7 @@ internal fun DuplicatesPane(dupSources: List<DupSource>, localRow: Int) {
     LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
         itemsIndexed(
             dupSources,
-            key = { i, s -> "$i:${s.field}:${s.fileName}:${s.rowNo}" }
+            key = { _, s -> "${s.fileName}:${s.rowNo}:${s.field}:${s.at}" }
         ) { _, s ->
             val cell = when (s.field.lowercase()) {
                 "cookie" -> "Cookie"

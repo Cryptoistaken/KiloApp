@@ -111,7 +111,11 @@ fun FilePopup(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = if (androidx.compose.foundation.isSystemInDarkTheme()) 0.5f else 0.25f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                ),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -123,7 +127,10 @@ fun FilePopup(
                     .clip(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.surface)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {})
             ) {
                 CheckStrip(
                     states = listOf(uidState, simState, advState, dupState),
@@ -158,6 +165,7 @@ fun FilePopup(
                             pageRows = pageRows,
                             checkedRows = checks.size
                         )
+
                         1 -> FileLogsPane(lines = flatLines)
                         else -> FileDupPane(dups = visibleFileDups)
                     }
@@ -221,7 +229,7 @@ private fun FileDupPane(dups: List<FileDup>) {
     LazyColumn(modifier = Modifier.padding(vertical = 4.dp)) {
         itemsIndexed(
             dups,
-            key = { i, s -> "$i:${s.field}:${s.fileName}:${s.rowNo}:${s.localRow}" }
+            key = { _, s -> "${s.fileName}:${s.rowNo}:${s.field}:${s.localRow}" }
         ) { _, s ->
             val cell = when (s.field.lowercase()) {
                 "cookie" -> "Cookie"

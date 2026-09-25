@@ -24,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -32,6 +33,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -48,6 +55,7 @@ import net.typeblog.socks.util.sheet.SheetRow
  * slots. Metrics default to the in-app sizes; the bubble passes compact
  * ones through the same layout code — no more hand-mirrored grids.
  */
+@Stable
 class SheetGridInteractions(
     val onCellClick: (row: SheetRow, col: SheetColumn) -> Unit,
     val onCellLongClick: (row: SheetRow, col: SheetColumn) -> Unit,
@@ -86,6 +94,11 @@ fun SheetGrid(
     footer: (@Composable () -> Unit)? = null
 ) {
     val inter = interactions
+    val parsedStyles = remember(styles) {
+        styles.mapValues { (_, style) ->
+            parseHexColor(style?.bg) to parseHexColor(style?.color)
+        }
+    }
     BoxWithConstraints(modifier = modifier) {
         val cellW = (maxWidth - railWidth * 2) / visibleCols.size.coerceAtLeast(1)
         LazyColumn(
@@ -107,6 +120,12 @@ fun SheetGrid(
                                     onClick = inter.onCornerClick,
                                     onLongClick = inter.onCornerLongClick
                                 ) else Modifier
+                            )
+                            .then(
+                                if (inter != null) Modifier.semantics {
+                                    role = Role.Button
+                                    contentDescription = "Select all cells"
+                                } else Modifier
                             ),
                         contentAlignment = Alignment.Center
                     ) {}
@@ -121,6 +140,12 @@ fun SheetGrid(
                                         onClick = { inter.onHeaderClick(col.key) },
                                         onLongClick = { inter.onHeaderLongClick(col.key) }
                                     ) else Modifier
+                                )
+                                .then(
+                                    if (inter != null) Modifier.semantics {
+                                        role = Role.Button
+                                        contentDescription = "Select column ${col.label}"
+                                    } else Modifier
                                 )
                                 .padding(horizontal = 8.dp),
                             contentAlignment = Alignment.Center
@@ -168,6 +193,12 @@ fun SheetGrid(
                                     onClick = { inter.onRowRailClick(row.rowIdx) },
                                     onLongClick = { inter.onRowRailLongClick(row.rowIdx) }
                                 ) else Modifier
+                            )
+                            .then(
+                                if (inter != null) Modifier.semantics {
+                                    role = Role.Button
+                                    contentDescription = "Select row ${row.rowIdx + 1}"
+                                } else Modifier
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -181,12 +212,11 @@ fun SheetGrid(
                     for (col in visibleCols) {
                         val key = styleKey(row.rowIdx, col.key)
                         val st = styles[key]
+                        val (customBg, fg) = parsedStyles[key] ?: (null to null)
                         val selKey = Pair(row.rowIdx, col.key)
                         val isActive = selectedCell == selKey && !selectionMode
                         val isMulti = selectedItems.contains(selKey)
                         val isDup = crossDups.contains(selKey)
-                        val customBg = parseHexColor(st?.bg)
-                        val fg = parseHexColor(st?.color)
                         val cellBg: Color = when {
                             customBg != null -> customBg
                             isMulti -> MaterialTheme.colorScheme.surfaceVariant
@@ -212,6 +242,14 @@ fun SheetGrid(
                                         onClick = { inter.onCellClick(row, col) },
                                         onLongClick = { inter.onCellLongClick(row, col) }
                                     ) else Modifier
+                                )
+                                .then(
+                                    if (inter != null) Modifier.semantics {
+                                        role = Role.Button
+                                        selected = isMulti
+                                        contentDescription =
+                                            "${col.label}, row ${row.rowIdx + 1}, ${row.cell(col.key)}"
+                                    } else Modifier
                                 )
                                 .padding(horizontal = 8.dp),
                             contentAlignment = Alignment.Center
@@ -260,6 +298,18 @@ fun SheetGrid(
                                         onClick = { inter.onDotClick(row) },
                                         onLongClick = { inter.onDotLongClick(row) }
                                     ) else Modifier
+                                )
+                                .then(
+                                    if (inter != null) Modifier.semantics {
+                                        role = Role.Button
+                                        contentDescription = "Open row ${row.rowIdx + 1} status"
+                                        stateDescription = when {
+                                            row.dead || row.status == "bad" -> "Dead"
+                                            row.status == "eligible" -> "Eligible"
+                                            row.status == "good" || row.status == "done" -> "Alive"
+                                            else -> "Pending"
+                                        }
+                                    } else Modifier
                                 ),
                             contentAlignment = Alignment.Center
                         ) {

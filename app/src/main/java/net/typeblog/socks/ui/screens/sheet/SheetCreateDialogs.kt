@@ -72,7 +72,6 @@ fun presetTitle(p: SheetPreset): String = when (p) {
 
 @Composable
 fun FabMenuPopup(
-    onDismiss: () -> Unit,
     onPickPreset: (SheetPreset) -> Unit,
     onPickUpload: () -> Unit
 ) {
@@ -150,14 +149,6 @@ fun FabMenuPopup(
     }
 }
 
-@Composable
-fun CreateFileMenuDialog(
-    onDismiss: () -> Unit,
-    onPickPreset: (SheetPreset) -> Unit,
-    onPickUpload: () -> Unit
-) {
-    FabMenuPopup(onDismiss = onDismiss, onPickPreset = onPickPreset, onPickUpload = onPickUpload)
-}
 
 @Composable
 fun TypePickDialog(

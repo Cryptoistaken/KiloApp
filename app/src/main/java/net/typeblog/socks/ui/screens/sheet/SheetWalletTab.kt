@@ -27,7 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -135,8 +135,8 @@ fun SheetWalletTab(modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
     val prefs = remember(appCtx) { PreferenceManager.getDefaultSharedPreferences(appCtx) }
 
-    val balance by store.balance.collectAsState()
-    val txs by store.txs.collectAsState()
+    val balance by store.balance.collectAsStateWithLifecycle()
+    val txs by store.txs.collectAsStateWithLifecycle()
 
     var showBdt by rememberSaveable { mutableStateOf(false) }
     var amount by rememberSaveable { mutableStateOf("") }
