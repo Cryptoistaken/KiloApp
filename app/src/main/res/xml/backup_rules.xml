@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Legacy full-backup rules for API 21-30. data_extraction_rules.xml only takes
+  effect on API 31+; without this file those devices fall back to the default
+  "back up everything" policy, which would include the Keystore-encrypted
+  profile.xml and make ProfileManager wipe itself on first read after a restore.
+
+  Keep the two files in sync: same domains included, same one excluded.
+-->
+<full-backup-content>
+    <include domain="database" path="." />
+    <include domain="sharedpref" path="." />
+    <exclude domain="sharedpref" path="profile.xml" />
+</full-backup-content>

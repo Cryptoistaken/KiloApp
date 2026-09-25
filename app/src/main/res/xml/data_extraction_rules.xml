@@ -1,13 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Platform backup scope (Android 12+; legacy devices use a backup_rules.xml
+  equivalent that is not shipped - the app targets 36, where this file is
+  authoritative).
+
+  sheet.db is the whole Sheet tab: files, rows, styles, hidden columns, per-row
+  check records and the wallet. Backing it up here is what makes a lost or
+  replaced phone recoverable, and what drives device-to-device transfer.
+
+  NOT backed up, on purpose:
+
+  * profile.xml - ProfileManager stores proxy profiles in EncryptedSharedPreferences
+    under a non-exportable AndroidKeyStore master key. Those bytes are useless on
+    another device, and ProfileManager's constructor reacts by deleting the prefs
+    and the key alias on first read. Restoring them would trade a recoverable
+    state for a guaranteed wipe. SheetBackup carries profiles instead.
+  * the "file" domain - it holds pdnsd.conf, the pid file, the SMS event log
+    and the crash log. Runtime state and diagnostics, never user data.
+-->
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="sharedpref" />
-        <exclude domain="database" />
-        <exclude domain="file" />
+        <include domain="database" />
+        <include domain="sharedpref" />
+        <exclude domain="sharedpref" path="profile.xml" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="sharedpref" />
-        <exclude domain="database" />
-        <exclude domain="file" />
+        <include domain="database" />
+        <include domain="sharedpref" />
+        <exclude domain="sharedpref" path="profile.xml" />
     </device-transfer>
 </data-extraction-rules>
