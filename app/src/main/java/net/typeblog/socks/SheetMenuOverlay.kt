@@ -296,10 +296,15 @@ class SheetMenuOverlay(
             "bottom" -> 0f
             else -> panelHeight / 2f
         }
+        // The grid is usually composing its first rows mid-animation (local
+        // DB lands fast): without a hardware layer every scale frame
+        // re-composites the live grid and the open looks slow-motion.
+        panel.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         panel.animate()
             .scaleX(1f).scaleY(1f).alpha(1f)
             .setDuration(120)
             .setInterpolator(FastOutSlowInInterpolator())
+            .withEndAction { panel.setLayerType(View.LAYER_TYPE_NONE, null) }
             .start()
         root.post { if (isShowing()) onOpened() }
     }
