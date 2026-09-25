@@ -53,7 +53,7 @@ Executable config wins over prose. If this file conflicts with CI/Gradle/manifes
 - Keep user messages short and direct: state what happened, nothing else.
 - Log routing decision inputs (mode + count), not just the outcome.
 - Refactors: snapshot tag first, one concern per commit, CI green before the next batch.
-- All user-visible text is plain ASCII (no emoji, no unicode symbols).
+- User-visible text is plain ASCII (no emoji, no unicode symbols). The one exception is the country flag emoji, which is a data glyph rendered from an ISO-2 code (use `Utility.countryCodeToFlag`, the single home for it) and may appear in rows, sheets and headers. Flags are never allowed in buttons, labels, toasts, notifications or separators — those stay ASCII.
 - App-list visibility uses manifest `<queries>`, never `QUERY_ALL_PACKAGES`.
 - 16 KB ELF linker flags live in `app/src/main/jni/Android.mk`.
 - New single icons: keylineicons (fill) first, then allsvgicons; convert to 24dp black `ic_ss_*`, tint at use site. No icon library deps.
