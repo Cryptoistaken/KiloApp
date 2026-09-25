@@ -33,6 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -248,12 +250,16 @@ internal fun SheetDetailHeader(
             }
         }
         Box {
-            // The overflow affordance is an icon, matching the file card's
-            // ic_ss_more, not a "More" text label that widened the top bar.
-            IconButton(onClick = { onOverflowMenuChange(true) }) {
+            // The overflow affordance is a vertical-kebab icon, not a "More"
+            // text label: it reads as an overflow control and keeps the top
+            // bar narrow. Labelled on the button so it stays announced.
+            IconButton(
+                onClick = { onOverflowMenuChange(true) },
+                modifier = Modifier.semantics { contentDescription = "More actions" }
+            ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_ss_more),
-                    contentDescription = "More actions",
+                    painter = painterResource(R.drawable.ic_ss_more_vert),
+                    contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp)
                 )
