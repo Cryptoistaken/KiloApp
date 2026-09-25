@@ -64,8 +64,8 @@
 
             <ImageButton
                 android:id="@+id/bubble_tool_undo"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
                 android:layout_marginStart="2dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Undo"
@@ -74,8 +74,9 @@
 
             <ImageButton
                 android:id="@+id/bubble_tool_redo"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginStart="6dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Redo"
                 android:padding="4dp"
@@ -88,7 +89,7 @@
                 android:id="@+id/bubble_tool_check_pill"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
+                android:layout_marginStart="6dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical">
 
@@ -113,38 +114,24 @@
 
                 <ImageButton
                     android:id="@+id/bubble_tool_arrow"
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
                     android:background="?android:attr/selectableItemBackgroundBorderless"
                     android:contentDescription="Check options"
-                    android:padding="7dp"
-                    android:src="@drawable/ic_ss_check_arrow" />
+                    android:padding="4dp"
+                    android:src="@drawable/ic_ss_check_arrow_small" />
             </LinearLayout>
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/bubble_check_menu"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="end"
-            android:layout_marginStart="4dp"
-            android:layout_marginEnd="4dp"
-            android:elevation="8dp"
-            android:orientation="vertical"
-            android:visibility="gone" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="#3F3F46" />
-
         <!-- The shared SheetGrid component (same file view as the app,
-             hosted read-only in a ComposeView) + the empty state. -->
+             hosted read-only in a ComposeView) + the empty state. The
+             check menu floats over the grid (top-end, app-DropdownMenu
+             style) instead of pushing it down. No divider: the grid's
+             own sticky header draws the separation. -->
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:layout_marginTop="2dp">
+            android:layout_weight="1">
 
             <androidx.compose.ui.platform.ComposeView
                 android:id="@+id/bubble_sheet_grid"
@@ -162,6 +149,19 @@
                 android:text="No rows yet"
                 android:textColor="#A1A1AA"
                 android:textSize="11sp"
+                android:visibility="gone" />
+
+            <!-- Floating check menu: overlays the grid top-end like the
+                 app's DropdownMenu, never shifts layout. -->
+            <LinearLayout
+                android:id="@+id/bubble_check_menu"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="4dp"
+                android:layout_marginEnd="4dp"
+                android:elevation="8dp"
+                android:orientation="vertical"
                 android:visibility="gone" />
         </FrameLayout>
     </LinearLayout>
