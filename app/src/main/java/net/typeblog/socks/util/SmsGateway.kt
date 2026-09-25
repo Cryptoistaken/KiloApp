@@ -35,15 +35,23 @@ object SmsGateway {
 
     data class MetaCountry(val prefix: String, val range: String)
 
-    data class GatewayNumber(        val full: String,
+    data class GatewayNumber(
+        val full: String,
         val display: String,
         val country: String,
         val range: String,
     )
 
+    data class OtpMessage(
+        val code: String,
+        val text: String,
+        val at: Long,
+        val app: String = "",
+    )
+
     data class OtpState(
         val code: String?,
-        val msgs: List<Pair<String, String>>,
+        val msgs: List<OtpMessage>,
         val app: String = "",
     )
 
@@ -85,15 +93,22 @@ object SmsGateway {
     fun otp(number: String, since: Long = 0): OtpState? {
         val root = get("/v1/otp?number=$number&since=$since") ?: return null
         if (!root.optBoolean("ok")) return null
-        val msgs = mutableListOf<Pair<String, String>>()
+        val msgs = mutableListOf<OtpMessage>()
         val arr = root.optJSONArray("msgs")
         var app = ""
         if (arr != null) {
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
-                msgs.add(o.optString("code") to o.optString("text"))
-                val a = o.optString("app")
-                if (a.isNotEmpty()) app = a
+                val messageApp = o.optString("app")
+                msgs.add(
+                    OtpMessage(
+                        code = o.optString("code"),
+                        text = o.optString("text"),
+                        at = o.optLong("at"),
+                        app = messageApp,
+                    )
+                )
+                if (messageApp.isNotEmpty()) app = messageApp
             }
         }
         val code = if (root.isNull("code")) null else root.optString("code")

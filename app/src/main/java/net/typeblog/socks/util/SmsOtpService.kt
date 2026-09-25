@@ -65,10 +65,12 @@ class SmsOtpService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            SmsWatcher.pauseWaiting(this)
             SmsLog.log(this, "SVC", "stopped by user action")
             stopSelf()
             return START_NOT_STICKY
         }
+        SmsWatcher.resumeWaiting()
         SmsWatcher.start(this)
         SmsWatcher.armHeartbeat(this)
         try {
@@ -86,8 +88,12 @@ class SmsOtpService : Service() {
         // once on wake. Held only while numbers wait (7-min max).
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
-            wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KiloApp:sms-wait")
-            wakeLock?.acquire(10 * 60 * 1000L)
+            if (wakeLock == null) {
+                wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KiloApp:sms-wait")
+            }
+            if (wakeLock?.isHeld != true) {
+                wakeLock?.acquire(10 * 60 * 1000L)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "wake lock acquire failed", e)
             SmsLog.log(this, "SVC", "wakelock FAILED ${e.message}")
@@ -104,7 +110,7 @@ class SmsOtpService : Service() {
         loop?.cancel()
         loop = null
         try {
-            wakeLock?.release()
+            if (wakeLock?.isHeld == true) wakeLock?.release()
         } catch (_: Exception) {
         }
         wakeLock = null
@@ -169,6 +175,7 @@ class SmsOtpService : Service() {
         val openPending = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_OPEN_SMS, true)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )

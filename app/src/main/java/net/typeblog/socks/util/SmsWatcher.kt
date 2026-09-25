@@ -13,10 +13,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
@@ -47,7 +49,13 @@ class SmsNum(
     var app: String = "",
 )
 
-data class SmsCountry(val name: String, val flag: String, val prefix: String, val count: Int, val sampleRange: String = "")
+data class SmsCountry(
+    val name: String,
+    val flag: String,
+    val prefix: String,
+    val count: Int,
+    val sampleRange: String = ""
+)
 
 private val PrefixIsoFull = mapOf(
     "1" to "CA",
@@ -336,6 +344,7 @@ object SmsWatcher {
     var busy by mutableStateOf(false)
     var error by mutableStateOf("")
     var errorAt by mutableLongStateOf(0L)
+
     // Last time the push stream proved itself useful. Heartbeats alone
     // must NOT suppress the poll fallback for long: a connection can carry
     // heartbeats yet never deliver (stale subscription, half-open socket),
@@ -344,6 +353,10 @@ object SmsWatcher {
     @Volatile
     private var streamAliveAt = 0L
     private var pollForce = 0
+    private var paused = false
+    private var pollJob: Job? = null
+    private val pollFinishers = mutableListOf<() -> Unit>()
+    private val waitingNumbers = MutableStateFlow<List<String>>(emptyList())
 
     private var nextId = 1L
     private var started = false
@@ -418,6 +431,7 @@ object SmsWatcher {
                 if (t - it.born >= SMS_EXPIRE_SEC * 1000) expired.add(it) else mine.add(it)
             }
             mine.sortByDescending { it.born }
+            publishWaitingNumbers()
         } catch (e: Exception) {
             // Corrupt store: start fresh rather than crash.
         }
@@ -426,6 +440,30 @@ object SmsWatcher {
     fun fail(msg: String) {
         error = msg
         errorAt = System.currentTimeMillis()
+    }
+
+    private fun publishWaitingNumbers() {
+        val t = System.currentTimeMillis()
+        waitingNumbers.value = mine
+            .filter { it.code == null && t - it.born < SMS_EXPIRE_SEC * 1000 }
+            .map { it.full }
+    }
+
+    fun resumeWaiting() {
+        paused = false
+    }
+
+    fun pauseWaiting(context: Context) {
+        paused = true
+        cancelHeartbeat(context)
+    }
+
+    fun cancelHeartbeat(context: Context) {
+        try {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            am.cancel(heartbeatPending(context))
+        } catch (_: Exception) {
+        }
     }
 
     @Synchronized
@@ -447,9 +485,10 @@ object SmsWatcher {
                     mine.removeAll(died)
                     expired.addAll(0, died)
                     if (expired.size > 30) expired.subList(30, expired.size).clear()
+                    publishWaitingNumbers()
                     save()
                 }
-                if (tick % 5 == 0 && mine.any { it.code == null }) {
+                if (!paused && tick % 5 == 0 && mine.any { it.code == null }) {
                     pollForce++
                     if (now - streamAliveAt >= 15000 || pollForce % 6 == 0) pollOtps()
                 }
@@ -481,8 +520,16 @@ object SmsWatcher {
         }
     }
 
-    fun provision(pat: String, onDone: (SmsNum?) -> Unit) {
-        if (busy) return
+    fun provision(
+        pat: String,
+        replaceId: Long? = null,
+        onDone: (SmsNum?) -> Unit
+    ) {
+        if (busy) {
+            onDone(null)
+            return
+        }
+        paused = false
         busy = true
         scope.launch {
             val g = withContext(Dispatchers.IO) { SmsGateway.provision(pat) }
@@ -505,7 +552,12 @@ object SmsWatcher {
                 range = pat.uppercase(),
                 born = System.currentTimeMillis(),
             )
+            if (replaceId != null) {
+                mine.removeAll { it.id == replaceId }
+                expired.removeAll { it.id == replaceId }
+            }
             mine.add(0, n)
+            publishWaitingNumbers()
             save()
             SmsLog.log(app, "GET", "provisioned ${n.display} range=$pat")
             app?.let {
@@ -516,13 +568,65 @@ object SmsWatcher {
         }
     }
 
-    private fun pollOtps() {
-        scope.launch {
+    private fun pollOtps(onFinished: (() -> Unit)? = null) {
+        if (onFinished != null) pollFinishers += onFinished
+        if (pollJob?.isActive == true) return
+        pollJob = scope.launch {
             try {
                 pollOnce()
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                SmsLog.log(app, "POLL", "sweep failed: ${e.message}")
+            } finally {
+                pollJob = null
+                val finishers = pollFinishers.toList()
+                pollFinishers.clear()
+                finishers.forEach { finish ->
+                    try {
+                        finish()
+                    } catch (e: Exception) {
+                        SmsLog.log(app, "POLL", "finish failed: ${e.message}")
+                    }
+                }
             }
         }
+    }
+
+    private fun applyOtp(
+        number: String,
+        code: String?,
+        messages: List<SmsGateway.OtpMessage>,
+        appName: String
+    ): Boolean {
+        val normalizedCode = code?.takeIf { it.isNotEmpty() }
+            ?: messages.lastOrNull { it.code.isNotEmpty() }?.code
+            ?: return false
+        val n = mine.firstOrNull { digitsOnly(it.full) == number } ?: return false
+        val now = System.currentTimeMillis()
+        if (n.code != null || now - n.born >= SMS_EXPIRE_SEC * 1000) return false
+        val normalizedMessages = messages.ifEmpty {
+            listOf(SmsGateway.OtpMessage(normalizedCode, "", now, appName))
+        }
+        n.code = normalizedCode
+        n.svc = "Facebook"
+        val resolvedApp = appName.ifEmpty {
+            normalizedMessages.lastOrNull { it.app.isNotEmpty() }?.app.orEmpty()
+        }
+        if (resolvedApp.isNotEmpty()) n.app = resolvedApp
+        n.msgs.clear()
+        normalizedMessages.forEach { message ->
+            n.msgs.add(
+                SmsMsg(
+                    code = message.code,
+                    text = message.text,
+                    at = if (message.at > 0L) message.at else now,
+                )
+            )
+        }
+        publishWaitingNumbers()
+        save()
+        SmsLog.log(app, "OTP", "received $normalizedCode for $number")
+        app?.let { SmsNotify.showCode(it, n.display, normalizedCode) }
+        return true
     }
 
     /** One awaitable OTP sweep over all waiting numbers (parallel). */
@@ -530,21 +634,13 @@ object SmsWatcher {
         mine.toList().map { n ->
             async {
                 if (n.code != null) return@async
-                val st = withContext(Dispatchers.IO) { SmsGateway.otp(n.full) }
-                if (st == null) {
+                val since = n.msgs.maxOfOrNull { it.at } ?: 0L
+                val state = withContext(Dispatchers.IO) { SmsGateway.otp(n.full, since) }
+                if (state == null) {
                     SmsLog.log(app, "POLL", "fetch failed ${n.full}")
                     return@async
                 }
-                val code = st.code?.ifEmpty { null }
-                    ?: st.msgs.lastOrNull { it.first.isNotEmpty() }?.first
-                if (code.isNullOrEmpty()) return@async
-                n.code = code
-                n.svc = "Facebook"
-                if (st.app.isNotEmpty()) n.app = st.app
-                n.msgs.clear()
-                st.msgs.forEach { n.msgs.add(SmsMsg(it.first, it.second, n.born)) }
-                save()
-                app?.let { SmsNotify.showCode(it, n.display, code, st.msgs.lastOrNull()?.second ?: "") }
+                applyOtp(n.full, state.code, state.msgs, state.app)
             }
         }.awaitAll()
     }
@@ -562,6 +658,7 @@ object SmsWatcher {
      * nothing waits. Exact on API 31+ only with user grant, else inexact.
      */
     fun armHeartbeat(context: Context) {
+        if (paused) return
         try {
             val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
             val pi = heartbeatPending(context)
@@ -594,21 +691,16 @@ object SmsWatcher {
     /** Alarm entry: poll once, re-arm the chain, release the receiver. */
     fun onHeartbeat(context: Context, finish: () -> Unit) {
         start(context.applicationContext)
-        if (!hasWaiting()) {
+        if (paused || !hasWaiting()) {
             finish()
             return
         }
-        scope.launch {
+        pollOtps {
             try {
-                pollOnce()
+                armHeartbeat(context.applicationContext)
             } catch (_: Exception) {
-            } finally {
-                try {
-                    armHeartbeat(context.applicationContext)
-                } catch (_: Exception) {
-                }
-                finish()
             }
+            finish()
         }
     }
 
@@ -628,8 +720,8 @@ object SmsWatcher {
         var fastFails = 0
         var lastAttempt = 0L
         while (true) {
-            val waiting = mine.filter { it.code == null }.map { it.full }
-            if (waiting.isEmpty() || !SmsGateway.isConfigured) {
+            val waiting = waitingNumbers.value
+            if (paused || waiting.isEmpty() || !SmsGateway.isConfigured) {
                 delay(5000)
                 continue
             }
@@ -695,7 +787,7 @@ object SmsWatcher {
                 streamAliveAt = System.currentTimeMillis()
                 // Waiting set changed (new number, code arrived, expiry):
                 // reconnect so the subscription always matches.
-                if (mine.filter { it.code == null }.map { it.full }.toSet() != subscribed) {
+                if (waitingNumbers.value.toSet() != subscribed) {
                     throw IllegalStateException("waiting set changed")
                 }
                 when {
@@ -722,19 +814,17 @@ object SmsWatcher {
                 val number = digitsOnly(o.optString("number"))
                 val code = o.optString("code")
                 val text = o.optString("text")
-                if (number.isEmpty() || code.isEmpty()) return@launch
-                val n = mine.firstOrNull { digitsOnly(it.full) == number } ?: return@launch
-                if (n.code != null) return@launch
-                n.code = code
-                n.svc = "Facebook"
+                val at = o.optLong("at")
                 val streamApp = o.optString("app")
-                if (streamApp.isNotEmpty()) n.app = streamApp
-                n.msgs.clear()
-                n.msgs.add(SmsMsg(code, text, n.born))
-                save()
-                app?.let { SmsNotify.showCode(it, n.display, code, text) }
-            } catch (e: Exception) {
-                // Malformed event: ignore, polling fallback covers it.
+                if (number.isEmpty() || code.isEmpty()) return@launch
+                applyOtp(
+                    number = number,
+                    code = code,
+                    messages = listOf(SmsGateway.OtpMessage(code, text, at, streamApp)),
+                    appName = streamApp,
+                )
+            } catch (_: Exception) {
+                // Malformed event: polling fallback covers it.
             }
         }
     }

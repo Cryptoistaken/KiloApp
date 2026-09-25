@@ -42,7 +42,7 @@ object SmsNotify {
         )
     }
 
-    fun showCode(context: Context, display: String, code: String, message: String) {
+    fun showCode(context: Context, display: String, code: String) {
         if (code.isEmpty()) return
         ensureChannel(context)
         val notifId = (display + code).hashCode()
@@ -82,6 +82,7 @@ object SmsNotify {
 
     private fun openPending(context: Context, notifId: Int): PendingIntent {
         val openIntent = Intent(context, MainActivity::class.java).apply {
+            putExtra(MainActivity.EXTRA_OPEN_SMS, true)
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         return PendingIntent.getActivity(

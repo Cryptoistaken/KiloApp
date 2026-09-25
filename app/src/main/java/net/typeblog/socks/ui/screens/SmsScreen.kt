@@ -191,10 +191,8 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     }
 
     fun onRegen(n: SmsNum) {
-        SmsWatcher.provision(n.range) { nn ->
+        SmsWatcher.provision(n.range, replaceId = n.id) { nn ->
             if (nn != null) {
-                mine.removeAll { it.id == n.id }
-                expired.removeAll { it.id == n.id }
                 sheet = Sheet.Item(nn)
                 tapCopy(nn.display)
             }
