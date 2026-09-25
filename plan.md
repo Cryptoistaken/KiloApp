@@ -1,104 +1,177 @@
-# Sheet DB hardening + smart data plan
+# SMS and Sheet Performance Cleanup Implementation Plan
 
-Status: proposed (1 helper `isEmptyRow()` landed in `SheetModels.kt`, rest pending; edge stage 1 code lives in history only — `worker/` + `Pages/` emptied for a fresh copy, see tag `pre-worker-pages-empty`).
-Skills read: `durable-objects`, `workers-best-practices`, `tdd`, `github-actions-hardening`.
+> For agentic workers: execute one task at a time. Review the diff, commit only that task, push `master`, and wait for the required CI build before starting the next task.
 
-## A. SheetModels.kt — single homes
-- `isEmptyRow()` (done): raw emptiness for trimming, wider than `isData()`.
-- `effectiveUid(row) = uid.ifEmpty { extractCUser(cookies) }`; replace 4 inline
-  `Regex("c_user=(\\d+)")` copies in `SheetStore.runCheck` (x2), paste/uid paths.
+**Goal:** Make the SMS and Sheet features correct under lifecycle and concurrency pressure, while reducing main-thread work, repeated database writes, and Compose recomposition.
 
-## B. SheetDb.kt (no version bump, no schema change)
-1. `onConfigure` → `enableWriteAheadLogging()` (readers never block writer).
-2. `recordOp` → prune `outbox` to newest 500 (`journal` already 200/file).
-3. `saveAllRows` → store prefix `0..lastData` only; empty file stores 0 rows.
-4. `insertUndo/insertRedo` cap 50 → 20.
-5. `loadUndoStack/loadRedoStack` → `ORDER BY id DESC LIMIT n` + reverse to
-   chronological (fixes oversize tables returning oldest); default limit 20.
+**Architecture:** Keep `SmsWatcher` and `SheetStore` as the two deep modules. Their interfaces own state transitions; Compose screens, overlays, and the floating bubble remain adapters. Do not add a repository layer, database library, WorkManager dependency, or another state owner. SQLite remains the Sheet source of truth, and the existing gateway remains the SMS source of truth.
 
-## C. SheetStore.kt
-1. `UNDO_DEPTH = 20`; `rowsToJson` trims trailing empties (old 500-entry JSON
-   still parses; `topUp()` re-pads on open).
-2. `pushUndo(cell?)` coalescing: same cell within 3s keeps top entry (typing
-   burst = 1 undo); paste/clear/structural/check ops force-push. Trackers reset
-   on `open`/`close`.
-3. Identity remap instead of wipe: `deleteDeadRows`/`compactRows`/
-   `restoreSnapshot` re-key `openChecks`/`openCheckReqs` by `cookies + uid`
-   onto new `rowIdx`; unmatched dropped. No UUID migration.
-4. `persistRows` stays the single-tx batch (rows + snapshot + file + op +
-   stale-check delete); remapped checks saved in trailing tx.
-5. Empty `catch {}` → `Log.w(TAG, …)` with fileId/op (no silent swallowing).
+**Tech Stack:** Kotlin 2.2, Jetpack Compose Material 3, `StateFlow`, coroutines, Android `SQLiteOpenHelper`, min SDK 21, compile/target SDK 36.
 
-## D. SheetXlsx.kt (export only)
-- Skip empty cells (sparse, `r`-addressed); numeric `uid` (`^\d+$`) as `<v>`;
-  cookies/2fa/headers stay `inlineStr`.
+## Global Constraints
 
-## Risks / notes
-- Counts (`countDataRows`, `countDups`) use `WHERE`, unaffected by fewer stored rows.
-- Remap relies on in-file uniqueness (already enforced at entry via `rejectReason`).
-- Legacy undo tables (>20 rows) prune lazily on next insert; loads take newest.
-- No `AGENTS.md` map update (no structural change). Build via CI only:
-  commit + push `master`, follow with `go run ./monitor-build.go`.
+- Work on `master`; never build Android locally. Push each concern and run `go run ./monitor-build.go <run-id>`.
+- Preserve `SheetDb.kt` and `SheetStore.kt` as local-first SQLite state. Do not add online sync.
+- Do not modify `SocksVpnService.kt`, `IVpnService.aidl`, `Utility.kt`, or `ProfileManager.kt`.
+- Keep user-visible text plain ASCII.
+- Use `rememberPref` for preference-backed Compose state; write through `prefs.edit()`.
+- No new dependencies. Prefer platform and Kotlin standard-library solutions.
+- Use stable lazy-list keys, lifecycle-aware Flow collection, remembered derived values, and immutable state at module seams.
+- Delete unused files/imports only after a repository-wide caller search.
+- One file, one job. Keep the external screen interfaces stable; extract internal implementation only when it improves locality.
 
-## E. New backend: Cloudflare Worker + Neon Postgres (free)
+## Audit Findings Driving the Plan
 
-One API serves both KiloApp sync and the admin console. Old Railway
-`file_rows`-per-row format is NOT reused — new tables, new endpoints.
-Verified: `@neondatabase/serverless` HTTP driver runs in Workers (no TCP,
-no Hyperdrive); Workers free = 100k req/day, 10ms CPU; Neon free = 0.5GB,
-~100 CU-hrs/mo. Our load (10 files/week, 5–50KB snapshots, hundreds of
-req/day) fits with ~100x headroom.
+- `SheetStore.open()` can publish an older request after a newer open; `runCheck()` captures one file but later persists through the current global open file.
+- Bubble writes refresh editor rows but not editor undo/redo memory.
+- Every sheet edit serializes and rewrites padded rows and writes an unused online-sync outbox.
+- Sheet screens use plain `collectAsState`, recalculate hot derived lists, and expose unlabeled custom controls.
+- SMS regeneration removes a number only in the UI, so it returns after process restart.
+- SMS polling has a 15 second network timeout but can start another sweep every 5 seconds and can mutate expired numbers.
+- The gateway sends OTP `at` timestamps, but the Android client discards them and uses number birth time.
+- `SmsLog` performs read-modify-write file I/O on callers' threads; foreground service starts can acquire duplicate wake locks.
+- SMS Compose caches are keyed by list size, while `SmsNum` message fields can change without a size change; the popup rebuilds every row each second.
 
-1. Stack: Worker + `@neondatabase/serverless`; secrets (`DATABASE_URL`,
-   `SESSION_SECRET`, `TG_BOT_TOKEN`, `ADMIN_IDS`) as Worker secrets, never in
-   APK/Pages bundle. Hono routes (portable: Railway today, Worker tomorrow).
-   Neon IS Postgres (same wire protocol): the existing Railway backend connects
-   unchanged via its Neon pooled URL + `sslmode=require` (`postgres.js`); the
-   Worker uses the HTTP driver only because Workers lack raw TCP — same DB,
-   driver per runtime.
-2. Schema (new, old tables untouched):
-   `users(telegram_id PK, name, username, banned, created_at)`,
-   `sessions(token PK, user_id, exp)`,
-   `sync_files(user_id, file_id, rev, seq, hash, meta JSONB, data TEXT,
-   updated_at, deleted)` + per-user rev counter. Tombstones purged after 30d.
-3. Auth (Telegram, both clients): bot claim flow ported from
-   `admin/backend/src/index.ts:184` (removed with `admin/`; see tag `pre-admin-removal`) (`device/claim`) — client gets
-   claim token, user opens bot `?start=claim_<tok>`, webhook binds telegram
-   id, client polls claim → Bearer session (30d). App stores it in
-   `EncryptedSharedPreferences`. Admin = id in `ADMIN_IDS`.
-4. Sync endpoints:
-   `POST /v1/sync/changes {sinceRev}` → `{rev, changed:[{fileId,seq,hash,
-   deleted,meta}]}` (1-request discovery);
-   `POST /v1/sync/push {fileId,baseSeq,hash,meta,data}` → `{seq,rev}` or 409
-   with server copy; `POST /v1/sync/pull {fileIds[]}` batch fetch.
-   Guards: ownership (`file_id` scoped to `user_id`, admin bypass with user
-   scope), ciphertext size cap ~512KB, 4MB body cap, gzip, no body logging.
-5. Encryption split (pool business needs plaintext, backups must not):
-   private file blobs are E2EE (AES-GCM, key from user backup password;
-   login proves who, password protects what; `meta` plaintext for listing).
-   Rows the user explicitly pools/sells go plaintext to pool endpoints
-   (explicit action = consent). Server never sees private cookies.
-6. Conflicts: per-file `seq`, LWW; 409 → server wins + local conflict
-   duplicate, never silent loss. Single-user files → conflicts rare.
-7. App client: `SyncEngine` (Bearer store, rev cursor, dirty tracker,
-   debounced push 5–10s with burst coalescing, boot pull, tombstone on
-   `deleteForever`); crypto helper (PBKDF2 → AES-GCM; SHA-256 hash for
-   skip/409); sync only meta + trimmed data rows (no checks/undo/wallet).
-8. Rollout: phase 1 = Worker + Neon + auth + sync (admin console untouched,
-   pools/wallet/checker stay on Railway); phase 2 = admin file reads via
-   Worker (F below).
+Official guidance reviewed before implementation:
 
-## F. Admin console → Worker API + user-surface cut
+- Compose architecture and performance: https://developer.android.com/develop/ui/compose/architecture and https://developer.android.com/develop/ui/compose/performance/bestpractices (updated 2026-09-22).
+- Compose lifecycle and side effects: https://developer.android.com/develop/ui/compose/lifecycle and https://developer.android.com/develop/ui/compose/side-effects (updated 2026-09-22).
+- SQLite threading and WAL: https://developer.android.com/training/data-storage/sqlite and https://developer.android.com/reference/android/database/sqlite/SQLiteOpenHelper (updated 2026-08-03).
+- Foreground services: https://developer.android.com/develop/background-work/services/foreground-services (updated 2026-09-16).
 
-1. Website becomes admin console only: cut My Files / Archive / Wallet /
-   personal `/file/:id` + `/archive/:id` editor routes (`App.tsx`, `Sidebar`,
-   `HomePage` panes, delete `ArchiveView`/`FileGrid`/`Fab`; keep `WalletView`
-   module for `WithdrawalsView` shared exports, keep `FileCard`/`EmptyState`
-   for `AdminView`). `SheetPage` stays for `/admin/user/:userId/file/:fileId`
-   inspection. Backend unchanged (already `admin_only`).
-2. Point admin file access at Worker: user list/files/detail, meta +
-   counts, purge/delete — contents stay E2EE-blind (admin acts on meta +
-   pools, never private cookies). Two base URLs during transition
-   (Worker for files, Railway for pools/wallet until phase 2).
-3. Fallout: e2e user-flow specs (`page-entry`, `chaos`) rework/drop; backend
-   vitest unaffected; update both `AGENTS.md` maps.
+## Task 1: Harden Sheet State and SQLite Writes
+
+**Files:**
+- Modify: `app/src/main/java/net/typeblog/socks/util/sheet/SheetDb.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/util/sheet/SheetStore.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/util/sheet/SheetRowsJson.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/util/sheet/SheetBubbleCoordinator.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/ui/screens/sheet/SheetDetailScreen.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/ui/screens/sheet/SheetCreateDialogs.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/FloatingControlService.kt` only for the existing Sheet bubble busy flag cleanup.
+
+**Interfaces:**
+- `SheetStore.open(id: String): Boolean` remains the screen-facing interface, but an internal open generation prevents stale publication.
+- `SheetStore.reloadOpenFileIfMatches(fileId: String): Boolean` reloads rows, styles, hidden columns, checks, requests, duplicates, undo, and redo for the open file.
+- `SheetStore.runCheck(...)` captures a file ID, sequence, and row snapshot; it publishes/persists only if that file generation is still current.
+- `SheetStore.requestWithdraw(amount: Double, method: String, account: String): Boolean` rejects non-finite amounts and performs balance read plus transaction write under one lock.
+
+**Steps:**
+- [ ] Enable SQLite WAL before the database is opened, using the current `SQLiteOpenHelper` API.
+- [ ] Persist only rows through the last meaningful row; keep the in-memory 500-row editor padding. Trim trailing empty rows from JSON history and snapshots.
+- [ ] Reduce history depth to 20, load newest entries in chronological order, and reload history after bubble writes.
+- [ ] Remove the unused `recordOp` outbox/journal writes and their call sites; do not drop existing tables in this change.
+- [ ] Add an internal open generation and mutation lock. Make open, close, row mutations, undo/redo, refresh publication, and check finalization file-scoped and ordered.
+- [ ] Make check finalization verify the captured file sequence and use `try/finally` for `checking` and bubble busy state.
+- [ ] Move direct merge, replace, and import row writes behind small `SheetStore` commands that enforce the 500-row limit, clear stale check data where reindexed, and return the actual saved count.
+- [ ] Reject `NaN` and infinity withdrawals and keep balance/transaction publication ordered.
+- [ ] Verify caller searches for every removed method and inspect the diff for direct `SheetDb` writes left in UI code.
+
+**Validation:**
+- Run editor diagnostics for all changed Kotlin files.
+- Search for remaining `recordOp`, direct `SheetDb.saveAllRows` in UI code, stale-size keys, and ignored `checking` exceptions.
+- Commit: `Harden sheet state and SQLite writes`
+- Push and wait for the fast CI run before Task 2.
+
+## Task 2: Reduce Sheet Recomposition and Improve Accessibility
+
+**Files:**
+- Modify: all current `app/src/main/java/net/typeblog/socks/ui/screens/sheet/*.kt` files that collect store state or render the grid/popups.
+- Create: `app/src/main/java/net/typeblog/socks/ui/screens/sheet/SheetCheckUi.kt` for shared check strip, tabs, details, log, and duplicate rendering extracted from `SheetDotPopup.kt`.
+- Modify: `SheetDotPopup.kt` and `SheetFilePopup.kt` to consume the shared check UI without changing the public popup interface.
+- Modify: `SheetGrid.kt` for stable semantics and cached cell color parsing.
+- Modify: `SheetDetailScreen.kt` to move internal overlay/dialog implementation out of the composition root if needed to keep the file below the project size threshold.
+
+**Interfaces:**
+- `SheetGrid` and `DotPopup`/`DotPopupCard` signatures remain unchanged for their existing callers.
+- `SheetCheckUi.kt` contains one implementation shared by row and file popups; it is not a new state owner.
+- Store collections use `collectAsStateWithLifecycle`; popup-only state is read below the popup call site when practical.
+
+**Steps:**
+- [ ] Replace Sheet `collectAsState` calls with lifecycle-aware collection.
+- [ ] Remember sorting/filtering/stat derivations by meaningful inputs, not list size; compute selection-wide cell sets only in selection mode.
+- [ ] Cache parsed style colors outside the per-cell body and provide stable keys for log and duplicate rows.
+- [ ] Add Compose semantics names, roles, selected/checked states, and a real semantics click action to custom grid/dot and slide-to-confirm controls.
+- [ ] Extract shared check rendering from `SheetDotPopup.kt` into `SheetCheckUi.kt`; remove duplicate implementations and unused imports.
+- [ ] Make the create menu dismiss on system back and expose the same action through keyboard/switch access.
+- [ ] Remove verified dead wrappers and keep all user-visible labels ASCII.
+- [ ] Run diagnostics and inspect the largest changed files for accidental broad recomposition or new state writes during composition.
+
+**Validation:**
+- Search for `collectAsState()` in the Sheet UI, duplicate check UI definitions, index-only log keys, and unlabeled custom click targets.
+- Commit: `Reduce sheet recomposition and modal work`
+- Push and wait for the fast CI run before Task 3.
+
+## Task 3: Fix SMS Pickup State, Polling, and Background I/O
+
+**Files:**
+- Modify: `app/src/main/java/net/typeblog/socks/util/SmsGateway.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/util/SmsWatcher.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/util/SmsLog.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/util/SmsOtpService.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/util/SmsNotify.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/util/SmsCopyReceiver.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/util/SmsAlarmReceiver.kt` only if the heartbeat handoff requires it.
+- Modify: `app/src/main/java/net/typeblog/socks/MainActivity.kt` or navigation only if the existing `EXTRA_OPEN_SMS` path is incomplete.
+
+**Interfaces:**
+- `SmsGateway.OtpState.msgs` carries code, text, gateway `at`, and app metadata.
+- `SmsWatcher.provision(pat, onDone)` keeps its caller contract; regeneration is a watcher-owned replacement operation so persistence and state cannot diverge.
+- `SmsWatcher` has one OTP application implementation shared by polling and SSE.
+- `SmsNotify.showCode(context, display, code)` sets `EXTRA_OPEN_SMS` in the content intent.
+
+**Steps:**
+- [ ] Parse gateway `at` values and use them for `SmsMsg`; use receipt time only when the gateway omits a valid timestamp.
+- [ ] Add one in-flight poll owner and recheck active membership, code state, and expiry after each network result.
+- [ ] Centralize OTP mutation, persistence, logging, and notification dispatch in one watcher implementation.
+- [ ] Make regeneration remove the old number through the watcher and persist the resulting list atomically from the UI caller's perspective.
+- [ ] Publish waiting-number snapshots through a thread-safe state holder; do not read Compose snapshot lists from the IO stream thread.
+- [ ] Move `SmsLog` read-modify-write work to one serialized background executor and preserve ordered `read`/`clear` behavior.
+- [ ] Make foreground service wake-lock acquisition idempotent, cancel the heartbeat on explicit stop, and release exactly the owned lock.
+- [ ] Route both SMS notification taps to the existing SMS navigation extra; cancel a copy notification only after clipboard success.
+- [ ] Remove unused SMS helpers only after caller search and keep the existing gateway path/fallback behavior.
+- [ ] Run diagnostics and inspect all coroutine entry points for unstructured or overlapping work.
+
+**Validation:**
+- Search for `n.born` used as message time, duplicate polling entry points, raw `mine` reads from IO, wake-lock recreation, and notification intents without `EXTRA_OPEN_SMS`.
+- Run `go vet ./... && go build ./...` from `sms core/` only if gateway code changes; do not run local Gradle.
+- Commit: `Fix SMS pickup state and polling`
+- Push and wait for the fast CI run before Task 4.
+
+## Task 4: Tighten SMS UI and Popup Rendering
+
+**Files:**
+- Modify: `app/src/main/java/net/typeblog/socks/ui/screens/SmsScreen.kt`
+- Create: `app/src/main/java/net/typeblog/socks/ui/screens/SmsComponents.kt` for extracted page rows, sheets, and shared presentation helpers.
+- Modify: `app/src/main/java/net/typeblog/socks/SmsMenuOverlay.kt`
+- Modify: `app/src/main/java/net/typeblog/socks/CircleBubbleMenu.kt` only for SMS action accessibility and clock isolation.
+- Modify: `app/src/main/java/net/typeblog/socks/ui/components/PrefsState.kt` only if a small reusable lifecycle/preference helper is required.
+- Modify: `app/src/main/java/net/typeblog/socks/util/SmsWatcher.kt` only for the revision/state seam required by the UI.
+
+**Interfaces:**
+- `SmsScreen` remains the navigation-level composable; extracted components receive immutable data and callbacks.
+- SMS range preference has one key (`PREF_SMS_LAST_RANGE`) and uses `rememberPref`; transient page/search/tab state uses `rememberSaveable`.
+- The SMS popup reuses row views by number ID and updates text/status fields without inflating every row on each clock tick.
+
+**Steps:**
+- [ ] Replace the split SMS range preference keys with the canonical preference while reading the old key once for migration.
+- [ ] Use `rememberSaveable` for transient navigation state and `rememberPref` for the range value.
+- [ ] Key SMS derived lists by a watcher revision or meaningful content, not list size; memoize filtering, sorting, and statistics.
+- [ ] Isolate the one-second clock read to leaf UI where practical and avoid repeated battery/exact-alarm checks.
+- [ ] Add stable keys to SMS lazy lists and replace country flag characters with ASCII country codes.
+- [ ] Reuse popup row views by number ID, update changed text/status only, and preserve scroll position.
+- [ ] Add accessible click/long-click actions and content descriptions to the SMS bubble, generation control, rows, and swipe-only regenerate action.
+- [ ] Extract presentation-only composables from `SmsScreen.kt` and delete verified dead helpers/imports.
+- [ ] Run diagnostics, ASCII literal search, and a final caller/import search.
+
+**Validation:**
+- Search for duplicate SMS range keys, `remember(feed.size)`, `remember(mine.size`, Unicode user literals, and popup `removeAllViews`/full row re-inflation.
+- Commit: `Tighten SMS UI and popup rendering`
+- Push and wait for the fast CI run.
+
+## Final Review and Closure
+
+- [ ] Review the complete diff against this plan and the project rules.
+- [ ] Confirm no direct UI database writes, new dependencies, online sync, forbidden file changes, or untracked build artifacts.
+- [ ] Confirm the worktree is clean after the final CI run and report any device-only checks that were not run.
+- [ ] Keep the remote snapshot tag `pre-sms-sheet-performance` as the restore point.
