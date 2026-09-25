@@ -81,33 +81,54 @@
                 android:padding="5dp"
                 android:src="@drawable/ic_ss_redo" />
 
-            <TextView
-                android:id="@+id/bubble_tool_check"
+            <!-- In-app Check split button parity: one joined 6dp pill (bg set
+                 in code to primary / 38% when disabled), Check action left,
+                 options arrow right, spinner while checking. -->
+            <LinearLayout
+                android:id="@+id/bubble_tool_check_pill"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="4dp"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:paddingTop="4dp"
-                android:paddingBottom="4dp"
-                android:text="Check"
-                android:textSize="10sp"
-                android:textStyle="bold" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-            <ImageButton
-                android:id="@+id/bubble_tool_arrow"
-                android:layout_width="20dp"
-                android:layout_height="24dp"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Check options"
-                android:padding="4dp"
-                android:src="@drawable/ic_ss_check_arrow" />
+                <ProgressBar
+                    android:id="@+id/bubble_tool_spinner"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:layout_marginStart="10dp"
+                    android:indeterminate="true"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/bubble_tool_check"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="5dp"
+                    android:paddingBottom="5dp"
+                    android:text="Check"
+                    android:textSize="12sp" />
+
+                <ImageButton
+                    android:id="@+id/bubble_tool_arrow"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Check options"
+                    android:padding="7dp"
+                    android:src="@drawable/ic_ss_check_arrow" />
+            </LinearLayout>
         </LinearLayout>
 
         <LinearLayout
             android:id="@+id/bubble_check_menu"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:elevation="8dp"
             android:orientation="vertical"
             android:visibility="gone" />
 

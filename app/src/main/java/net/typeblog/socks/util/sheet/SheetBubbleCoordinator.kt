@@ -32,18 +32,21 @@ class SheetBubbleCoordinator(context: Context) {
     }
 
     /** Circle-menu Sheet glyph: the configured file's preset icon, else generic. */
-    fun bubbleIconRes(): Int = try {
-        val id = androidx.preference.PreferenceManager.getDefaultSharedPreferences(appContext)
-            .getString(PREF_SHEET_BUBBLE_FILE_ID, null) ?: return net.typeblog.socks.R.drawable.ic_tab_sheet
-        val file = db.getFile(id)
-        if (file == null || file.archived) return net.typeblog.socks.R.drawable.ic_tab_sheet
-        when (file.preset) {
-            SheetPreset.COOKIE -> net.typeblog.socks.R.drawable.ic_ss_cookie
-            SheetPreset.COMBO -> net.typeblog.socks.R.drawable.ic_ss_twofa
-            SheetPreset.PAGE -> net.typeblog.socks.R.drawable.ic_ss_page
+    fun bubbleIconRes(): Int {
+        return try {
+            val id = androidx.preference.PreferenceManager.getDefaultSharedPreferences(appContext)
+                .getString(PREF_SHEET_BUBBLE_FILE_ID, null)
+                ?: return net.typeblog.socks.R.drawable.ic_tab_sheet
+            val file = db.getFile(id)
+            if (file == null || file.archived) return net.typeblog.socks.R.drawable.ic_tab_sheet
+            when (file.preset) {
+                SheetPreset.COOKIE -> net.typeblog.socks.R.drawable.ic_ss_cookie
+                SheetPreset.COMBO -> net.typeblog.socks.R.drawable.ic_ss_twofa
+                SheetPreset.PAGE -> net.typeblog.socks.R.drawable.ic_ss_page
+            }
+        } catch (_: Exception) {
+            net.typeblog.socks.R.drawable.ic_tab_sheet
         }
-    } catch (_: Exception) {
-        net.typeblog.socks.R.drawable.ic_tab_sheet
     }
 
     /** Whole-file UID check on every new cookie by default (ss_autoCheck). */

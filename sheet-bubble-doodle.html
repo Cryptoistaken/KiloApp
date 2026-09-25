@@ -23,15 +23,30 @@
   .tbtn { border: 0; background: none; font-size: 13px; width: 24px; height: 24px;
     cursor: pointer; color: #18181b; border-radius: 6px; }
   .tbtn:disabled { opacity: .38; cursor: default; }
-  .check { border: 0; background: #18181b; color: #fff; font-size: 10px; font-weight: 700;
-    border-radius: 6px; padding: 4px 8px; cursor: pointer; margin-left: 4px; }
-  .check:disabled { opacity: .38; cursor: default; }
-  .menu { border-top: 1px solid #e4e4e7; display: none; }
+  .pill { display: flex; align-items: center; background: #18181b; color: #fff;
+    border-radius: 6px; margin-left: 4px; }
+  .pill.dim { background: rgba(24,24,27,.38); }
+  .check { border: 0; background: none; color: #fff; font-size: 12px; font-weight: 500;
+    padding: 5px 10px; cursor: pointer; }
+  .check:disabled { cursor: default; }
+  .arrow { border: 0; background: none; color: #fff; font-size: 10px; padding: 6px 7px;
+    cursor: pointer; }
+  .spin { display: none; width: 12px; height: 12px; margin-left: 10px; border: 2px solid #fff;
+    border-top-color: transparent; border-radius: 50%; animation: sp 0.8s linear infinite; }
+  .pill.checking .spin { display: block; }
+  .pill.checking .arrow { display: none; }
+  .pill.checking .check { padding-left: 5px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .menu { border-top: 1px solid #e4e4e7; display: none; background: #fff;
+    margin: 0 4px; border-radius: 6px; box-shadow: 0 8px 24px rgba(24,24,27,.16); }
   .menu.open { display: block; }
-  .menu button { display: flex; width: 100%; border: 0; background: none; font-size: 11px;
-    padding: 7px 10px; cursor: pointer; color: #18181b; justify-content: space-between; }
-  .menu button .st { color: #229342; font-weight: 700; }
-  .menu button.off .st { color: #a1a1aa; }
+  .menu button { display: flex; width: 100%; border: 0; background: none; font-size: 12px;
+    padding: 6px 12px; cursor: pointer; color: #555; align-items: center; }
+  .menu button .lab { flex: 1; text-align: left; }
+  .sw { width: 36px; height: 20px; border-radius: 10px; background: #18181b;
+    display: flex; align-items: center; justify-content: flex-end; padding: 2px; flex: none; }
+  .sw .knob { width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+  .menu button.off .sw { background: #f5f5f5; border: 2px solid #eee; justify-content: flex-start; }
   .gridhead, .gridrow { display: flex; height: 24px; }
   .gridhead { background: #f5f5f5; font-size: 10px; font-weight: 700; color: #555; }
   .gridhead div, .gridrow div { border: 1px solid #eee; display: flex; align-items: center;
@@ -59,13 +74,12 @@
       <div class="names"><b>combo-july.xlsx</b><span>cookies and 2fa and uid</span></div>
       <button class="tbtn" id="undo" title="Undo">↩</button>
       <button class="tbtn" id="redo" title="Redo" disabled>↪</button>
-      <button class="check" id="check">Check</button>
-      <button class="tbtn" id="arrow" title="Check options" style="width:20px">▾</button>
+      <div class="pill" id="pill"><span class="spin"></span><button class="check" id="check">Check</button><button class="arrow" id="arrow" title="Check options">▾</button></div>
     </div>
     <div class="menu" id="menu">
-      <button data-k="uid"><span>UID check</span><span class="st">✓</span></button>
-      <button data-k="simple" class="off"><span>Simple check</span><span class="st">○</span></button>
-      <button data-k="adv" class="off"><span>Advanced check</span><span class="st">○</span></button>
+      <button data-k="uid"><span class="lab">UID check</span><span class="sw"><span class="knob"></span></span></button>
+      <button data-k="simple" class="off"><span class="lab">Simple check</span><span class="sw"><span class="knob"></span></span></button>
+      <button data-k="adv" class="off"><span class="lab">Advanced check</span><span class="sw"><span class="knob"></span></span></button>
     </div>
     <div class="gridhead"><div class="rail"></div><div class="cell">cookies</div><div class="cell">2fa</div><div class="cell">uid</div><div class="rail"></div></div>
     <div class="grid" id="grid"></div>
@@ -118,16 +132,18 @@ menu.querySelectorAll('button').onclick = (e) => {
     const other = k === 'simple' ? 'adv' : 'simple';
     const on = b.classList.contains('off');
     document.querySelector(`[data-k="${other}"]`).classList.add('off');
-    document.querySelector(`[data-k="${other}"] .st`).textContent = '○';
     b.classList.toggle('off', !on);
-    b.querySelector('.st').textContent = on ? '✓' : '○';
   } else {
-    const on = b.classList.contains('off');
-    b.classList.toggle('off', !on);
-    b.querySelector('.st').textContent = on ? '✓' : '○';
+    b.classList.toggle('off');
   }
 };
-document.getElementById('check').onclick = () => alert('runs whole-file UID check (UID/simple/advanced per menu)');
+document.getElementById('check').onclick = () => {
+  const pill = document.getElementById('pill');
+  const c = document.getElementById('check');
+  pill.classList.add('checking');
+  c.textContent = 'Checking';
+  setTimeout(() => { pill.classList.remove('checking'); c.textContent = 'Check'; }, 1500);
+};
 </script>
 </body>
 </html>

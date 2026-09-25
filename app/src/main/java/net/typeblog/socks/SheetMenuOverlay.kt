@@ -19,6 +19,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
@@ -36,13 +37,17 @@ import net.typeblog.socks.util.sheet.isNo2Fa
  * top bar (file identity only — no close or "..." buttons, a tap outside
  * dismisses), the same smart four-side placement and grow-in.
  *
- * Below the bar sits the in-app toolbar (undo / redo / check / auto) and
- * then the in-app file grid at compact bubble size: fixed header row plus
- * every row of the file (all 500, empty ones included) in a scrollable
- * list — 24dp rows, 24dp row-number/dot rails, 10sp centered monospace
- * cells, site status colors, approved/hold fills, dup marks, per-cell
- * styles, and hidden columns. After every render the list scrolls to the
- * active row, so newly captured clipboard data is always on screen.
+ * Below the bar sits the in-app Check split button (one joined 6dp pill:
+ * Check action left, options arrow right, spinner while checking, UID /
+ * Simple / Advanced switches in the menu — same prefs and exclusivity as
+ * the app) and then the in-app file grid at compact bubble size: fixed
+ * header row plus every row of the file (all 500, empty ones included) in
+ * a scrollable list — 24dp rows, 24dp row-number/dot rails, 10sp centered
+ * monospace cells, site status colors, approved/hold fills, dup marks,
+ * per-cell styles, and hidden columns. The 500 rows inflate in small
+ * chunks across frames so the tap never freezes; after every render the
+ * list scrolls to the active row, so newly captured clipboard data is
+ * always on screen.
  */
 class SheetMenuOverlay(
     private val context: Context,
@@ -64,14 +69,16 @@ class SheetMenuOverlay(
     private var descriptionView: TextView? = null
     private var undoView: ImageButton? = null
     private var redoView: ImageButton? = null
+    private var checkPill: LinearLayout? = null
     private var checkView: TextView? = null
+    private var checkSpinner: ProgressBar? = null
     private var arrowView: ImageButton? = null
     private var menuView: LinearLayout? = null
-    private var menuUid: TextView? = null
-    private var menuSimple: TextView? = null
-    private var menuAdv: TextView? = null
     private var lastSnapshot: SheetBubbleSnapshot? = null
     private var scrolledOnce = false
+    // Bumped on every render()/hide() so an in-flight chunked inflation
+    // stops as soon as a newer render (or dismiss) supersedes it.
+    private var renderSeq = 0
 
     fun isShowing(): Boolean = rootView?.isAttachedToWindow == true
 
@@ -98,7 +105,9 @@ class SheetMenuOverlay(
         val description = root.findViewById<TextView>(R.id.bubble_sheet_description)
         val undo = root.findViewById<ImageButton>(R.id.bubble_tool_undo)
         val redo = root.findViewById<ImageButton>(R.id.bubble_tool_redo)
+        val pill = root.findViewById<LinearLayout>(R.id.bubble_tool_check_pill)
         val check = root.findViewById<TextView>(R.id.bubble_tool_check)
+        val spinner = root.findViewById<ProgressBar>(R.id.bubble_tool_spinner)
         val arrow = root.findViewById<ImageButton>(R.id.bubble_tool_arrow)
         val menu = root.findViewById<LinearLayout>(R.id.bubble_check_menu)
         rootView = root
@@ -111,7 +120,9 @@ class SheetMenuOverlay(
         descriptionView = description
         undoView = undo
         redoView = redo
+        checkPill = pill
         checkView = check
+        checkSpinner = spinner
         arrowView = arrow
         menuView = menu
         lastSnapshot = null
@@ -124,14 +135,22 @@ class SheetMenuOverlay(
         empty.visibility = View.GONE
         undo?.setColorFilter(textColor())
         redo?.setColorFilter(textColor())
-        check?.background = pillDrawable(primaryColor())
+        pill?.background = pillDrawable(primaryColor())
         check?.setTextColor(onPrimaryColor())
+        try {
+            spinner?.indeterminateTintList =
+                android.content.res.ColorStateList.valueOf(onPrimaryColor())
+        } catch (_: Exception) {
+        }
         undo?.setOnClickListener { onUndo() }
         redo?.setOnClickListener { onRedo() }
         check?.setOnClickListener { onCheck() }
         arrow?.setColorFilter(onPrimaryColor())
         arrow?.setOnClickListener { toggleMenu() }
-        buildMenuRows()
+        try {
+            menu?.background = pillDrawable(surfaceColor())
+        } catch (_: Exception) {
+        }
         refreshMenuRows()
         renderToolbar(canUndo = false, canRedo = false, checking = false)
 
@@ -202,6 +221,8 @@ class SheetMenuOverlay(
     }
 
     fun render(snapshot: SheetBubbleSnapshot?) {
+        // A newer render (or dismiss) cancels any in-flight chunk pump.
+        renderSeq++
         if (snapshot == null) {
             hide()
             return
@@ -235,18 +256,35 @@ class SheetMenuOverlay(
         scroll?.visibility = View.VISIBLE
         header.addView(headerRow(cols))
         // Every row of the file, empty ones included — like the in-app grid.
-        // The viewport shows what fits; the rest stays scrollable.
-        snapshot.rows.forEachIndexed { index, row ->
-            rows.addView(dataRow(snapshot, cols, row, index == snapshot.activeRow))
+        // The viewport shows what fits; the rest stays scrollable. All ~500
+        // rows at ~5 views each would freeze the tap for seconds if inflated
+        // at once, so the first chunk goes in synchronously (instant paint)
+        // and the rest append across frames.
+        val seq = renderSeq
+        val allRows = snapshot.rows
+        val active = snapshot.activeRow
+        var index = 0
+        fun pump() {
+            if (seq != renderSeq || !isShowing()) return
+            val end = minOf(index + ROW_CHUNK, allRows.size)
+            while (index < end) {
+                rows.addView(dataRow(snapshot, cols, allRows[index], index == active))
+                index++
+            }
+            if (index < allRows.size) {
+                rows.post { pump() }
+                return
+            }
+            rows.addView(countFooter(dataCount))
+            val target = if (active >= 0) active else allRows.size - 1
+            scroll?.post {
+                if (seq != renderSeq || !isShowing()) return@post
+                val y = target.coerceAtLeast(0) * dp(ROW_H_DP)
+                if (scrolledOnce) scroll.smoothScrollTo(0, y) else scroll.scrollTo(0, y)
+                scrolledOnce = true
+            }
         }
-        rows.addView(countFooter(dataCount))
-        val target = if (snapshot.activeRow >= 0) snapshot.activeRow else snapshot.rows.size - 1
-        scroll?.post {
-            if (!isShowing()) return@post
-            val y = target.coerceAtLeast(0) * dp(ROW_H_DP)
-            if (scrolledOnce) scroll.smoothScrollTo(0, y) else scroll.scrollTo(0, y)
-            scrolledOnce = true
-        }
+        pump()
     }
 
     /**
@@ -267,16 +305,26 @@ class SheetMenuOverlay(
             r.isData(snap.file.preset.columns) && !r.locked &&
                 (r.uid.isNotEmpty() || net.typeblog.socks.util.sheet.extractCUser(r.cookies) != null)
         }
+        // In-app split button parity: the whole joined pill dims when there
+        // is nothing checkable or a check is running; the left half runs the
+        // check, the arrow only opens the menu (still available while
+        // disabled, hidden while checking). Checking swaps the label for a
+        // 12dp spinner + "Checking", like the in-app indicator row.
+        val pillEnabled = checkable && !checking
+        checkPill?.background = pillDrawable(if (pillEnabled) primaryColor() else dimColor(primaryColor()))
         checkView?.let {
-            val enabled = checkable && !checking
-            it.isEnabled = enabled
-            it.alpha = if (enabled) 1f else 0.38f
+            it.isEnabled = pillEnabled
             it.text = if (checking) "Checking" else "Check"
+            it.setPadding(if (checking) dp(5f) else dp(10f), dp(5f), dp(10f), dp(5f))
         }
+        checkSpinner?.visibility = if (checking) View.VISIBLE else View.GONE
+        arrowView?.visibility = if (checking) View.GONE else View.VISIBLE
         refreshMenuRows()
     }
 
-    /** In-app check menu parity: UID toggles freely, Simple/Advanced are exclusive. */
+    /** In-app check menu parity: label + MiniSwitch rows, rebuilt from the
+     * same prefs the app honors. UID toggles freely, Simple/Advanced are
+     * exclusive. */
     private fun toggleMenu() {
         val menu = menuView ?: return
         menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -289,42 +337,60 @@ class SheetMenuOverlay(
     private fun menuPrefs(): android.content.SharedPreferences =
         androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
 
-    private fun buildMenuRows() {
-        val menu = menuView ?: return
-        menu.removeAllViews()
-        menuUid = menuRow("UID check") { toggleUid() }
-        menuSimple = menuRow("Simple check") { togglePage(simple = true) }
-        menuAdv = menuRow("Advanced check") { togglePage(simple = false) }
-        menuUid?.let { menu.addView(it) }
-        menuSimple?.let { menu.addView(it) }
-        menuAdv?.let { menu.addView(it) }
-    }
-
-    private fun menuRow(label: String, onTap: () -> Unit): TextView = TextView(context).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            dp(28f)
-        )
-        setPadding(dp(10f), 0, dp(10f), 0)
-        gravity = Gravity.CENTER_VERTICAL
-        textSize = 11f
-        setTextColor(textColor())
-        tag = label
-        isClickable = true
-        setOnClickListener { onTap() }
-    }
-
     private fun refreshMenuRows() {
+        val menu = menuView ?: return
         val prefs = try { menuPrefs() } catch (_: Exception) { return }
         val uid = prefs.getBoolean("ss_autoCheck", true)
         val simple = prefs.getBoolean("ss_pageSimple", false)
         val adv = prefs.getBoolean("ss_pageAdvanced", false)
-        menuUid?.text = "UID check   " + if (uid) "✓" else "○"
-        menuSimple?.text = "Simple check   " + if (simple) "✓" else "○"
-        menuAdv?.text = "Advanced check   " + if (adv) "✓" else "○"
-        menuUid?.setTextColor(if (uid) AliveGreen else mutedTextColor())
-        menuSimple?.setTextColor(if (simple) AliveGreen else mutedTextColor())
-        menuAdv?.setTextColor(if (adv) AliveGreen else mutedTextColor())
+        menu.removeAllViews()
+        menu.addView(menuSwitchRow("UID check", uid) { toggleUid() })
+        menu.addView(menuSwitchRow("Simple check", simple) { togglePage(simple = true) })
+        menu.addView(menuSwitchRow("Advanced check", adv) { togglePage(simple = false) })
+    }
+
+    private fun menuSwitchRow(label: String, checked: Boolean, onTap: () -> Unit): LinearLayout {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
+            isClickable = true
+            setOnClickListener { onTap() }
+        }
+        row.addView(TextView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            text = label
+            textSize = 12f
+            setTextColor(headerTextColor())
+            typeface = Typeface.DEFAULT
+        })
+        // MiniSwitch mirror: 36x20 track, 12dp thumb, checked fills with
+        // on-surface, unchecked shows a 2dp outline.
+        val track = LinearLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(36f), dp(20f))
+            orientation = LinearLayout.HORIZONTAL
+            gravity = if (checked) Gravity.END else Gravity.START
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dpF(10f)
+                setColor(if (checked) textColor() else surfaceVariantColor())
+                if (!checked) setStroke(dp(2f), gridLineColor())
+            }
+            setPadding(dp(2f), dp(2f), dp(2f), dp(2f))
+        }
+        track.addView(View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(12f), dp(12f))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(surfaceColor())
+            }
+        })
+        row.addView(track)
+        return row
     }
 
     private fun toggleUid() {
@@ -354,6 +420,8 @@ class SheetMenuOverlay(
     }
 
     fun hide() {
+        // Stop any in-flight chunked inflation with the dead window.
+        renderSeq++
         handler.removeCallbacksAndMessages(null)
         val root = rootView
         rootView = null
@@ -377,12 +445,11 @@ class SheetMenuOverlay(
         descriptionView = null
         undoView = null
         redoView = null
+        checkPill = null
         checkView = null
+        checkSpinner = null
         arrowView = null
         menuView = null
-        menuUid = null
-        menuSimple = null
-        menuAdv = null
         lastSnapshot = null
     }
 
@@ -557,6 +624,8 @@ class SheetMenuOverlay(
         const val ROW_H_DP = 24f
         const val RAIL_DP = 24f
         const val DOT_DP = 7f
+        // Rows inflated per frame: 500 rows x ~5 views never land at once.
+        const val ROW_CHUNK = 60
         val DeadRed = Color.rgb(0xE3, 0x3B, 0x2E)
         val PageBlue = Color.rgb(0x25, 0x63, 0xEB)
         val AliveGreen = Color.rgb(0x22, 0x93, 0x42)
@@ -576,6 +645,9 @@ class SheetMenuOverlay(
         cornerRadius = dpF(6f)
         setColor(fill)
     }
+
+    /** 38% alpha fill — the in-app disabled-check pill strength. */
+    private fun dimColor(color: Int): Int = (color and 0x00FFFFFF) or (97 shl 24)
 
     private fun createWindowManager(): WindowManager {
         val dm = context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager

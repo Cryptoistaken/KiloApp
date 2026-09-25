@@ -1904,7 +1904,7 @@ class FloatingControlService : Service() {
             syncSheetToolbar(result.snapshot)
             if (result.message.isNotEmpty()) toast(result.message)
             // A fresh cookie runs the whole-file UID check by default, until
-            // the user turns Auto off (bubble toggle or in-app switch).
+            // the user turns the UID toggle off (bubble check menu or app).
             if (sheetBubbleCoordinator.isAutoCheckOn() && result.cookieChanged) {
                 syncSheetToolbar(result.snapshot, checking = true)
                 val check = withContext(Dispatchers.IO) {
