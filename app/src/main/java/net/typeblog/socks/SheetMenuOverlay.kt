@@ -64,7 +64,8 @@ import net.typeblog.socks.util.sheet.SheetPreset
  * exact file view from the app, read-only, at compact bubble metrics
  * (24dp rows/rails, 10sp cells). LazyColumn virtualization means only
  * visible rows compose, so the tap never freezes no matter the file size.
- * Smart scroll recenters only on first paint and actual active-row moves;
+ * Smart scroll targets the last data row (never the empty capture slot)
+ * and recenters only on first paint and newly landed data;
  * undo/redo/check re-renders stay put.
  */
 class SheetMenuOverlay(
@@ -92,7 +93,7 @@ class SheetMenuOverlay(
     private var menuView: LinearLayout? = null
     private var lastSnapshot: SheetBubbleSnapshot? = null
     private var scrolledOnce = false
-    private var lastScrolledActive = Int.MIN_VALUE
+    private var lastScrolledTarget = Int.MIN_VALUE
     // Composition state: the grid content reads the snapshot; scrollGen
     // bumps only when a recenter is actually wanted (smart scroll).
     private var snapshotState = mutableStateOf<SheetBubbleSnapshot?>(null)
@@ -145,7 +146,7 @@ class SheetMenuOverlay(
         menuView = menu
         lastSnapshot = null
         scrolledOnce = false
-        lastScrolledActive = Int.MIN_VALUE
+        lastScrolledTarget = Int.MIN_VALUE
         snapshotState.value = null
         scrollGenState.intValue = 0
         // Placeholder identity until the service renders the loaded snapshot
@@ -334,13 +335,15 @@ class SheetMenuOverlay(
         // status dots as the app — LazyColumn only composes the visible
         // ones, so any file size paints instantly.
         snapshotState.value = snapshot
-        // Smart scroll: first paint and actual active-row moves recenter on
-        // the new data; undo/redo/check re-renders with the same active row
-        // stay exactly where the user left them.
-        val shouldScroll = !scrolledOnce || snapshot.activeRow != lastScrolledActive
-        lastScrolledActive = snapshot.activeRow
+        // Scroll target is the last DATA row, never the empty capture slot:
+        // opening with one row shows row 1, not row 2. Recenter only on
+        // first paint and when new data actually lands; undo/redo/check
+        // re-renders stay exactly where the user left them.
+        val endRow = snapshot.rows.indexOfLast { it.isData(snapshot.file.preset.columns) }.coerceAtLeast(0)
+        val shouldScroll = !scrolledOnce || endRow != lastScrolledTarget
+        lastScrolledTarget = endRow
         if (shouldScroll && isShowing()) {
-            scrollTarget = snapshot.activeRow
+            scrollTarget = endRow
             scrollGenState.intValue++
         }
     }
