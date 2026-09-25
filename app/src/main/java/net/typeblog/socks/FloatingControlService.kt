@@ -1892,13 +1892,17 @@ class FloatingControlService : Service() {
                 openSheetTab()
                 return@launch
             }
+            // Paint first, process after: the loaded grid renders instantly so
+            // the open feels fast; capture + auto-check then update in place
+            // (smart scroll only moves if the active row actually changed).
+            lastSheetSnapshot = initial
+            sheetOverlay?.render(initial)
+            syncSheetToolbar(initial)
             val clipboard = readSheetClipboard()
             val result = withContext(Dispatchers.IO) {
                 sheetBubbleCoordinator.capture(fileId, clipboard, markNo2Fa)
             }
             if (generation != sheetBubbleGeneration || sheetOverlay?.isShowing() != true) return@launch
-            // Single render of the post-capture state (the shared lazy grid
-            // only composes visible rows, so any file size paints instantly).
             lastSheetSnapshot = result.snapshot
             sheetOverlay?.render(result.snapshot)
             syncSheetToolbar(result.snapshot)
