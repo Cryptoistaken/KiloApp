@@ -24,6 +24,7 @@ merged. Seven silent paths now report a 2-4 word message. See the section below.
 | #2 | `docs/bubble-perf-reviews` | open, mergeable, docs only |
 | #3 | `perf/sheet-popup-scaling` | open, mergeable, **CI green** |
 | #4 | `fix/sheet-bubble-silent-bubbles` | open, **CI green**, fixes the silent-paste bug |
+| #5 | `fix/hide-page-checks-non-page` | open, **CI green**, hides Page-only check switches |
 
 ---
 
@@ -59,6 +60,31 @@ Bubble + foreground-service hot paths. All in `FloatingControlService.kt` and
 - Remaining `Color.parseColor` in the overlays hoisted to `@ColorInt` constants.
 - `normalizedRows` no longer reallocates a copy of every row.
 - `openChecks`/`openCheckReqs` use `minus`, read `.value` once.
+
+## FIXED — Page-only check switches were shown on every file type (PR #5)
+
+**Reported by the user:** the check dropdown offered "Simple check" and "Advanced check" on
+2fa and cookie files, where they do nothing.
+
+Those are **Page-file checks**: `checkFile()` gates both page sweeps on `preset == PAGE`
+(`SheetBubbleCoordinator.kt:165`). On a Cookie or 2fa file the two switches were dead controls
+— turn them on, press Check, get a result identical to having them off, with no indication
+which. Same class of problem as the silent-paste bug: a control that lies.
+
+**Both menus had the identical bug**, so both were fixed:
+
+- `SheetMenuOverlay.refreshMenuRows()` (the floating bubble menu) now takes a
+  `presetProvider: () -> SheetPreset?` and hides the two rows unless the file is a Page file.
+  The service supplies it from `lastSheetSnapshot?.file?.preset`, so no database read was
+  added to the menu path. `null` means "not loaded yet" and shows everything, because
+  `refreshMenuRows()` also runs from `renderToolbar()` immediately after the file loads and
+  before the Check button is reachable.
+- `SheetDetailContent` (the in-app Compose `DropdownMenu`) gates on `file?.preset`, which that
+  composable already receives, so no plumbing was needed.
+
+Left alone deliberately: the `ss_pageSimple` / `ss_pageAdvanced` prefs are not cleared, so
+switching a file between presets restores the user's previous choice. The bubble's Check
+*button* enabled-state already derived from `snap.file.preset.columns` and needed no change.
 
 ## The reviews
 
@@ -315,6 +341,9 @@ git fetch origin
 # PR #4 - the user-facing silent-paste fix, highest priority to land
 git checkout fix/sheet-bubble-silent-bubbles && git pull
 
+# PR #5 - hide Page-only check switches on Cookie/2fa files
+git checkout fix/hide-page-checks-non-page && git pull
+
 # PR #3 - the safe perf batch
 git checkout perf/sheet-popup-scaling && git pull
 
@@ -330,7 +359,7 @@ commit to it directly.
 
 ## Open questions for the user
 
-- **Merge PR #4** (the silent-paste fix)? CI green, user-facing, low risk, but no device run.
+- **Merge PR #4 and PR #5?** Both CI green, both user-facing, both low risk, neither device-run.
 - Merge PR #3? (CI green, semantics-preserving, but still no device run.)
 - Merge PR #2 (docs only, zero risk)?
 - Attach a device (`adb -s localhost:5557`) to do the RecyclerView conversion and the N+1
