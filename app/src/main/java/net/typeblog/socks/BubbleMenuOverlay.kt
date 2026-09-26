@@ -341,22 +341,22 @@ class BubbleMenuOverlay(
             val headerHeight = (panel.height - scroll.height).coerceAtLeast(0)
             val trueHeight = headerHeight + targetHeight
             val refinedY = when (side) {
-                "top"    -> (by - trueHeight - margin8).coerceIn(bounds.top + margin8, (bounds.bottom - trueHeight - margin8).coerceAtLeast(bounds.top + margin8))
-                "bottom" -> (by + bubbleSizePx + margin8).coerceIn(bounds.top + margin8, (bounds.bottom - trueHeight - margin8).coerceAtLeast(bounds.top + margin8))
-                else     -> (bubbleCenterY - trueHeight / 2).coerceIn(bounds.top + margin8, (bounds.bottom - trueHeight - margin8).coerceAtLeast(bounds.top + margin8))
+                BubblePopupSide.TOP    -> (by - trueHeight - margin8).coerceIn(bounds.top + margin8, (bounds.bottom - trueHeight - margin8).coerceAtLeast(bounds.top + margin8))
+                BubblePopupSide.BOTTOM -> (by + bubbleSizePx + margin8).coerceIn(bounds.top + margin8, (bounds.bottom - trueHeight - margin8).coerceAtLeast(bounds.top + margin8))
+                else                   -> (bubbleCenterY - trueHeight / 2).coerceIn(bounds.top + margin8, (bounds.bottom - trueHeight - margin8).coerceAtLeast(bounds.top + margin8))
             }
             if (refinedY != panelLp.topMargin) {
                 panelLp.topMargin = refinedY
                 panel.requestLayout()
             }
             panel.pivotX = when (side) {
-                "left" -> panelWidth.toFloat()
-                "top", "bottom" -> panelWidth / 2f
+                BubblePopupSide.LEFT -> panelWidth.toFloat()
+                BubblePopupSide.TOP, BubblePopupSide.BOTTOM -> panelWidth / 2f
                 else -> 0f
             }
             panel.pivotY = when (side) {
-                "top" -> trueHeight.toFloat()
-                "bottom" -> 0f
+                BubblePopupSide.TOP -> trueHeight.toFloat()
+                BubblePopupSide.BOTTOM -> 0f
                 else -> trueHeight / 2f
             }
             panel.animate()
@@ -456,7 +456,7 @@ class BubbleMenuOverlay(
         ).apply {
             setMargins(dp(6f), 0, dp(6f), 0)
         }
-        setBackgroundColor(Color.parseColor(if (isLightMode()) "#E4E4E7" else "#3F3F46"))
+        setBackgroundColor(if (isLightMode()) SEPARATOR_LIGHT else SEPARATOR_DARK)
     }
 
     private fun showMessage(msg: String) {
@@ -482,7 +482,7 @@ class BubbleMenuOverlay(
             setPadding(dp(16f), dp(10f), dp(16f), dp(10f))
             background = GradientDrawable().apply {
                 cornerRadius = dp(22f).toFloat()
-                setColor(Color.parseColor("#CC111111"))
+                setColor(TOAST_FILL)
             }
             measure(
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
@@ -630,4 +630,13 @@ class BubbleMenuOverlay(
         }
 
     private fun dp(value: Float): Int = (value * context.resources.displayMetrics.density).toInt()
+
+    private companion object {
+        // Pre-parsed @ColorInt values. Separators are created inside the same
+        // loop as the country rows, so these were re-parsed repeatedly per
+        // popup open.
+        private const val SEPARATOR_LIGHT = 0xFFE4E4E7.toInt()
+        private const val SEPARATOR_DARK = 0xFF3F3F46.toInt()
+        private const val TOAST_FILL = 0xCC111111.toInt()
+    }
 }
