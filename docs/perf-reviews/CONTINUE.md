@@ -134,9 +134,9 @@ Keep this section as the reference for *why* the code is shaped the way it is �
 exhaustive `when`s look redundant otherwise, and someone will "simplify" them back into the
 silent form.
 
-### Root cause (confirmed by reading the code)
+### Root cause (the code as it was **before** `ddf7ffd`)
 
-`util/sheet/SheetBubbleCoordinator.kt:324-330` picks the user-facing message from what
+`util/sheet/SheetBubbleCoordinator.kt:324-330` picked the user-facing message from what
 changed:
 
 ```kotlin
@@ -150,7 +150,7 @@ val resultMessage = if (changed) message else if (changedRows.isNotEmpty()) {
 ```
 
 and the caller only toasts when the message is non-empty
-(`FloatingControlService.kt:2105`):
+(`FloatingControlService.kt:2106`):
 
 ```kotlin
 if (result.message.isNotEmpty()) toast(result.message)
@@ -225,7 +225,7 @@ Note: the user asked for **"duplicate"**, not "already" - earlier drafts saying
 messages worded as nouns, not sentences.
 
 The **empty-clipboard** case is the one to get right: it is the most common real-world
-trigger (user taps the bubble having forgotten to copy anything) and today it is completely
+trigger (user taps the bubble having forgotten to copy anything) and it used to be completely
 silent. `Copy a cookie first.` is short but actionable, which is the point.
 
 Hardcoded is the locally consistent choice - every message inside `capture()` is hardcoded,
@@ -253,7 +253,9 @@ good fallback without an activity, so flagging rather than pretending it is cove
 Still unexamined: `SheetBubbleCoordinator.checkFile` internal phase failures, and
 `runSheetHistory`'s non-snapshot error branches.
 
- — please don't rediscover these
+---
+
+## Hard-won lessons — please don't rediscover these
 
 **1. `git fetch origin master` does NOT update local `master`.** This caused a real near-miss:
 a branch was created off stale local `master` (`54e3514`) instead of `origin/master`
@@ -292,8 +294,9 @@ flag emoji excepted, and only in rows/sheets, never buttons/labels/toasts).
 ## Environment
 
 - **The VM is an unclaimed Railway trial, past its build window, with the LLM budget
-  exhausted.** It may refuse work or be deleted. Everything important is on GitHub; this file
-  is the only thing that would be lost.
+  exhausted.** It may refuse work or be deleted. Nothing important is only on the VM: this
+  file is mirrored at `docs/perf-reviews/CONTINUE.md` on the `docs/bubble-perf-reviews` branch,
+  and all code is on GitHub. What *would* be lost is uncommitted local work.
 - Claim link (fetch fresh — these expire in ~30 min):
   `curl -fsS -H "Authorization: Bearer $AI_AGENT_KEY" "$AI_GATEWAY_URL/status" | jq -r .claim_url`
 - GitHub auth: `gh` is authenticated as `Cryptoistaken` (repo, workflow, gist, read:org).
@@ -307,11 +310,23 @@ flag emoji excepted, and only in rows/sheets, never buttons/labels/toasts).
 ```bash
 cd /app/KiloApp
 gh auth setup-git
-git fetch origin master
-git checkout perf/sheet-popup-scaling && git pull    # PR #3, green, ready to merge
-# or start fresh work:
+git fetch origin
+
+# PR #4 - the user-facing silent-paste fix, highest priority to land
+git checkout fix/sheet-bubble-silent-bubbles && git pull
+
+# PR #3 - the safe perf batch
+git checkout perf/sheet-popup-scaling && git pull
+
+# PR #2 - the three reviews + this file
+git checkout docs/bubble-perf-reviews && git pull
+
+# start fresh work -- ALWAYS off origin/master, see lesson 1
 git checkout -b <branch> origin/master
 ```
+
+Local `master` is stale (`54e3514`); the real head is `origin/master` (`c96550d`). Do not
+commit to it directly.
 
 ## Open questions for the user
 
