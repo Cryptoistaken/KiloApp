@@ -81,7 +81,16 @@ class SheetMenuOverlay(
     private val onDismissed: () -> Unit = {},
     private val onUndo: () -> Unit = {},
     private val onRedo: () -> Unit = {},
-    private val onCheck: () -> Unit = {}
+    private val onCheck: () -> Unit = {},
+    /**
+     * Preset of the file the bubble is currently pointed at, or null before it
+     * has loaded. The Simple/Advanced page sweeps are gated on
+     * `preset == PAGE` inside the coordinator, so for a Cookie or 2fa file those
+     * two switches do nothing at all. Hiding them keeps the menu honest.
+     * Null means "not known yet" and shows everything, which is corrected as
+     * soon as the file loads and the toolbar re-renders.
+     */
+    private val presetProvider: () -> SheetPreset? = { null }
 ) {
     private var windowManager: WindowManager = createWindowManager()
     private val handler = Handler(Looper.getMainLooper())
@@ -458,7 +467,7 @@ class SheetMenuOverlay(
 
     /** In-app check menu parity: label + MiniSwitch rows, rebuilt from the
      * same prefs the app honors. UID toggles freely, Simple/Advanced are
-     * exclusive. */
+     * exclusive and are hidden for non-Page files. */
     private fun toggleMenu() {
         val menu = menuView ?: return
         menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -477,10 +486,19 @@ class SheetMenuOverlay(
         val uid = prefs.getBoolean("ss_autoCheck", true)
         val simple = prefs.getBoolean("ss_pageSimple", false)
         val adv = prefs.getBoolean("ss_pageAdvanced", false)
+        // checkFile() gates the page sweeps on preset == PAGE, so on a Cookie or
+        // 2fa file these two switches were dead controls that silently did
+        // nothing. Null means the file has not loaded yet, so show everything
+        // rather than hide rows that may be needed; renderToolbar() rebuilds
+        // the rows once the file is known.
+        val preset = try { presetProvider() } catch (_: Exception) { null }
+        val showPageChecks = preset == null || preset == SheetPreset.PAGE
         menu.removeAllViews()
         menu.addView(menuSwitchRow("UID check", uid) { toggleUid() })
-        menu.addView(menuSwitchRow("Simple check", simple) { togglePage(simple = true) })
-        menu.addView(menuSwitchRow("Advanced check", adv) { togglePage(simple = false) })
+        if (showPageChecks) {
+            menu.addView(menuSwitchRow("Simple check", simple) { togglePage(simple = true) })
+            menu.addView(menuSwitchRow("Advanced check", adv) { togglePage(simple = false) })
+        }
     }
 
     private fun menuSwitchRow(label: String, checked: Boolean, onTap: () -> Unit): LinearLayout {

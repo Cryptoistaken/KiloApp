@@ -48,6 +48,7 @@ import net.typeblog.socks.util.sheet.CopiedGrid
 import net.typeblog.socks.util.sheet.MAX_GRID_ROWS
 import net.typeblog.socks.util.sheet.SheetColumn
 import net.typeblog.socks.util.sheet.SheetFile
+import net.typeblog.socks.util.sheet.SheetPreset
 import net.typeblog.socks.util.sheet.SheetRow
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -235,16 +236,23 @@ internal fun SheetDetailHeader(
                             checked = autoCheck,
                             onToggle = onToggleAutoCheck
                         )
-                        CheckSwitchRow(
-                            label = "Simple check",
-                            checked = simpleCheck,
-                            onToggle = onToggleSimpleCheck
-                        )
-                        CheckSwitchRow(
-                            label = "Advanced check",
-                            checked = advancedCheck,
-                            onToggle = onToggleAdvancedCheck
-                        )
+                        // Simple and Advanced are Page-file checks: the check
+                        // run gates both sweeps on preset == PAGE, so on a
+                        // Cookie or 2fa file these switches did nothing.
+                        // Unknown file (null) keeps showing them rather than
+                        // hiding rows that may be needed.
+                        if (file == null || file.preset == SheetPreset.PAGE) {
+                            CheckSwitchRow(
+                                label = "Simple check",
+                                checked = simpleCheck,
+                                onToggle = onToggleSimpleCheck
+                            )
+                            CheckSwitchRow(
+                                label = "Advanced check",
+                                checked = advancedCheck,
+                                onToggle = onToggleAdvancedCheck
+                            )
+                        }
                     }
                 }
             }

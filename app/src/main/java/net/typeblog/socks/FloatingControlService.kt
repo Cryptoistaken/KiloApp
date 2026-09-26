@@ -371,7 +371,11 @@ class FloatingControlService : Service() {
             },
             onUndo = { runSheetHistory(redo = false) },
             onRedo = { runSheetHistory(redo = true) },
-            onCheck = { runSheetBubbleCheck() }
+            onCheck = { runSheetBubbleCheck() },
+            // Read from the loaded snapshot, so the check menu can hide the
+            // page-only switches for a Cookie or 2fa file. Null until the file
+            // loads, which the overlay treats as "show everything".
+            presetProvider = { lastSheetSnapshot?.file?.preset }
         )
         circleMenu = CircleBubbleMenu(
             this,
