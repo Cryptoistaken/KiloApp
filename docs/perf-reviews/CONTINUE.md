@@ -16,8 +16,10 @@ to a `RecyclerView` — is **deliberately not done**, and the reason is written 
 is not re-attempted blind.
 
 **There is also one ACTIVE user-facing bug, not perf: the sheet bubble goes completely silent
-whenever it rejects what you pasted. Root cause found, not yet fixed. See the section below —
-it is the highest-priority open item.**
+whenever it rejects what you pasted. Root cause found, not yet fixed. The requirement is
+**notify on every path, with messages as short as the existing ones** (2-5 words, e.g.
+`Cookie already saved.` - not sentences). See the section below; it is the highest-priority
+open item.**
 
 | PR | Branch | State |
 |---|---|---|
@@ -185,23 +187,42 @@ exception** — all indistinguishable to `capture()`, which sees only `EMPTY`.
 
 ### Fix shape
 
-Give every rejection an explicit, plain-ASCII message so the user always gets an
-acknowledgement. Distinguish at minimum:
+**Requirement from the user: notify, never go silent — but the new messages must be very
+short, matching the existing ones.** Do not write sentences.
 
-- duplicate cookie -> name the file/row, e.g. "That cookie is already in this file."
-- duplicate 2FA key -> same shape
-- empty clipboard -> "Copy a cookie or 2FA key first." (this is the *most* common real-world
-  case: the user taps the bubble having forgotten to copy anything)
-- unparseable clipboard -> say what was expected
-- 2FA key into a cookie-preset file -> say the file does not take 2FA
-- active row already has a cookie -> say the row is taken
+Calibrate against what is already there (all hardcoded, sentence case, trailing period):
+
+```
+"Cookie saved."          "2FA key saved."       "No_2Fa saved."
+"Nothing to undo."      "Nothing to redo."     "Check done."
+"No UID to check."       "Nothing to check."    "Alive 2, Dead 1."
+"Select a Sheet file first."              (5 words, the only string resource)
+"Turn on a check in the menu."            (7 words - the outlier, do not copy it)
+```
+
+Target **2-5 words**. Proposed set, each mirroring an existing message's shape:
+
+| Path | Message | Mirrors |
+|---|---|---|
+| duplicate cookie | `Cookie already saved.` | `Cookie saved.` |
+| duplicate 2FA key | `Key already saved.` | `2FA key saved.` |
+| empty clipboard | `Copy a cookie first.` | `Select a Sheet file first.` |
+| unparseable clipboard | `Not a cookie or key.` | - |
+| 2FA into cookie-preset file | `File takes no 2FA.` | - |
+| active row already has a cookie | `Row already filled.` | `Nothing to check.` |
+
+The **empty-clipboard** case is the one to get right: it is the most common real-world
+trigger (user taps the bubble having forgotten to copy anything) and today it is completely
+silent. `Copy a cookie first.` is short but actionable, which is the point.
+
+Hardcoded is the locally consistent choice - every message inside `capture()` is hardcoded,
+and `R.string` is used only in `openSheetPopup`. Either is defensible; match the surrounding
+lines and be consistent within the change.
 
 Prefer `SheetBubbleRules.kt` for any new pure predicate (that file is explicitly "pure rules
 shared by the native floating Sheet bubble" and is the right home per the repo's
-"shared logic has one home in `util/`" rule). Keep user-visible strings plain ASCII — no
-emoji, no unicode symbols. The neighbouring messages in `capture()` are hardcoded English
-("Cookie saved.", "2FA key saved.", "No_2Fa saved."), so hardcoded is locally consistent;
-`R.string` is used in `openSheetPopup`, so either is defensible — match the surrounding lines.
+"shared logic has one home in `util/`" rule). Keep user-visible strings plain ASCII - no
+emoji, no unicode symbols.
 
 ### While in there, check for other silent spots
 
@@ -276,7 +297,8 @@ git checkout -b <branch> origin/master
 ## Open questions for the user
 
 - **Fix the sheet-bubble silence bug next?** Root cause is known and the fix shape is written
-  up above. It is user-facing and small, so it is worth doing before the perf backlog.
+  up above: toast on all six rejection paths, messages kept to 2-5 words to match the existing
+  ones. It is user-facing and small, so it is worth doing before the perf backlog.
 - Merge PR #3? (CI green, semantics-preserving, but still no device run.)
 - Merge PR #2 (docs only, zero risk)?
 - Attach a device (`adb -s localhost:5557`) to do the RecyclerView conversion and the N+1
