@@ -15,20 +15,15 @@ waiting in PR #3 (CI green)**. The single biggest remaining win — converting a
 to a `RecyclerView` — is **deliberately not done**, and the reason is written up below so it
 is not re-attempted blind.
 
-**There is also one ACTIVE user-facing bug, not perf: the sheet bubble goes completely silent
-whenever it rejects what you pasted. Root cause found, not yet fixed. The requirement is
-**notify on every path, with messages as short as the existing ones** (2-5 words, e.g.
-`Cookie already saved.` - not sentences). See the section below; it is the highest-priority
-open item.**
+**The sheet-bubble silent-rejection bug is FIXED** — PR #4, commit `ddf7ffd`, CI green, not yet
+merged. Seven silent paths now report a 2-4 word message. See the section below.
 
 | PR | Branch | State |
 |---|---|---|
 | #1 | `perf/bubble-hotpath` | **merged** as `c96550d`, released v345 |
 | #2 | `docs/bubble-perf-reviews` | open, mergeable, docs only |
 | #3 | `perf/sheet-popup-scaling` | open, mergeable, **CI green** |
-
-Local branch `fix/sheet-bubble-silent-bubbles` (off `origin/master`) holds the investigation
-for the bug below. **No fix code written yet.**
+| #4 | `fix/sheet-bubble-silent-bubbles` | open, **CI green**, fixes the silent-paste bug |
 
 ---
 
@@ -106,8 +101,6 @@ Four concrete blockers, found by reading the code:
 
 ### Also outstanding
 
-- **Sheet bubble silent on rejected input — see the ACTIVE BUG section above. Highest
-  priority; not perf.**
 - `listFiles` N+1 (`SheetDb.kt:106-125`): 5 extra queries per file inside the cursor loop
   (1 + 5N), one a correlated `EXISTS`. Worth doing, but it rewrites count semantics with
   nothing to prove the numbers still match.
@@ -127,14 +120,19 @@ Four concrete blockers, found by reading the code:
 
 ---
 
-## ACTIVE BUG — the sheet bubble is silent whenever it rejects your input
+## FIXED — the sheet bubble was silent whenever it rejected your input
 
 **Reported by the user:** with a duplicate cookie in the clipboard, tapping the sheet bubble
 does nothing at all. No toast, no shake, no visible change. The user cannot tell whether the
 tap registered, whether the app is broken, or whether they should try again.
 
-This is the worst class of bug in a floating-bubble UI: the user has no way to recover
-because nothing acknowledges the gesture.
+**Status: FIXED in PR #4, branch `fix/sheet-bubble-silent-bubbles`, commit `ddf7ffd`, CI green.**
+Not merged to master. Messages are plain string changes on existing branches, but there has been
+no device run, so the happy path (a valid cookie still saving) wants one manual pass.
+
+Keep this section as the reference for *why* the code is shaped the way it is — the
+exhaustive `when`s look redundant otherwise, and someone will "simplify" them back into the
+silent form.
 
 ### Root cause (confirmed by reading the code)
 
@@ -185,10 +183,21 @@ Case 3 has a second layer: `readSheetClipboard()` (`FloatingControlService.kt:22
 returns null on no clipboard, on a non-`text/plain` MIME type, on empty text, **and on any
 exception** — all indistinguishable to `capture()`, which sees only `EMPTY`.
 
-### Fix shape
+### Fix shape (APPLIED — see `ddf7ffd`)
 
 **Requirement from the user: notify, never go silent — but the new messages must be very
 short, matching the existing ones.** Do not write sentences.
+
+What was actually done, beyond swapping in the strings:
+
+- The cookie and 2FA branches each used **two independent `if`s**, so both could fire for a
+  single paste. They are now exhaustive `when`s that record exactly one reason, which is what
+  makes "no silent path" actually provable by reading the block.
+- A `rejected` reason is threaded into the `resultMessage` selection ahead of the final
+  `else ""`.
+- The auto-check pass also had a guard that silenced it whenever `check.checked` was false
+  (a **seventh** silent spot). `checkCounts` already degrades to `"No UID to check."` when both
+  counts are zero, so the guard was redundant as well as silencing. Removed.
 
 Calibrate against what is already there (all hardcoded, sentence case, trailing period):
 
@@ -200,16 +209,20 @@ Calibrate against what is already there (all hardcoded, sentence case, trailing 
 "Turn on a check in the menu."            (7 words - the outlier, do not copy it)
 ```
 
-Target **2-5 words**. Proposed set, each mirroring an existing message's shape:
+Target **2-5 words**. Final wording, set by the user - use exactly these, do not reword:
 
 | Path | Message | Mirrors |
 |---|---|---|
-| duplicate cookie | `Cookie already saved.` | `Cookie saved.` |
-| duplicate 2FA key | `Key already saved.` | `2FA key saved.` |
+| duplicate cookie | `Duplicate cookie.` | `Cookie saved.` |
+| duplicate 2FA key | `Duplicate 2FA key.` | `2FA key saved.` |
+| unparseable clipboard | `Invalid content.` | - |
 | empty clipboard | `Copy a cookie first.` | `Select a Sheet file first.` |
-| unparseable clipboard | `Not a cookie or key.` | - |
 | 2FA into cookie-preset file | `File takes no 2FA.` | - |
-| active row already has a cookie | `Row already filled.` | `Nothing to check.` |
+| active row already occupied | `Row not empty.` | `Nothing to check.` |
+
+Note: the user asked for **"duplicate"**, not "already" - earlier drafts saying
+`Cookie already saved.` / `Row already filled.` were rejected. Keep the two duplicate
+messages worded as nouns, not sentences.
 
 The **empty-clipboard** case is the one to get right: it is the most common real-world
 trigger (user taps the bubble having forgotten to copy anything) and today it is completely
@@ -224,15 +237,21 @@ shared by the native floating Sheet bubble" and is the right home per the repo's
 "shared logic has one home in `util/`" rule). Keep user-visible strings plain ASCII - no
 emoji, no unicode symbols.
 
-### While in there, check for other silent spots
+### While in there, check for other silent spots — audit results
 
-The user asked whether the app stays silent elsewhere. Already confirmed **fine** (these do
-toast): `openSheetPopup` no-file (`:2054`), file-vanished (`:2088`), undo/redo with no history
+The user asked whether the app stays silent elsewhere. **Confirmed fine** (these do toast):
+`openSheetPopup` no-file (`:2054`), file-vanished (`:2088`), undo/redo with no history
 (`"Nothing to undo."`), `runSheetBubbleCheck` with no checks enabled and with nothing checked.
 
-Still to audit, not yet read: `SheetBubbleCoordinator.checkFile` internal phases,
-`runSheetHistory` error branches, and whether `toast()` itself can fail silently (it is called
-from a `Service`, so confirm it does not require an activity context).
+**Found and fixed:** the auto-check pass (`FloatingControlService.kt:2120`) — see above.
+
+**Known remaining, deliberately not changed:** `toast()` itself (`:1946-1952`) is wrapped in a
+`try { } catch { Log.w(...) }`, so if it ever throws the user sees nothing and only a log line
+records it. Very unlikely — `Toast.makeText` with a `Service` context is legal — and there is no
+good fallback without an activity, so flagging rather than pretending it is covered.
+
+Still unexamined: `SheetBubbleCoordinator.checkFile` internal phase failures, and
+`runSheetHistory`'s non-snapshot error branches.
 
  — please don't rediscover these
 
@@ -296,9 +315,7 @@ git checkout -b <branch> origin/master
 
 ## Open questions for the user
 
-- **Fix the sheet-bubble silence bug next?** Root cause is known and the fix shape is written
-  up above: toast on all six rejection paths, messages kept to 2-5 words to match the existing
-  ones. It is user-facing and small, so it is worth doing before the perf backlog.
+- **Merge PR #4** (the silent-paste fix)? CI green, user-facing, low risk, but no device run.
 - Merge PR #3? (CI green, semantics-preserving, but still no device run.)
 - Merge PR #2 (docs only, zero risk)?
 - Attach a device (`adb -s localhost:5557`) to do the RecyclerView conversion and the N+1
