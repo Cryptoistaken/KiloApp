@@ -15,11 +15,18 @@ waiting in PR #3 (CI green)**. The single biggest remaining win — converting a
 to a `RecyclerView` — is **deliberately not done**, and the reason is written up below so it
 is not re-attempted blind.
 
+**There is also one ACTIVE user-facing bug, not perf: the sheet bubble goes completely silent
+whenever it rejects what you pasted. Root cause found, not yet fixed. See the section below —
+it is the highest-priority open item.**
+
 | PR | Branch | State |
 |---|---|---|
 | #1 | `perf/bubble-hotpath` | **merged** as `c96550d`, released v345 |
 | #2 | `docs/bubble-perf-reviews` | open, mergeable, docs only |
 | #3 | `perf/sheet-popup-scaling` | open, mergeable, **CI green** |
+
+Local branch `fix/sheet-bubble-silent-bubbles` (off `origin/master`) holds the investigation
+for the bug below. **No fix code written yet.**
 
 ---
 
@@ -97,6 +104,8 @@ Four concrete blockers, found by reading the code:
 
 ### Also outstanding
 
+- **Sheet bubble silent on rejected input — see the ACTIVE BUG section above. Highest
+  priority; not perf.**
 - `listFiles` N+1 (`SheetDb.kt:106-125`): 5 extra queries per file inside the cursor loop
   (1 + 5N), one a correlated `EXISTS`. Worth doing, but it rewrites count semantics with
   nothing to prove the numbers still match.
@@ -116,7 +125,95 @@ Four concrete blockers, found by reading the code:
 
 ---
 
-## Hard-won lessons — please don't rediscover these
+## ACTIVE BUG — the sheet bubble is silent whenever it rejects your input
+
+**Reported by the user:** with a duplicate cookie in the clipboard, tapping the sheet bubble
+does nothing at all. No toast, no shake, no visible change. The user cannot tell whether the
+tap registered, whether the app is broken, or whether they should try again.
+
+This is the worst class of bug in a floating-bubble UI: the user has no way to recover
+because nothing acknowledges the gesture.
+
+### Root cause (confirmed by reading the code)
+
+`util/sheet/SheetBubbleCoordinator.kt:324-330` picks the user-facing message from what
+changed:
+
+```kotlin
+val resultMessage = if (changed) message else if (changedRows.isNotEmpty()) {
+    "Couldn't save. Please try again."
+} else if (noFreeRow) {
+    "This Sheet file has no free row. Open the Sheet tab to add one."
+} else {
+    ""            // <-- silent
+}
+```
+
+and the caller only toasts when the message is non-empty
+(`FloatingControlService.kt:2105`):
+
+```kotlin
+if (result.message.isNotEmpty()) toast(result.message)
+```
+
+So **every rejection path that sets neither `changed` nor `noFreeRow` nor `changedRows`
+produces an empty string and is swallowed.** The duplicate-cookie case is one of them: the
+`if` at `:287` is guarded by `!cookieDuplicate(...)`, so on a duplicate nothing is written,
+`changedRows` stays empty, `noFreeRow` is false, and the message collapses to `""`.
+
+### Every silent path through capture()
+
+`capture()` is `SheetBubbleCoordinator.kt:251-331`. These all reach the `else ""` branch:
+
+| # | Condition | User pastes | What happens |
+|---|---|---|---|
+| 1 | `cookieDuplicate(rows, active, parsed.value)` is true (`:287`) | a cookie already in the file | **silent — the reported bug** |
+| 2 | `keyDuplicate(rows, active, parsed.value)` is true (`:301`) | a 2FA key already in the file | silent |
+| 3 | `parsed.type == EMPTY` (`:281`, from `readSheetClipboard()` returning null) | nothing / non-text clipboard | silent |
+| 4 | `parsed.type == INVALID` (`:284`, `:298` both fail) | unparseable text | silent |
+| 5 | `TWO_FA` but `!usesBubbleTwoFa(file.preset)` (`:298`) | a 2FA key into a cookie-preset file | silent |
+| 6 | `rows[active].cookies.isNotBlank()` (`:287`) | a cookie, but the active row already holds one | silent |
+
+Case 6 is easy to hit and worth calling out: for a 2FA-preset file, `isBubbleRowComplete`
+(`SheetBubbleRules.kt:37-40`) treats a row with a cookie but missing/invalid 2FA as
+*incomplete*, so it becomes the active row — and then the cookie branch bails on
+`cookies.isBlank()`. Pasting a replacement cookie there does nothing, silently.
+
+Case 3 has a second layer: `readSheetClipboard()` (`FloatingControlService.kt:2237-2248`)
+returns null on no clipboard, on a non-`text/plain` MIME type, on empty text, **and on any
+exception** — all indistinguishable to `capture()`, which sees only `EMPTY`.
+
+### Fix shape
+
+Give every rejection an explicit, plain-ASCII message so the user always gets an
+acknowledgement. Distinguish at minimum:
+
+- duplicate cookie -> name the file/row, e.g. "That cookie is already in this file."
+- duplicate 2FA key -> same shape
+- empty clipboard -> "Copy a cookie or 2FA key first." (this is the *most* common real-world
+  case: the user taps the bubble having forgotten to copy anything)
+- unparseable clipboard -> say what was expected
+- 2FA key into a cookie-preset file -> say the file does not take 2FA
+- active row already has a cookie -> say the row is taken
+
+Prefer `SheetBubbleRules.kt` for any new pure predicate (that file is explicitly "pure rules
+shared by the native floating Sheet bubble" and is the right home per the repo's
+"shared logic has one home in `util/`" rule). Keep user-visible strings plain ASCII — no
+emoji, no unicode symbols. The neighbouring messages in `capture()` are hardcoded English
+("Cookie saved.", "2FA key saved.", "No_2Fa saved."), so hardcoded is locally consistent;
+`R.string` is used in `openSheetPopup`, so either is defensible — match the surrounding lines.
+
+### While in there, check for other silent spots
+
+The user asked whether the app stays silent elsewhere. Already confirmed **fine** (these do
+toast): `openSheetPopup` no-file (`:2054`), file-vanished (`:2088`), undo/redo with no history
+(`"Nothing to undo."`), `runSheetBubbleCheck` with no checks enabled and with nothing checked.
+
+Still to audit, not yet read: `SheetBubbleCoordinator.checkFile` internal phases,
+`runSheetHistory` error branches, and whether `toast()` itself can fail silently (it is called
+from a `Service`, so confirm it does not require an activity context).
+
+ — please don't rediscover these
 
 **1. `git fetch origin master` does NOT update local `master`.** This caused a real near-miss:
 a branch was created off stale local `master` (`54e3514`) instead of `origin/master`
@@ -178,6 +275,8 @@ git checkout -b <branch> origin/master
 
 ## Open questions for the user
 
+- **Fix the sheet-bubble silence bug next?** Root cause is known and the fix shape is written
+  up above. It is user-facing and small, so it is worth doing before the perf backlog.
 - Merge PR #3? (CI green, semantics-preserving, but still no device run.)
 - Merge PR #2 (docs only, zero risk)?
 - Attach a device (`adb -s localhost:5557`) to do the RecyclerView conversion and the N+1
