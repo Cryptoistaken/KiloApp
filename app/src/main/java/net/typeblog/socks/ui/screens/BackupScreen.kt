@@ -2,6 +2,7 @@ package net.typeblog.socks.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.WindowInsets
@@ -140,6 +141,22 @@ fun BackupScreen(
         }
     }
 
+    // A picked file has to be asked for its name, not read off the uri: a
+    // MediaStore document uri ends in its numeric id, so the confirmation used
+    // to say "document:1000000127" instead of the file the user chose.
+    fun displayName(uri: Uri): String {
+        val queried = try {
+            context.contentResolver
+                .query(uri, arrayOf("_display_name"), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        } catch (_: Exception) {
+            null
+        }
+        return queried?.takeIf { it.isNotBlank() }
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "the file you picked"
+    }
+
     val folderLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -161,7 +178,6 @@ fun BackupScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val name = uri.lastPathSegment?.substringAfterLast('/') ?: "the file you picked"
         scope.launch {
             busy = true
             val stagedResult = withContext(Dispatchers.IO) {
@@ -169,7 +185,7 @@ fun BackupScreen(
                     val bytes = context.contentResolver.openInputStream(uri)
                         ?.use { it.readBytes() } ?: return@withContext null
                     // SheetBackup.parse sniffs JSON vs workbook by content.
-                    bytes to SheetBackup.parse(bytes)
+                    Triple(bytes, SheetBackup.parse(bytes), displayName(uri))
                 } catch (_: Exception) {
                     null
                 }
@@ -178,7 +194,7 @@ fun BackupScreen(
             if (stagedResult == null) {
                 toast(context, "That file is not a KiloApp backup.")
             } else {
-                staged = stage(stagedResult.first, name, stagedResult.second)
+                staged = stage(stagedResult.first, stagedResult.third, stagedResult.second)
             }
         }
     }
