@@ -337,13 +337,13 @@ class SheetMenuOverlay(
         panel.scaleY = 0.55f
         panel.alpha = 0f
         panel.pivotX = when (side) {
-            "left" -> panelWidth.toFloat()
-            "top", "bottom" -> panelWidth / 2f
+            BubblePopupSide.LEFT -> panelWidth.toFloat()
+            BubblePopupSide.TOP, BubblePopupSide.BOTTOM -> panelWidth / 2f
             else -> 0f
         }
         panel.pivotY = when (side) {
-            "top" -> panelHeight.toFloat()
-            "bottom" -> 0f
+            BubblePopupSide.TOP -> panelHeight.toFloat()
+            BubblePopupSide.BOTTOM -> 0f
             else -> panelHeight / 2f
         }
         // The grid is usually composing its first rows mid-animation (local

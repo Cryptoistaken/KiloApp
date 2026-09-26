@@ -2,7 +2,6 @@ package net.typeblog.socks
 
 import android.content.Context
 import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
@@ -237,13 +236,13 @@ class SmsMenuOverlay(
         panel.scaleY = 0.55f
         panel.alpha = 0f
         panel.pivotX = when (side) {
-            "left" -> panelWidth.toFloat()
-            "top", "bottom" -> panelWidth / 2f
+            BubblePopupSide.LEFT -> panelWidth.toFloat()
+            BubblePopupSide.TOP, BubblePopupSide.BOTTOM -> panelWidth / 2f
             else -> 0f
         }
         panel.pivotY = when (side) {
-            "top" -> panelHeight.toFloat()
-            "bottom" -> 0f
+            BubblePopupSide.TOP -> panelHeight.toFloat()
+            BubblePopupSide.BOTTOM -> 0f
             else -> panelHeight / 2f
         }
         panel.animate()
@@ -426,7 +425,7 @@ class SmsMenuOverlay(
             code = row.findViewById(R.id.sms_row_code),
         )
         try {
-            views.spin.indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#0C0C14"))
+            views.spin.indeterminateTintList = ColorStateList.valueOf(SPIN_TINT)
         } catch (_: Exception) {
         }
         return views
@@ -579,4 +578,9 @@ class SmsMenuOverlay(
         }
 
     private fun dp(value: Float): Int = (value * context.resources.displayMetrics.density).toInt()
+
+    private companion object {
+        // Pre-parsed @ColorInt spinner tint; was Color.parseColor per row bind.
+        private const val SPIN_TINT = 0xFF0C0C14.toInt()
+    }
 }

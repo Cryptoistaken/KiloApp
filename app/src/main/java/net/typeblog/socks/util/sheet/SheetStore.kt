@@ -458,9 +458,19 @@ class SheetStore private constructor(context: Context) {
     }
 
     private fun normalizedRows(rows: List<SheetRow>): List<SheetRow> =
-        rows.take(MAX_GRID_ROWS).mapIndexed { index, row -> row.copy(rowIdx = index) }
+        // Same guard as topUp: keep the instance when the index already
+        // matches instead of allocating a copy of every row.
+        rows.take(MAX_GRID_ROWS).mapIndexed { index, row ->
+            if (row.rowIdx == index) row else row.copy(rowIdx = index)
+        }
 
     private fun staleChecks(previous: List<SheetRow>, rows: List<SheetRow>): Set<Int> {
+        // Keyed on rowIdx, not list position. Several persistRowsLocked call
+        // sites pass rows that have not been through topUp/normalizedRows, so
+        // the two lists are not positionally indexed and a positional compare
+        // would not be equivalent. Left as-is: this runs once per user
+        // mutation, not on a frame or poll path, so the two maps are not worth
+        // a semantic change.
         val before = previous.associateBy { it.rowIdx }
         val after = rows.associateBy { it.rowIdx }
         return (before.keys + after.keys).filter { before[it] != after[it] }.toSet()
@@ -573,8 +583,12 @@ class SheetStore private constructor(context: Context) {
                 }
 
                 stale.isNotEmpty() -> {
-                    openChecks.value = openChecks.value.filterKeys { it !in stale }
-                    openCheckReqs.value = openCheckReqs.value.filterKeys { it !in stale }
+                    // minus removes the keys directly; filterKeys allocated an
+                    // intermediate map and re-read .value on both sides.
+                    val checks = openChecks.value
+                    val reqs = openCheckReqs.value
+                    openChecks.value = checks - stale
+                    openCheckReqs.value = reqs - stale
                 }
             }
             openCrossDups.value = crossDuplicates(fileId, openRows.value)

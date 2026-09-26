@@ -722,7 +722,7 @@ class FloatingControlService : Service() {
                 // lives on the Proxy item's lock, not the trigger).
                 circle.background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#27272A"))
+                    setColor(COLOR_CIRCLE_TRIGGER)
                     setStroke((1 * density).toInt(), Color.argb(26, 255, 255, 255))
                 }
             } else {
@@ -2915,6 +2915,9 @@ class FloatingControlService : Service() {
         private const val COLOR_LOCK_GREEN = 0xFF1C9C7C.toInt()
         private const val COLOR_LOCK_ERR = 0xFFCC2D4F.toInt()
         private const val COLOR_SPIN_LIGHT = 0xFF0C0C14.toInt()
+        // Circle-style trigger fill, per the HTML .cm-trigger dark control
+        // button. Was a Color.parseColor call on every bubble rebuild.
+        private const val COLOR_CIRCLE_TRIGGER = 0xFF27272A.toInt()
 
         private const val POLL_INTERVAL = 1000L
         private const val CONNECTING_POLL_INTERVAL = 200L
