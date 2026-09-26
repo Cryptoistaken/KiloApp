@@ -281,28 +281,49 @@ class SheetBubbleCoordinator(context: Context) {
         val parsed = parseBubbleClipboard(clipboardText?.take(32_000))
         var cookieChanged = false
         var noFreeRow = false
+        // Why the paste was not stored. Every rejection path must set this:
+        // the caller only toasts a non-empty message, so an unset reason means
+        // the user's tap is acknowledged by nothing at all.
+        var rejected = ""
         if (parsed.type == BubbleClipboardType.COOKIE) {
             val active = findBubbleActiveRow(rows, file.preset)
-            if (active < 0) noFreeRow = true
-            if (active >= 0 && rows[active].cookies.isBlank() && !cookieDuplicate(rows, active, parsed.value)) {
-                rows[active] = rows[active].copy(
-                    cookies = parsed.value,
-                    uid = extractCUser(parsed.value) ?: "",
-                    status = "",
-                    dead = false
-                )
-                changedRows += active
-                cookieChanged = true
-                message = "Cookie saved."
+            when {
+                active < 0 -> noFreeRow = true
+                !rows[active].cookies.isBlank() -> rejected = "Row not empty."
+                cookieDuplicate(rows, active, parsed.value) -> rejected = "Duplicate cookie."
+                else -> {
+                    rows[active] = rows[active].copy(
+                        cookies = parsed.value,
+                        uid = extractCUser(parsed.value) ?: "",
+                        status = "",
+                        dead = false
+                    )
+                    changedRows += active
+                    cookieChanged = true
+                    message = "Cookie saved."
+                }
             }
-        } else if (parsed.type == BubbleClipboardType.TWO_FA && usesBubbleTwoFa(file.preset)) {
-            val active = findBubbleActiveRow(rows, file.preset)
-            if (active < 0) noFreeRow = true
-            if (active >= 0 && rows[active].twofakey.isBlank() && !keyDuplicate(rows, active, parsed.value)) {
-                rows[active] = rows[active].copy(twofakey = parsed.value)
-                changedRows += active
-                message = "2FA key saved."
+        } else if (parsed.type == BubbleClipboardType.TWO_FA) {
+            when {
+                !usesBubbleTwoFa(file.preset) -> rejected = "File takes no 2FA."
+                else -> {
+                    val active = findBubbleActiveRow(rows, file.preset)
+                    when {
+                        active < 0 -> noFreeRow = true
+                        !rows[active].twofakey.isBlank() -> rejected = "Row not empty."
+                        keyDuplicate(rows, active, parsed.value) -> rejected = "Duplicate 2FA key."
+                        else -> {
+                            rows[active] = rows[active].copy(twofakey = parsed.value)
+                            changedRows += active
+                            message = "2FA key saved."
+                        }
+                    }
+                }
             }
+        } else if (parsed.type == BubbleClipboardType.INVALID) {
+            rejected = "Invalid content."
+        } else {
+            rejected = "Copy a cookie first."
         }
 
         val saved = if (changedRows.isNotEmpty()) {
@@ -325,6 +346,8 @@ class SheetBubbleCoordinator(context: Context) {
             "Couldn't save. Please try again."
         } else if (noFreeRow) {
             "This Sheet file has no free row. Open the Sheet tab to add one."
+        } else if (rejected.isNotEmpty()) {
+            rejected
         } else {
             ""
         }
