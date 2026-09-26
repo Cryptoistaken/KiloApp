@@ -2117,7 +2117,12 @@ class FloatingControlService : Service() {
                         sheetOverlay?.render(check.snapshot)
                         syncSheetToolbar(check.snapshot)
                     }
-                    if (check.checked) toast(checkCounts(check.valid, check.dead))
+                    // Always report. checkCounts already degrades to "No UID
+                    // to check." when nothing was checkable, so gating this on
+                    // check.checked left the whole auto-check pass silent
+                    // whenever it had no targets - the user saved a cookie and
+                    // got no indication of whether anything ran.
+                    toast(checkCounts(check.valid, check.dead))
                 }
             }
         }
