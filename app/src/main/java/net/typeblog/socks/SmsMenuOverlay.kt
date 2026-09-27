@@ -28,7 +28,7 @@ import android.widget.TextView
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import net.typeblog.socks.util.SmsNum
 import net.typeblog.socks.util.SmsWatcher
-import net.typeblog.socks.util.smsIsRangePat
+import net.typeblog.socks.util.smsSingleRange
 import net.typeblog.socks.util.ThemeMode
 
 /**
@@ -274,7 +274,7 @@ class SmsMenuOverlay(
 
     /** X swaps to the Gen pill as soon as the range holds any digit. */
     private fun syncGenButton(text: String) {
-        val valid = smsIsRangePat(text)
+        val valid = smsSingleRange(text) != null
         genWrap?.visibility = if (valid) View.VISIBLE else View.GONE
         closeBtn?.visibility = if (valid) View.GONE else View.VISIBLE
     }
@@ -283,11 +283,11 @@ class SmsMenuOverlay(
     private fun submitRange() {
         if (generating || !isShowing()) return
         val raw = searchInput?.text?.toString() ?: ""
-        if (!smsIsRangePat(raw)) return
-        // Full typed/pasted text (e.g. 23762XXX) stays visible in the field
-        // like the HTML mockup — only digits feed the provision prefix.
-        val digits = raw.filter { it.isDigit() }
-        if (digits.isEmpty()) return
+        // Parse once and hand over the full typed text, wildcards included.
+        // Stripping to digits here used to cost the user their X, since this
+        // value is what the bubble saves as the last-used range.
+        if (smsSingleRange(raw) == null) return
+        val typed = raw.trim()
         generating = true
         hideKeyboard()
         searchInput?.clearFocus()
@@ -299,7 +299,7 @@ class SmsMenuOverlay(
         val t0 = java.lang.System.currentTimeMillis()
         handler.postDelayed({
             try {
-                onGenerate(digits)
+                onGenerate(typed)
             } catch (_: Exception) {
             }
             generating = false

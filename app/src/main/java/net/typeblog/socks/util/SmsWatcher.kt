@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,9 @@ import java.util.Locale
 
 const val SMS_EXPIRE_SEC = 7 * 60L
 
+/** Cap on provider numbers spent screening one request. */
+const val SMS_FRESH_MAX_TRIES = 5
+
 data class SmsMsg(val code: String, val text: String, val at: Long)
 
 class SmsNum(
@@ -47,6 +51,8 @@ class SmsNum(
     var code: String? = null,
     val msgs: MutableList<SmsMsg> = mutableListOf(),
     var app: String = "",
+    /** Set when the fresh probe cleared this number. Never set for a plain get. */
+    var fresh: Boolean = false,
 )
 
 data class SmsCountry(
@@ -316,10 +322,43 @@ fun smsTimeAgo(ts: Long, now: Long): String {
     return "${h / 24}d ago"
 }
 
-fun smsIsRangePat(s: String): Boolean {
-    val t = s.replace(" ", "").replace("+", "")
-    return t.length >= 3 && t.all { it.isDigit() || it == 'X' || it == 'x' } && t.any { it.isDigit() }
+/** A typed range split into what the gateway gets and whether to screen it. */
+data class SmsRange(val range: String, val check: Boolean, val count: Int)
+
+/**
+ * Parses a typed range into its provision range and its fresh-check flag.
+ * Ported from the KiloSMS parser: a `C` in the tail after the range turns
+ * the check on, a trailing 1-2 digit group is a count, and a range with no
+ * wildcard gets `XXX` appended. The suffix lives *after* the range, so it
+ * never reaches the gateway.
+ *
+ * The one home for this: the field, the checkbox, the provision call and the
+ * pref writer all read the same result, so the typed text and the check can
+ * never disagree. Null when the text is not a range at all.
+ */
+fun smsParseRange(s: String): SmsRange? {
+    val t = s.trim().uppercase().removePrefix("+")
+    val base = Regex("^\\d{3,}X*").find(t)?.value ?: return null
+    val tail = t.substring(base.length)
+    // Count is any 1-2 digit group in the tail, so "C2" reads the same as it
+    // does in the bot. Capped there too, and rejected below at 1 because
+    // provision returns a single number.
+    val count = Regex("\\d{1,2}").find(tail)?.value?.toIntOrNull()?.coerceAtMost(10) ?: 0
+    return SmsRange(
+        range = if (base.contains('X')) base else base.take(6) + "XXX",
+        check = tail.contains('C'),
+        count = count,
+    )
 }
+
+/**
+ * The range the app will actually act on, or null when the text asks for more
+ * than one number. [smsParseRange] still reports a count so the caller can
+ * tell "asked for 2" from "asked for none", but provision returns a single
+ * SmsNum and a batch would mean reworking that path, so a count above 1 is
+ * rejected rather than quietly serving one number.
+ */
+fun smsSingleRange(s: String): SmsRange? = smsParseRange(s)?.takeIf { it.count <= 1 }
 
 /**
  * App-scoped SMS state. Outlives the SMS tab so OTP polling and arrival
@@ -338,6 +377,36 @@ object SmsWatcher {
     var error by mutableStateOf("")
     var errorAt by mutableLongStateOf(0L)
     var revision by mutableLongStateOf(0L)
+
+    // Fresh-check session totals, surfaced on the Activity page. A plain get
+    // never touches these, so they only move for someone using the C suffix.
+    var checkedCount by mutableIntStateOf(0)
+    var freshCount by mutableIntStateOf(0)
+    var skippedCount by mutableIntStateOf(0)
+
+    private fun bumpChecked(n: Int) { checkedCount += n; persistCounters() }
+    private fun bumpSkipped(n: Int) { skippedCount += n; persistCounters() }
+    private fun bumpFresh() { freshCount += 1; persistCounters() }
+
+    private fun persistCounters() {
+        try {
+            store?.edit()
+                ?.putInt("fresh_checked", checkedCount)
+                ?.putInt("fresh_fresh", freshCount)
+                ?.putInt("fresh_skipped", skippedCount)
+                ?.apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun loadCounters() {
+        try {
+            checkedCount = store?.getInt("fresh_checked", 0) ?: 0
+            freshCount = store?.getInt("fresh_fresh", 0) ?: 0
+            skippedCount = store?.getInt("fresh_skipped", 0) ?: 0
+        } catch (_: Exception) {
+        }
+    }
 
     // Last time the push stream proved itself useful. Heartbeats alone
     // must NOT suppress the poll fallback for long: a connection can carry
@@ -377,6 +446,7 @@ object SmsWatcher {
                 o.put("svc", n.svc)
                 o.put("code", n.code ?: "")
                 o.put("app", n.app)
+                o.put("f", n.fresh)
                 val msgs = JSONArray()
                 n.msgs.take(5).forEach { msgs.put(JSONObject().put("c", it.code).put("t", it.text).put("a", it.at)) }
                 o.put("msgs", msgs)
@@ -411,6 +481,7 @@ object SmsWatcher {
                     svc = o.optString("svc"),
                     code = o.optString("code").ifEmpty { null },
                     app = o.optString("app"),
+                    fresh = o.optBoolean("f"),
                 )
                 val msgs = o.optJSONArray("msgs")
                 if (msgs != null) {
@@ -471,6 +542,7 @@ object SmsWatcher {
         app = context.applicationContext
         store = app!!.getSharedPreferences("sms_store", Context.MODE_PRIVATE)
         load()
+        loadCounters()
         scope.launch {
             loadFeed()
             var tick = 0
@@ -520,9 +592,17 @@ object SmsWatcher {
         }
     }
 
+    /**
+     * Provisions one number, optionally screened by [SmsFresh] first. When
+     * [check] is set the loop fetches up to [SMS_FRESH_MAX_TRIES] numbers and
+     * keeps the first that comes back clean; the rest are discarded without
+     * ever entering [mine] or the store. A failed probe is not a pass, so it
+     * stops the run rather than returning an unverified number.
+     */
     fun provision(
         pat: String,
         replaceId: Long? = null,
+        check: Boolean = false,
         onDone: (SmsNum?) -> Unit
     ) {
         if (busy) {
@@ -532,10 +612,47 @@ object SmsWatcher {
         paused = false
         busy = true
         scope.launch {
-            val g = withContext(Dispatchers.IO) { SmsGateway.provision(pat) }
+            var found: SmsGateway.GatewayNumber? = null
+            var screened = false
+            var tries = 0
+            if (check) {
+                while (tries < SMS_FRESH_MAX_TRIES) {
+                    tries++
+                    val c = withContext(Dispatchers.IO) { SmsGateway.provision(pat) }
+                    if (c == null || c.full.isEmpty()) break
+                    val r = withContext(Dispatchers.IO) { SmsFresh.check(c.full) }
+                    if (!r.ok) {
+                        // A check that could not run tells us nothing about
+                        // the number. Stop rather than guess.
+                        SmsLog.log(app, "CHECK", "${c.full} -> UNKNOWN (${r.error})")
+                        bumpChecked(tries)
+                        fail("Fresh check unavailable, try again")
+                        app?.let { SmsNotify.buzzFail(it) }
+                        busy = false
+                        onDone(null)
+                        return@launch
+                    }
+                    if (r.fresh) {
+                        found = c
+                        screened = true
+                        bumpFresh()
+                        break
+                    }
+                    bumpSkipped(1)
+                    SmsLog.log(app, "CHECK", "${c.full} -> USED, skipped")
+                }
+                bumpChecked(tries)
+            } else {
+                found = withContext(Dispatchers.IO) { SmsGateway.provision(pat) }
+            }
             busy = false
+            val g = found
             if (g == null || g.full.isEmpty()) {
-                fail("No numbers available, try again")
+                if (check) {
+                    fail("No fresh numbers found after checking $tries numbers for $pat")
+                } else {
+                    fail("No numbers available, try again")
+                }
                 SmsLog.log(app, "GET", "provision FAILED for $pat")
                 app?.let { SmsNotify.buzzFail(it) }
                 onDone(null)
@@ -551,6 +668,7 @@ object SmsWatcher {
                 flag = flag,
                 range = pat.uppercase(),
                 born = System.currentTimeMillis(),
+                fresh = screened,
             )
             if (replaceId != null) {
                 mine.removeAll { it.id == replaceId }
@@ -559,7 +677,7 @@ object SmsWatcher {
             mine.add(0, n)
             publishWaitingNumbers()
             save()
-            SmsLog.log(app, "GET", "provisioned ${n.display} range=$pat")
+            SmsLog.log(app, "GET", "provisioned ${n.display} range=$pat fresh=$screened")
             app?.let {
                 SmsOtpService.start(it)
                 armHeartbeat(it)

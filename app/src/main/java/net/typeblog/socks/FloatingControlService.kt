@@ -80,6 +80,7 @@ import kotlinx.coroutines.withContext
 import net.typeblog.socks.util.sheet.SheetBubbleCoordinator
 import net.typeblog.socks.util.NamesRepo
 import net.typeblog.socks.util.SmsWatcher
+import net.typeblog.socks.util.smsSingleRange
 import net.typeblog.socks.util.Constants.PREF_BUBBLE_STYLE
 import net.typeblog.socks.util.Constants.PREF_THEME_MODE
 import net.typeblog.socks.util.Constants.PREF_BUBBLE_X
@@ -1987,18 +1988,22 @@ class FloatingControlService : Service() {
                     return
                 }
             }
-            val digits = range?.filter { it.isDigit() }?.ifEmpty { null } ?: resolveSmsRange()
-            if (digits == null) {
+            // Keep the wildcards. The X is part of the range the user typed;
+            // dropping it here used to write the stripped value back to
+            // PREF_SMS_LAST_RANGE and cost them the X on the next launch.
+            val typed = range?.trim()?.ifEmpty { null } ?: resolveSmsRange()
+            val parsed = typed?.let { smsSingleRange(it) }
+            if (parsed == null) {
                 toast("Paste a range first")
                 openSmsPopup()
                 return
             }
             try {
                 PreferenceManager.getDefaultSharedPreferences(this)
-                    .edit().putString(PREF_SMS_LAST_RANGE, digits).apply()
+                    .edit().putString(PREF_SMS_LAST_RANGE, typed).apply()
             } catch (_: Exception) {
             }
-            SmsWatcher.provision(digits) { n ->
+            SmsWatcher.provision(parsed.range, check = parsed.check) { n ->
                 if (n == null) {
                     toast("No numbers available, try again")
                 } else {
@@ -2025,21 +2030,19 @@ class FloatingControlService : Service() {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             val t = cm?.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim() ?: ""
             val m = Regex("""\+?[\dXx][\dXx\s.\-()]{2,}""").find(t)?.value
-            if (m != null && m.filter { it.isDigit() }.length >= 3) {
-                return m.filter { it.isDigit() }
-            }
+            if (m != null && smsSingleRange(m) != null) return m.trim()
         } catch (_: Exception) {
         }
         try {
             val last = PreferenceManager.getDefaultSharedPreferences(this)
                 .getString(PREF_SMS_LAST_RANGE, "") ?: ""
-            if (last.filter { it.isDigit() }.length >= 3) return last.filter { it.isDigit() }
+            if (smsSingleRange(last) != null) return last.trim()
         } catch (_: Exception) {
         }
         try {
             val top = SmsWatcher.countries.firstOrNull()
             val cand = top?.sampleRange?.ifEmpty { null } ?: top?.prefix ?: ""
-            if (cand.filter { it.isDigit() }.length >= 3) return cand.filter { it.isDigit() }
+            if (smsSingleRange(cand) != null) return cand
         } catch (_: Exception) {
         }
         return null

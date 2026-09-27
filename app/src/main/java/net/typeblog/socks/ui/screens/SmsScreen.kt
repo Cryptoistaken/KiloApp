@@ -36,7 +36,7 @@ import kotlinx.coroutines.delay
 import net.typeblog.socks.util.Constants.PREF_SMS_LAST_RANGE
 import net.typeblog.socks.util.SmsNum
 import net.typeblog.socks.util.SmsWatcher
-import net.typeblog.socks.util.smsIsRangePat
+import net.typeblog.socks.util.smsSingleRange
 
 /**
  * SMS tab — mirrors the kilosms mockup: main (analysis, hero range,
@@ -107,8 +107,9 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     }
 
     fun onGet(pat: String) {
-        if (smsIsRangePat(pat)) {
-            SmsWatcher.provision(pat.filter { it.isDigit() || it == 'X' || it == 'x' }) { n ->
+        val parsed = smsSingleRange(pat)
+        if (parsed != null) {
+            SmsWatcher.provision(parsed.range, check = parsed.check) { n ->
                 if (n != null) {
                     sheet = Sheet.Item(n)
                     tapCopy(n.display)
@@ -119,8 +120,10 @@ fun SmsScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    // A row that was screened re-screens when regenerated; a plain row stays
+    // plain, so the swipe never silently turns the check on.
     fun onRegen(n: SmsNum) {
-        SmsWatcher.provision(n.range, replaceId = n.id) { nn ->
+        SmsWatcher.provision(n.range, replaceId = n.id, check = n.fresh) { nn ->
             if (nn != null) {
                 sheet = Sheet.Item(nn)
                 tapCopy(nn.display)
@@ -169,11 +172,14 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 onOpenExpired = { sheet = Sheet.Item(it) },
                 onRegen = ::onRegen,
                 onRangeGo = { pat ->
-                    SmsWatcher.provision(pat) { nn ->
-                        if (nn != null) {
-                            search = ""
-                            sheet = Sheet.Item(nn)
-                            tapCopy(nn.display)
+                    val pr = smsSingleRange(pat)
+                    if (pr != null) {
+                        SmsWatcher.provision(pr.range, check = pr.check) { nn ->
+                            if (nn != null) {
+                                search = ""
+                                sheet = Sheet.Item(nn)
+                                tapCopy(nn.display)
+                            }
                         }
                     }
                 },
@@ -244,10 +250,13 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 is Sheet.Confirm -> ConfirmSheet(
                     country = sh.country, busy = busy,
                     onGet = { pat ->
-                        SmsWatcher.provision(pat) { n ->
-                            if (n != null) {
-                                sheet = Sheet.Item(n)
-                                tapCopy(n.display)
+                        val pr = smsSingleRange(pat)
+                        if (pr != null) {
+                            SmsWatcher.provision(pr.range, check = pr.check) { n ->
+                                if (n != null) {
+                                    sheet = Sheet.Item(n)
+                                    tapCopy(n.display)
+                                }
                             }
                         }
                     },

@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,12 +48,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
 import net.typeblog.socks.R
 import net.typeblog.socks.ui.components.SsBanner
 import net.typeblog.socks.ui.components.SsBannerStatus
 import net.typeblog.socks.util.SmsNum
-import net.typeblog.socks.util.smsIsRangePat
+import net.typeblog.socks.util.smsSingleRange
 import net.typeblog.socks.util.smsTimeAgo
 import java.util.Calendar
 import kotlin.math.roundToInt
@@ -198,6 +201,7 @@ internal fun MainPage(
     // arriving OTP mutates the instance already inside the list and
     // remember(mine, expired) never invalidates on equal contents.
     val all = remember(revision) { mine + expired }
+    val parsed = remember(rangeText) { smsSingleRange(rangeText) }
     val recent = remember(revision) { all.flatMap { n -> n.msgs.map { n to it } }.sortedByDescending { it.second.at } }
     val otpCount = all.sumOf { it.msgs.size }
     val total = all.size
@@ -236,6 +240,32 @@ internal fun MainPage(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(6.dp))
+                // Read-out, not a control: the typed range decides the state,
+                // so the two can never disagree. Disabled while the text is
+                // not a range at all.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.height(20.dp)
+                ) {
+                    Checkbox(
+                        checked = parsed?.check == true,
+                        onCheckedChange = null,
+                        enabled = parsed != null,
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = MaterialTheme.colorScheme.onSurface,
+                            uncheckedColor = Color.Transparent,
+                            checkmarkColor = MaterialTheme.colorScheme.surface,
+                        ),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "generate fresh number",
+                        fontSize = 11.sp,
+                        color = if (parsed != null) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = { onGet(rangeText.trim()) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                     Text(if (busy) "..." else "Get number")
@@ -317,10 +347,13 @@ internal fun NumsPage(
             modifier = Modifier.fillMaxWidth()
         )
         val q = search.trim()
-        if (smsIsRangePat(q)) {
+        // One parser for every entry point, so a C suffix typed here is a
+        // valid search and not a silent no-op.
+        val rangeHit = smsSingleRange(q)
+        if (rangeHit != null) {
             Spacer(Modifier.height(8.dp))
             Button(onClick = { onRangeGo(q.uppercase()) }, modifier = Modifier.fillMaxWidth()) {
-                Text("Get Facebook number - ${q.uppercase()}")
+                Text("Get Facebook number - ${rangeHit.range}")
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -423,6 +456,14 @@ internal fun StatsPage(
                 StatTile("Wait", avgWait, Modifier.weight(1f))
                 StatTile("Active", mine.size.toString(), Modifier.weight(1f))
                 StatTile("Expired", expired.size.toString(), Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(8.dp))
+            // Fresh-check session totals. A plain get never moves these, so
+            // for someone who never types the C they simply read zero.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatTile("Checked", SmsWatcher.checkedCount.toString(), Modifier.weight(1f))
+                StatTile("Fresh", SmsWatcher.freshCount.toString(), Modifier.weight(1f))
+                StatTile("Skipped", SmsWatcher.skippedCount.toString(), Modifier.weight(1f))
             }
             Spacer(Modifier.height(12.dp))
             Text(

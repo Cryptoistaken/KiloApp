@@ -45,6 +45,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -92,6 +93,31 @@ private fun subLine(n: SmsNum, now: Long): String {
     val base = if (n.code != null && n.svc.isNotEmpty()) "${n.svc} - ${n.country}" else n.country
     return "$base - ${smsTimeAgo(n.born, now)}"
 }
+
+/**
+ * Row subtitle, with a leading Fresh marker when the number was screened.
+ * The marker is a prefix on the existing string, so the right-hand slot keeps
+ * the spinner / code / expired it already had. Two composables would have
+ * broken the line mid-sentence, hence one annotated string.
+ */
+private fun subLineText(n: SmsNum, now: Long): AnnotatedString {
+    val body = " - " + subLine(n, now) + if (isExpired(n, now)) " - expired" else ""
+    return if (n.fresh) {
+        buildAnnotatedString {
+            withStyle(SpanStyle(color = CodeGreen, fontWeight = FontWeight.SemiBold)) {
+                append("Fresh")
+            }
+            append(body)
+        }
+    } else {
+        buildAnnotatedString {
+            append(subLine(n, now))
+            if (isExpired(n, now)) append(" - expired")
+        }
+    }
+}
+
+private fun isExpired(n: SmsNum, now: Long) = n.born + SMS_EXPIRE_SEC * 1000 <= now
 
 internal data class MethodCount(val method: String, val label: String, val hits: Int)
 internal data class CountryRow(val country: SmsCountry, val hits: Int)
@@ -195,8 +221,15 @@ internal fun MineRow(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    val isExpired = n.born + SMS_EXPIRE_SEC * 1000 <= now
-    SwipeBox(onRight = { onOpen(n) }, onLeft = { onRegen(n) }) {
+    val expired = isExpired(n, now)
+    // Both directions generate from the row's own range. The gesture has one
+    // meaning, so there is no wrong side to learn; the row tap still opens.
+    SwipeBox(
+        onRight = { onRegen(n) },
+        onLeft = { onRegen(n) },
+        rightLabel = "Generate",
+        leftLabel = "Generate",
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp))
@@ -221,7 +254,7 @@ internal fun MineRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = subLine(n, now) + if (isExpired) " - expired" else "",
+                    text = subLineText(n, now),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -239,7 +272,7 @@ internal fun MineRow(
                         onCopy(n.code!!)
                     }
                 )
-            } else if (isExpired) {
+            } else if (expired) {
                 Text(
                     text = "expired",
                     color = MaterialTheme.colorScheme.error,
@@ -263,7 +296,12 @@ internal fun ReceivedRow(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    SwipeBox(onRight = { onOpen(n) }, onLeft = { onRegen(n) }) {
+    SwipeBox(
+        onRight = { onRegen(n) },
+        onLeft = { onRegen(n) },
+        rightLabel = "Generate",
+        leftLabel = "Generate",
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp))
@@ -445,11 +483,11 @@ internal fun ItemSheet(
     onCopy: (String) -> Unit,
     copied: String?,
 ) {
-    val isExpired = num.born + SMS_EXPIRE_SEC * 1000 <= now
-    val sub = subLine(num, now) + if (isExpired) " - expired" else ""
+    val expired = isExpired(num, now)
+    val sub = subLineText(num, now)
     val code = num.code
     val left = ((num.born + SMS_EXPIRE_SEC * 1000 - now) / 1000).coerceAtLeast(0)
-    val waiting = num.code == null && !isExpired
+    val waiting = num.code == null && !expired
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -483,7 +521,7 @@ internal fun ItemSheet(
             }
         }
         Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-            ExpiryRing(left, SMS_EXPIRE_SEC, isExpired)
+            ExpiryRing(left, SMS_EXPIRE_SEC, expired)
         }
         if (waiting) {
             Text(
