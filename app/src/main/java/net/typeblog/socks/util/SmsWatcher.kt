@@ -625,6 +625,9 @@ object SmsWatcher {
                         // A check that could not run tells us nothing about
                         // the number. Stop rather than guess.
                         SmsLog.log(app, "CHECK", "${c.full} -> UNKNOWN (${r.error})")
+                        // tries counts this number too, and only the numbers
+                        // probed so far. Adding the cap instead made one
+                        // failure look like five checks.
                         bumpChecked(tries)
                         // A probe Facebook refuses usually means this device
                         // is not leaving through a rotating exit. Starting the

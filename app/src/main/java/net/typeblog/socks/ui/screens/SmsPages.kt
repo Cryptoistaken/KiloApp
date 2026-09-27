@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -251,7 +252,7 @@ internal fun MainPage(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .height(20.dp)
+                        .defaultMinSize(minHeight = 28.dp)
                         .toggleable(
                             value = parsed?.check == true,
                             enabled = parsed != null,
@@ -267,11 +268,13 @@ internal fun MainPage(
                     // and a transparent unchecked fill leaves the box
                     // invisible. Draw the outline as an overlay so it lines up
                     // with the indicator rather than sitting beside it.
-                    Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                    // 14dp against 10sp text: the stock 18dp indicator read as
+                    // big next to a caption-sized label.
+                    Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
                         if (parsed?.check != true) {
                             Box(
                                 Modifier
-                                    .size(16.dp)
+                                    .size(13.dp)
                                     .border(
                                         1.5.dp,
                                         MaterialTheme.colorScheme.onSurfaceVariant,
@@ -288,13 +291,13 @@ internal fun MainPage(
                                 uncheckedColor = Color.Transparent,
                                 checkmarkColor = MaterialTheme.colorScheme.surface,
                             ),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = "generate fresh number",
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         color = if (parsed != null) MaterialTheme.colorScheme.onSurface
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     )
