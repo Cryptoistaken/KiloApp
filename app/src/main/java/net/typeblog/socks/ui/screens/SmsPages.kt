@@ -54,6 +54,7 @@ import net.typeblog.socks.R
 import net.typeblog.socks.ui.components.SsBanner
 import net.typeblog.socks.ui.components.SsBannerStatus
 import net.typeblog.socks.util.SmsNum
+import net.typeblog.socks.util.SmsWatcher
 import net.typeblog.socks.util.smsSingleRange
 import net.typeblog.socks.util.smsTimeAgo
 import java.util.Calendar
