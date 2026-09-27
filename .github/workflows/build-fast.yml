@@ -10,6 +10,19 @@ concurrency:
 on:
   push:
     branches: [ "master" ]
+    # Allowlist, not a denylist: only paths Gradle actually reads may start a
+    # build. Commits that touch the Go gateway, Railway config, docs, plan.md
+    # or the in-progress monitor script must not burn an Android build. Adding
+    # a new non-Android top-level dir is then free by default.
+    paths:
+      - "app/**"                        # sources, res, jni, proguard rules
+      - "gradle/**"                     # wrapper dist + any future version catalog
+      - "gradle.properties"             # JVM args, AndroidX/R8 flags
+      - "build.gradle"                  # root plugins: AGP 9.2.1, Kotlin, hotreload
+      - "settings.gradle"               # include ':app'
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/build-fast.yml"  # so a fix to this lane self-tests
   workflow_dispatch:
 
 jobs:
