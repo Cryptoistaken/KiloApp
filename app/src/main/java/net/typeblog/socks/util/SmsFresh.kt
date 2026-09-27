@@ -69,17 +69,20 @@ object SmsFresh {
                 setRequestProperty("Accept-Language", "en-US,en;q=0.9")
                 setRequestProperty("Origin", "https://www.facebook.com")
                 setRequestProperty("Referer", "https://www.facebook.com/login/identify/")
+                // Facebook 400s this endpoint without the Sec-Fetch trio.
+                // Confirmed by A/B on a direct call: the same body and the
+                // same doc_id return 400 without these three and 200 with
+                // them, so the on-device probe needs no proxy after all.
+                setRequestProperty("Sec-Fetch-Dest", "empty")
+                setRequestProperty("Sec-Fetch-Mode", "cors")
+                setRequestProperty("Sec-Fetch-Site", "same-origin")
             }
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body(p)) }
 
             val code = conn.responseCode
             if (code !in 200..299) {
-                // Facebook answers 400 with an HTML error page when the
-                // request never gets past its edge, which is what a blocked
-                // or non-rotated egress IP looks like. That is the usual
-                // cause here, not a malformed body, so say so plainly.
                 Log.w(TAG, "graphql -> $code for $p")
-                return Result(false, false, "blocked by Facebook (HTTP $code)")
+                return Result(false, false, "HTTP $code")
             }
             var text = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
             // Facebook's JSON responses are anti-hijack padded.
