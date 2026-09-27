@@ -54,3 +54,6 @@ floating-bubble-demo.html
 
 # Downloaded Android docs cache (offline reference)
 .androiddocs/
+
+# Archived third-party repos (own .git, read-only reference)
+/archive/
