@@ -74,8 +74,12 @@ object SmsFresh {
 
             val code = conn.responseCode
             if (code !in 200..299) {
-                Log.w(TAG, "graphql -> $code")
-                return Result(false, false, "HTTP $code")
+                // Facebook answers 400 with an HTML error page when the
+                // request never gets past its edge, which is what a blocked
+                // or non-rotated egress IP looks like. That is the usual
+                // cause here, not a malformed body, so say so plainly.
+                Log.w(TAG, "graphql -> $code for $p")
+                return Result(false, false, "blocked by Facebook (HTTP $code)")
             }
             var text = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
             // Facebook's JSON responses are anti-hijack padded.

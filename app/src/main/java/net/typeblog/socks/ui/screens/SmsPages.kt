@@ -9,6 +9,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -241,13 +243,24 @@ internal fun MainPage(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(6.dp))
-                // Read-out, not a control: the typed range decides the state,
-                // so the two can never disagree. Disabled while the text is
-                // not a range at all.
+                Spacer(Modifier.height(8.dp))
+                // Writable in both directions: tapping the box appends or
+                // removes the C, and typing a C ticks it. Both go through
+                // onRange, so the field and the box cannot disagree.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.height(20.dp)
+                    modifier = Modifier
+                        .height(20.dp)
+                        .toggleable(
+                            value = parsed?.check == true,
+                            enabled = parsed != null,
+                            role = Role.Checkbox,
+                            onValueChange = { want ->
+                                val base = rangeText.trim().uppercase()
+                                    .replace(Regex("C\\d{0,2}$"), "")
+                                onRange(if (want) base + "C" else base)
+                            }
+                        )
                 ) {
                     Checkbox(
                         checked = parsed?.check == true,
@@ -256,10 +269,12 @@ internal fun MainPage(
                         colors = CheckboxDefaults.colors(
                             checkedColor = MaterialTheme.colorScheme.onSurface,
                             uncheckedColor = Color.Transparent,
+                            uncheckedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             checkmarkColor = MaterialTheme.colorScheme.surface,
                         ),
                         modifier = Modifier.size(18.dp)
                     )
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         text = "generate fresh number",
                         fontSize = 11.sp,

@@ -626,7 +626,14 @@ object SmsWatcher {
                         // the number. Stop rather than guess.
                         SmsLog.log(app, "CHECK", "${c.full} -> UNKNOWN (${r.error})")
                         bumpChecked(tries)
-                        fail("Fresh check unavailable, try again")
+                        // A probe Facebook refuses usually means this device
+                        // is not leaving through a rotating exit. Starting the
+                        // VPN is the fix, so name it rather than saying
+                        // "try again" and leaving the user guessing.
+                        fail(if (r.error?.contains("blocked") == true)
+                            "Facebook blocked the check. Start the VPN and try again."
+                        else
+                            "Fresh check unavailable, try again")
                         app?.let { SmsNotify.buzzFail(it) }
                         busy = false
                         onDone(null)
