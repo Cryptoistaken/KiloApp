@@ -3,6 +3,7 @@ package net.typeblog.socks.ui.screens
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.Alignment
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
