@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
@@ -262,18 +263,34 @@ internal fun MainPage(
                             }
                         )
                 ) {
-                    Checkbox(
-                        checked = parsed?.check == true,
-                        onCheckedChange = null,
-                        enabled = parsed != null,
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = MaterialTheme.colorScheme.onSurface,
-                            uncheckedColor = Color.Transparent,
-                            uncheckedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            checkmarkColor = MaterialTheme.colorScheme.surface,
-                        ),
-                        modifier = Modifier.size(18.dp)
-                    )
+                    // This M3 version's colors() has no uncheckedBorderColor,
+                    // and a transparent unchecked fill leaves the box
+                    // invisible. Draw the outline as an overlay so it lines up
+                    // with the indicator rather than sitting beside it.
+                    Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                        if (parsed?.check != true) {
+                            Box(
+                                Modifier
+                                    .size(16.dp)
+                                    .border(
+                                        1.5.dp,
+                                        MaterialTheme.colorScheme.onSurfaceVariant,
+                                        RoundedCornerShape(2.dp)
+                                    )
+                            )
+                        }
+                        Checkbox(
+                            checked = parsed?.check == true,
+                            onCheckedChange = null,
+                            enabled = parsed != null,
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = MaterialTheme.colorScheme.onSurface,
+                                uncheckedColor = Color.Transparent,
+                                checkmarkColor = MaterialTheme.colorScheme.surface,
+                            ),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = "generate fresh number",
