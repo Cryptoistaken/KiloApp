@@ -2,7 +2,6 @@ package net.typeblog.socks.ui.screens.sheet
 
 import android.content.Context
 import android.net.Uri
-import android.provider.OpenableColumns
 import android.util.Xml
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -33,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.typeblog.socks.R
+import net.typeblog.socks.util.DocNames
 import net.typeblog.socks.util.sheet.DGD_PASSWORD
 import net.typeblog.socks.util.sheet.LOVE_PASSWORD
 import net.typeblog.socks.util.sheet.MAX_GRID_ROWS
@@ -446,7 +446,7 @@ fun importDraft(
 }
 
 fun parseUpload(appCtx: Context, uri: Uri): UploadDraft? {
-    val name = queryName(appCtx, uri) ?: "upload.xlsx"
+    val name = DocNames.query(appCtx, uri) ?: "upload.xlsx"
     if (!name.lowercase().endsWith(".xlsx") && !name.lowercase().endsWith(".xls")) {
         return null
     }
@@ -504,18 +504,6 @@ fun parseUpload(appCtx: Context, uri: Uri): UploadDraft? {
     )
 }
 
-private fun queryName(appCtx: Context, uri: Uri): String? {
-    return try {
-        appCtx.contentResolver.query(uri, null, null, null, null)?.use { c ->
-            if (!c.moveToFirst()) return null
-            val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (i < 0) return null
-            c.getString(i)
-        }
-    } catch (e: Exception) {
-        null
-    }
-}
 
 private fun parseXlsxTable(bytes: ByteArray): List<List<String>>? {
     var sharedXml: ByteArray? = null

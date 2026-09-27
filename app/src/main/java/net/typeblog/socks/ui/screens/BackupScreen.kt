@@ -2,7 +2,6 @@ package net.typeblog.socks.ui.screens
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.WindowInsets
@@ -45,6 +44,7 @@ import net.typeblog.socks.ui.components.rememberPref
 import net.typeblog.socks.ui.screens.sheet.toast
 import net.typeblog.socks.util.Constants.PREF_BACKUP_DIR
 import net.typeblog.socks.util.Constants.PREF_BACKUP_ENABLED
+import net.typeblog.socks.util.DocNames
 import net.typeblog.socks.util.sheet.SheetBackup
 import net.typeblog.socks.util.sheet.SheetStore
 
@@ -141,22 +141,6 @@ fun BackupScreen(
         }
     }
 
-    // A picked file has to be asked for its name, not read off the uri: a
-    // MediaStore document uri ends in its numeric id, so the confirmation used
-    // to say "document:1000000127" instead of the file the user chose.
-    fun displayName(uri: Uri): String {
-        val queried = try {
-            context.contentResolver
-                .query(uri, arrayOf("_display_name"), null, null, null)
-                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-        } catch (_: Exception) {
-            null
-        }
-        return queried?.takeIf { it.isNotBlank() }
-            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
-            ?: "the file you picked"
-    }
-
     val folderLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -185,7 +169,8 @@ fun BackupScreen(
                     val bytes = context.contentResolver.openInputStream(uri)
                         ?.use { it.readBytes() } ?: return@withContext null
                     // SheetBackup.parse sniffs JSON vs workbook by content.
-                    Triple(bytes, SheetBackup.parse(bytes), displayName(uri))
+                    val name = DocNames.display(context, uri, "the file you picked")
+                    Triple(bytes, SheetBackup.parse(bytes), name)
                 } catch (_: Exception) {
                     null
                 }
