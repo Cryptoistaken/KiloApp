@@ -1,5 +1,8 @@
 package net.typeblog.socks.ui.screens
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -142,6 +145,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
         ) sheet = null
     }
 
+    Box(modifier.fillMaxSize()) {
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (page) {
             0 -> MainPage(
@@ -202,12 +206,23 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 onCopy = ::tapCopy, copied = copied
             )
         }
+    }
+        // Overlay, not a sibling below the list: MainPage is a LazyColumn
+        // that fills the screen, so anything after it renders off-screen and
+        // the fresh-check failure was invisible.
         if (error.isNotEmpty() && now - errorAt < 5000) {
             Text(
                 text = error,
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(vertical = 4.dp)
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .background(
+                        MaterialTheme.colorScheme.surface,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
             )
         }
     }
