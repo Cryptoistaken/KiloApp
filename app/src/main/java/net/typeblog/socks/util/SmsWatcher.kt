@@ -612,9 +612,39 @@ object SmsWatcher {
         paused = false
         busy = true
         scope.launch {
-            var found: SmsGateway.GatewayNumber? = null
-            var screened = false
+            // Every number the provider hands us is kept and listed, whether
+            // or not it passed the probe. A USED number is still a number the
+            // user paid for, and hiding it made the Skipped counter the only
+            // trace that anything had happened.
+            val kept = mutableListOf<SmsNum>()
+            var winner: SmsNum? = null
             var tries = 0
+
+            fun keep(g: SmsGateway.GatewayNumber, screened: Boolean): SmsNum {
+                val (name, flag) = smsCountryForPrefix(pat.replace("X", "").replace("x", ""))
+                val actualName = if (g.country.isNotEmpty() && g.country != "Unknown") g.country else name
+                val n = SmsNum(
+                    id = nextId++,
+                    display = g.display.replace(" ", "").ifEmpty { "+" + g.full },
+                    full = g.full,
+                    country = actualName,
+                    flag = flag,
+                    range = pat.uppercase(),
+                    born = System.currentTimeMillis(),
+                    fresh = screened,
+                )
+                if (replaceId != null) {
+                    mine.removeAll { it.id == replaceId }
+                    expired.removeAll { it.id == replaceId }
+                }
+                mine.add(0, n)
+                kept.add(n)
+                publishWaitingNumbers()
+                save()
+                SmsLog.log(app, "GET", "provisioned ${n.display} range=$pat fresh=$screened")
+                return n
+            }
+
             if (check) {
                 while (tries < SMS_FRESH_MAX_TRIES) {
                     tries++
@@ -623,35 +653,38 @@ object SmsWatcher {
                     val r = withContext(Dispatchers.IO) { SmsFresh.check(c.full) }
                     if (!r.ok) {
                         // A check that could not run tells us nothing about
-                        // the number. Stop rather than guess.
+                        // the number. Keep it listed and stop rather than
+                        // guess at its state.
                         SmsLog.log(app, "CHECK", "${c.full} -> UNKNOWN (${r.error})")
-                        // tries counts this number too, and only the numbers
-                        // probed so far.
                         bumpChecked(tries)
+                        keep(c, false)
+                        busy = false
                         fail("Fresh check unavailable, try again")
                         app?.let { SmsNotify.buzzFail(it) }
-                        busy = false
-                        onDone(null)
+                        onDone(kept.lastOrNull())
                         return@launch
                     }
                     if (r.fresh) {
-                        found = c
-                        screened = true
                         bumpFresh()
+                        winner = keep(c, true)
                         break
                     }
+                    // Not fresh, but still listed so the user can see what
+                    // was spent. The loop continues for a fresh one.
                     bumpSkipped(1)
-                    SmsLog.log(app, "CHECK", "${c.full} -> USED, skipped")
+                    SmsLog.log(app, "CHECK", "${c.full} -> USED, kept in list")
+                    keep(c, false)
                 }
                 bumpChecked(tries)
             } else {
-                found = withContext(Dispatchers.IO) { SmsGateway.provision(pat) }
+                val g = withContext(Dispatchers.IO) { SmsGateway.provision(pat) }
+                if (g != null && g.full.isNotEmpty()) winner = keep(g, false)
             }
+
             busy = false
-            val g = found
-            if (g == null || g.full.isEmpty()) {
+            if (kept.isEmpty()) {
                 if (check) {
-                    fail("No fresh numbers found after checking $tries numbers for $pat")
+                    fail("No numbers available for $pat")
                 } else {
                     fail("No numbers available, try again")
                 }
@@ -660,31 +693,18 @@ object SmsWatcher {
                 onDone(null)
                 return@launch
             }
-            val (name, flag) = smsCountryForPrefix(pat.replace("X", "").replace("x", ""))
-            val actualName = if (g.country.isNotEmpty() && g.country != "Unknown") g.country else name
-            val n = SmsNum(
-                id = nextId++,
-                display = g.display.replace(" ", "").ifEmpty { "+" + g.full },
-                full = g.full,
-                country = actualName,
-                flag = flag,
-                range = pat.uppercase(),
-                born = System.currentTimeMillis(),
-                fresh = screened,
-            )
-            if (replaceId != null) {
-                mine.removeAll { it.id == replaceId }
-                expired.removeAll { it.id == replaceId }
+            if (check && winner == null) {
+                // Every number was usable, none were fresh. They are all in
+                // the list; say so rather than implying nothing happened.
+                fail("No fresh numbers in $tries checked for $pat, all kept in My numbers")
             }
-            mine.add(0, n)
-            publishWaitingNumbers()
-            save()
-            SmsLog.log(app, "GET", "provisioned ${n.display} range=$pat fresh=$screened")
             app?.let {
                 SmsOtpService.start(it)
                 armHeartbeat(it)
             }
-            onDone(n)
+            // Hand back the fresh one when there is one, otherwise the last
+            // number, so the sheet always opens on something real.
+            onDone(winner ?: kept.last())
         }
     }
 
