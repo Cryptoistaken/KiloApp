@@ -93,7 +93,9 @@ object SmsFresh {
                 ?: return Result(false, false, "Empty response")
             val accounts = search.optJSONArray("accounts")
             val found = accounts != null && accounts.length() > 0
-            Log.i(TAG, "$p -> ${if (found) "USED" else "FRESH"}")
+            // Log the parsed payload, not just the verdict: a log that only
+            // says FRESH cannot be told apart from a stub that hardcodes it.
+            Log.i(TAG, "$p -> ${if (found) "USED" else "FRESH"} | $text")
             Result(true, !found)
         } catch (e: Exception) {
             Log.w(TAG, "graphql failed: ${e.message}")
