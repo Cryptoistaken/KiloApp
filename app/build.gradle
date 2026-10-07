@@ -217,6 +217,7 @@ dependencies {
     // credentials stays on 1.5.0: 1.6 moved minSdk 21 to 23, we support 21.
     implementation 'androidx.credentials:credentials:1.5.0'
     implementation 'androidx.credentials:credentials-play-services-auth:1.5.0'
+    implementation 'com.google.android.libraries.identity.googleid:googleid:1.1.1'
     implementation 'com.google.android.gms:play-services-auth:22.0.0'
     // Exact spring physics for the circle-menu item motion (stiffness/damping
     // ported from the HTML mockup's motion config).

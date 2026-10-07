@@ -24,6 +24,7 @@ import net.typeblog.socks.util.Constants.PREF_DRIVE_LAST_AT
 import net.typeblog.socks.util.Constants.PREF_DRIVE_LAST_ERROR
 import org.json.JSONObject
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 // Phase 1: Google identity + Drive permission. Sign-in (Credential Manager),
 // Drive grant (AuthorizationClient, drive.file only), folder ensure (plain
