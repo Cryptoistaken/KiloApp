@@ -99,6 +99,14 @@ object Constants {
     // leaving an orphan in Downloads forever.
     const val PREF_BACKUP_XLSX = "backup_xlsx_names"
 
+    // Google Drive sync (Phase 1: auth core). DRIVE_ACCOUNT holds the signed
+    // in email, DRIVE_FOLDER_IDS caches root+child folder ids as JSON.
+    const val PREF_DRIVE_ACCOUNT = "drive_account"
+    const val PREF_DRIVE_ENABLED = "drive_enabled"
+    const val PREF_DRIVE_FOLDER_IDS = "drive_folder_ids"
+    const val PREF_DRIVE_LAST_AT = "drive_last_at"
+    const val PREF_DRIVE_LAST_ERROR = "drive_last_error"
+
     // Split-tunnel: single Include-only mode. Global keys (PREF_ADV_*) are the
     // single source of truth (written by SplitTunnelingScreen); the legacy
     // Exclude/Include selector is gone and the engine forces bypass=false.

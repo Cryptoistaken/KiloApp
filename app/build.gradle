@@ -53,6 +53,12 @@ android {
         buildConfigField "String", "SMS_GATEWAY_URL", '"' + ((smsGatewayUrl != null && smsGatewayUrl.length() > 0) ? smsGatewayUrl : "https://kiloapp.up.railway.app") + '"'
         def smsApiKey = System.getenv('SMS_API_KEY')
         buildConfigField "String", "SMS_API_KEY", '"' + ((smsApiKey != null) ? smsApiKey : "") + '"'
+        // Google Drive sync: Web OAuth client ID (GitHub secret
+        // DRIVE_WEB_CLIENT_ID, else local -PDRIVE_WEB_CLIENT_ID; empty =
+        // Drive section hides itself and the app works as today).
+        def driveWebId = System.getenv('DRIVE_WEB_CLIENT_ID')
+        if (driveWebId == null) driveWebId = project.findProperty('DRIVE_WEB_CLIENT_ID')?.toString()
+        buildConfigField "String", "DRIVE_WEB_CLIENT_ID", '"' + ((driveWebId != null) ? driveWebId : "") + '"'
         minSdk 21
         targetSdk 36
         versionCode baseVersionCode
@@ -206,6 +212,12 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.preference:preference-ktx:1.2.1'
     implementation 'androidx.activity:activity-ktx:1.9.0'
+    // Google sign-in (Credential Manager) + Drive permission (Authorization).
+    // Drive file calls use plain REST (SheetChecker-style), no Drive SDK.
+    // credentials stays on 1.5.0: 1.6 moved minSdk 21 to 23, we support 21.
+    implementation 'androidx.credentials:credentials:1.5.0'
+    implementation 'androidx.credentials:credentials-play-services-auth:1.5.0'
+    implementation 'com.google.android.gms:play-services-auth:22.0.0'
     // Exact spring physics for the circle-menu item motion (stiffness/damping
     // ported from the HTML mockup's motion config).
     implementation 'androidx.dynamicanimation:dynamicanimation:1.1.0'

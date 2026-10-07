@@ -138,6 +138,7 @@ jobs:
           KILO_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           SMS_API_KEY: ${{ secrets.SMS_API_KEY }}
           SMS_GATEWAY_URL: ${{ secrets.SMS_GATEWAY_URL }}
+          DRIVE_WEB_CLIENT_ID: ${{ secrets.DRIVE_WEB_CLIENT_ID }}
 
       # Publish as a real v<versionCode> release: the in-app updater reads
       # releases/latest and only accepts v<number> tags, picking the arm64
