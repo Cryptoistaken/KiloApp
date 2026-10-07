@@ -109,7 +109,7 @@ fun BackupScreen(
     var staged by remember { mutableStateOf<StagedBackup?>(null) }
     // Consent continuation: when Google answers authorize with "show the
     // consent screen", the flow pauses here and resumes after it returns OK.
-    var retryAfterConsent by remember { mutableStateOf<suspend () -> Unit?>(null) }
+    var retryAfterConsent by remember { mutableStateOf<suspend (() -> Unit)?>(null) }
 
     // Pairs the bytes with the current state, so the dialog can show what
     // replacing would gain as well as what it would drop.
