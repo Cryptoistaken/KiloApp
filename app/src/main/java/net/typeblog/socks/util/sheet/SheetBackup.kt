@@ -187,6 +187,10 @@ object SheetBackup {
                     written = bytes.size
                 }
             }
+            // Paths the last run produced, before this run overwrites the
+            // tracker: the Drive mirror prunes from the same set, so a
+            // renamed file leaves no orphan in either destination.
+            val prevPaths = trackedPaths(app)
             pruneDownloads(app, artifacts.keys)
 
             // The user-picked folder is written flat: the Storage Access
@@ -210,6 +214,9 @@ object SheetBackup {
                 }
                 if (error != null) putString(PREF_BACKUP_LAST_ERROR, error) else remove(PREF_BACKUP_LAST_ERROR)
             }.apply()
+            // Drive mirror rides the same snapshot and bytes; it never throws,
+            // so a Drive failure cannot take the local backup down with it.
+            DriveSync.maybeAutoPush(app, snap.at, artifacts, prevPaths)
             written
         } catch (e: Exception) {
             Log.e(TAG, "Backup failed", e)
@@ -218,7 +225,7 @@ object SheetBackup {
         }
     }
 
-    private fun artifacts(context: Context, s: BackupSnapshot): Map<String, ByteArray> {
+    internal fun artifacts(context: Context, s: BackupSnapshot): Map<String, ByteArray> {
         val out = linkedMapOf<String, ByteArray>()
         out[REL_JSON] = toJson(s).toByteArray(Charsets.UTF_8)
         out[REL_ALL] = SheetBackupXlsx.write(s)
@@ -261,6 +268,12 @@ object SheetBackup {
      *  folder, so a file the user put there themselves is never touched. The
      *  previous flat layout is in that list too, so moving into subfolders
      *  clears the root on the first run instead of leaving a stale copy. */
+    internal fun trackedPaths(context: Context): Set<String> = try {
+        prefs(context.applicationContext).getStringSet(PREF_BACKUP_XLSX, emptySet()).orEmpty().toSet()
+    } catch (_: Exception) {
+        emptySet()
+    }
+
     private fun pruneDownloads(context: Context, keep: Set<String>) {
         val app = context.applicationContext
         val previous = try {
@@ -294,7 +307,7 @@ object SheetBackup {
      *  replace-by-name misses that row forever - the next write finds the
      *  name taken and inserts "name (1)", so the folder grows a duplicate per
      *  backup run. */
-    private fun mimeFor(name: String): String = when {
+    internal fun mimeFor(name: String): String = when {
         name.endsWith(".json") -> JSON_MIME
         name.endsWith(".txt") -> "text/plain"
         else -> XLSX_MIME
