@@ -1,8 +1,0 @@
-{
-  "name": "kiloapp-railway",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "railway": "latest"
-  }
-}
