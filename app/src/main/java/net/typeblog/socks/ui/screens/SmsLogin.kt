@@ -71,7 +71,7 @@ internal fun SmsLoginGate() {
             }
             if (cookie != null) {
                 SmsAuth.saveSession(cookie)
-                SmsWatcher.setLoggedIn(true)
+                SmsWatcher.loggedIn = true
                 SmsWatcher.refreshNow()
             } else {
                 error = "Not yet verified. Tap Login in the bot and try again."

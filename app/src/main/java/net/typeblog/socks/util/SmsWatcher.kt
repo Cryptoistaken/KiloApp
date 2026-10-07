@@ -377,11 +377,6 @@ object SmsWatcher {
     var revision by mutableLongStateOf(0L)
     var loggedIn by mutableStateOf(false)
 
-    fun setLoggedIn(value: Boolean) {
-        loggedIn = value
-        revision++
-    }
-
     /** Immediate feed refresh, e.g. right after login instead of the 60s tick. */
     fun refreshNow() {
         if (loggedIn) loadFeed()
@@ -550,7 +545,7 @@ object SmsWatcher {
         app = context.applicationContext
         store = app!!.getSharedPreferences("sms_store", Context.MODE_PRIVATE)
         SmsAuth.init(context)
-        setLoggedIn(SmsAuth.session().isNotEmpty())
+        loggedIn = SmsAuth.session().isNotEmpty()
         load()
         loadCounters()
         scope.launch {
