@@ -46,13 +46,11 @@ android {
         // from BuildConfig, so forks never need a code edit to point at
         // their own release feed.
         buildConfigField "String", "UPDATE_REPO", '"Cryptoistaken/KiloApp"'
-        // SMS gateway (Go backend on Railway): base URL baked with env
-        // override; the global app key comes ONLY from the SMS_API_KEY env
-        // (CI secret) so it is never committed to the repo.
-        def smsGatewayUrl = System.getenv('SMS_GATEWAY_URL')
-        buildConfigField "String", "SMS_GATEWAY_URL", '"' + ((smsGatewayUrl != null && smsGatewayUrl.length() > 0) ? smsGatewayUrl : "https://kiloapp.up.railway.app") + '"'
-        def smsApiKey = System.getenv('SMS_API_KEY')
-        buildConfigField "String", "SMS_API_KEY", '"' + ((smsApiKey != null) ? smsApiKey : "") + '"'
+        // SMS backend (KiloSMS bot ext API): base URL baked with env
+        // override. Auth is the Telegram-login session cookie, so no key
+        // is ever committed to the repo.
+        def kilosmsUrl = System.getenv('KILOSMS_URL')
+        buildConfigField "String", "KILOSMS_URL", '"' + ((kilosmsUrl != null && kilosmsUrl.length() > 0) ? kilosmsUrl : "https://prod-main-kilosms-27c3da-204683amqy6.compute.instacloud-edge.com") + '"'
         // Google Drive sync: Web OAuth client ID (GitHub secret
         // DRIVE_WEB_CLIENT_ID, else local -PDRIVE_WEB_CLIENT_ID; empty =
         // Drive section hides itself and the app works as today).

@@ -95,10 +95,10 @@ private fun subLine(n: SmsNum, now: Long): String {
 }
 
 /**
- * Row subtitle, with a leading Fresh marker when the number was screened.
- * The marker is a prefix on the existing string, so the right-hand slot keeps
- * the spinner / code / expired it already had. Two composables would have
- * broken the line mid-sentence, hence one annotated string.
+ * Row subtitle, with a leading Fresh/Used marker when the number was
+ * screened. The marker is a prefix on the existing string, so the right-hand
+ * slot keeps the spinner / code / expired it already had. Two composables
+ * would have broken the line mid-sentence, hence one annotated string.
  */
 private fun subLineText(n: SmsNum, now: Long): AnnotatedString {
     val body = " - " + subLine(n, now) + if (isExpired(n, now)) " - expired" else ""
@@ -107,6 +107,11 @@ private fun subLineText(n: SmsNum, now: Long): AnnotatedString {
             withStyle(SpanStyle(color = CodeGreen, fontWeight = FontWeight.SemiBold)) {
                 append("Fresh")
             }
+            append(body)
+        }
+    } else if (n.used) {
+        buildAnnotatedString {
+            append("Used")
             append(body)
         }
     } else {

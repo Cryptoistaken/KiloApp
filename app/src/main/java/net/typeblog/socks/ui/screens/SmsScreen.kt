@@ -102,6 +102,12 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     val busy = SmsWatcher.busy
     val error = SmsWatcher.error
     val errorAt = SmsWatcher.errorAt
+    val loggedIn = SmsWatcher.loggedIn
+
+    if (!loggedIn) {
+        SmsLoginGate()
+        return
+    }
 
     fun tapCopy(text: String) {
         if (text.isEmpty()) return
@@ -113,7 +119,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
     fun onGet(pat: String) {
         val parsed = smsSingleRange(pat)
         if (parsed != null) {
-            SmsWatcher.provision(parsed.range, check = parsed.check) { n ->
+            SmsWatcher.provision(parsed.range, mode = parsed.mode) { n ->
                 if (n != null) {
                     sheet = Sheet.Item(n)
                     tapCopy(n.display)
@@ -124,10 +130,10 @@ fun SmsScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    // A row that was screened re-screens when regenerated; a plain row stays
-    // plain, so the swipe never silently turns the check on.
+    // A row that was screened re-screens in the same mode when regenerated;
+    // a plain row stays plain, so the swipe never silently turns the check on.
     fun onRegen(n: SmsNum) {
-        SmsWatcher.provision(n.range, replaceId = n.id, check = n.fresh) { nn ->
+        SmsWatcher.provision(n.range, replaceId = n.id, mode = n.mode.firstOrNull()) { nn ->
             if (nn != null) {
                 sheet = Sheet.Item(nn)
                 tapCopy(nn.display)
@@ -179,7 +185,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                 onRangeGo = { pat ->
                     val pr = smsSingleRange(pat)
                     if (pr != null) {
-                        SmsWatcher.provision(pr.range, check = pr.check) { nn ->
+                        SmsWatcher.provision(pr.range, mode = pr.mode) { nn ->
                             if (nn != null) {
                                 search = ""
                                 sheet = Sheet.Item(nn)
@@ -268,7 +274,7 @@ fun SmsScreen(modifier: Modifier = Modifier) {
                     onGet = { pat ->
                         val pr = smsSingleRange(pat)
                         if (pr != null) {
-                            SmsWatcher.provision(pr.range, check = pr.check) { n ->
+                            SmsWatcher.provision(pr.range, mode = pr.mode) { n ->
                                 if (n != null) {
                                     sheet = Sheet.Item(n)
                                     tapCopy(n.display)

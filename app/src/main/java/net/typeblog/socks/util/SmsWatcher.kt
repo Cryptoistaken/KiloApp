@@ -24,18 +24,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlin.jvm.Volatile
-import net.typeblog.socks.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.Locale
 
 const val SMS_EXPIRE_SEC = 7 * 60L
-
-/** Cap on provider numbers spent screening one request. */
-const val SMS_FRESH_MAX_TRIES = 5
 
 data class SmsMsg(val code: String, val text: String, val at: Long)
 
@@ -51,8 +44,12 @@ class SmsNum(
     var code: String? = null,
     val msgs: MutableList<SmsMsg> = mutableListOf(),
     var app: String = "",
-    /** Set when the fresh probe cleared this number. Never set for a plain get. */
+    /** Set when the server (or the fallback probe) cleared this number. */
     var fresh: Boolean = false,
+    /** Set when the number is known to be already registered. */
+    var used: Boolean = false,
+    /** Range mode this number was asked for: "F", "U" or "". */
+    var mode: String = "",
 )
 
 data class SmsCountry(
@@ -322,31 +319,32 @@ fun smsTimeAgo(ts: Long, now: Long): String {
     return "${h / 24}d ago"
 }
 
-/** A typed range split into what the gateway gets and whether to screen it. */
-data class SmsRange(val range: String, val check: Boolean, val count: Int)
+/** A typed range split into what the server gets and which check to apply. */
+data class SmsRange(val range: String, val mode: Char?, val count: Int)
 
 /**
- * Parses a typed range into its provision range and its fresh-check flag.
- * Ported from the KiloSMS parser: a `C` in the tail after the range turns
- * the check on, a trailing 1-2 digit group is a count, and a range with no
- * wildcard gets `XXX` appended. The suffix lives *after* the range, so it
- * never reaches the gateway.
+ * Parses a typed range into its provision range and its fresh/used-check
+ * mode. Ported from the KiloSMS parser: a `C`/`F` in the tail after the
+ * range asks for a fresh number, `U` for a used one, a trailing 1-2 digit
+ * group is a count, and a range with no wildcard gets `XXX` appended.
+ * The suffix lives *after* the range, so it never reaches the server.
  *
- * The one home for this: the field, the checkbox, the provision call and the
- * pref writer all read the same result, so the typed text and the check can
+ * The one home for this: the field, the hint, the provision call and the
+ * pref writer all read the same result, so the typed text and the mode can
  * never disagree. Null when the text is not a range at all.
  */
 fun smsParseRange(s: String): SmsRange? {
     val t = s.trim().uppercase().removePrefix("+")
     val base = Regex("^\\d{3,}X*").find(t)?.value ?: return null
     val tail = t.substring(base.length)
-    // Count is any 1-2 digit group in the tail, so "C2" reads the same as it
+    // Count is any 1-2 digit group in the tail, so "F2" reads the same as it
     // does in the bot. Capped there too, and rejected below at 1 because
     // provision returns a single number.
     val count = Regex("\\d{1,2}").find(tail)?.value?.toIntOrNull()?.coerceAtMost(10) ?: 0
+    val letter = Regex("[CFU]").find(tail)?.value?.firstOrNull()
     return SmsRange(
         range = if (base.contains('X')) base else base.take(6) + "XXX",
-        check = tail.contains('C'),
+        mode = if (letter == 'C') 'F' else letter,
         count = count,
     )
 }
@@ -377,6 +375,17 @@ object SmsWatcher {
     var error by mutableStateOf("")
     var errorAt by mutableLongStateOf(0L)
     var revision by mutableLongStateOf(0L)
+    var loggedIn by mutableStateOf(false)
+
+    fun setLoggedIn(value: Boolean) {
+        loggedIn = value
+        revision++
+    }
+
+    /** Immediate feed refresh, e.g. right after login instead of the 60s tick. */
+    fun refreshNow() {
+        if (loggedIn) loadFeed()
+    }
 
     // Fresh-check session totals, surfaced on the Activity page. A plain get
     // never touches these, so they only move for someone using the C suffix.
@@ -408,14 +417,9 @@ object SmsWatcher {
         }
     }
 
-    // Last time the push stream proved itself useful. Heartbeats alone
-    // must NOT suppress the poll fallback for long: a connection can carry
-    // heartbeats yet never deliver (stale subscription, half-open socket),
-    // so the window stays just above one poll gap and a forced poll runs
-    // every ~30s regardless.
+    // OTP polling covers delivery on its own: the bot has no push stream,
+    // so a 5s sweep while any number waits is the whole transport.
     @Volatile
-    private var streamAliveAt = 0L
-    private var pollForce = 0
     private var paused = false
     private var pollJob: Job? = null
     private val pollFinishers = mutableListOf<() -> Unit>()
@@ -447,6 +451,8 @@ object SmsWatcher {
                 o.put("code", n.code ?: "")
                 o.put("app", n.app)
                 o.put("f", n.fresh)
+                o.put("u", n.used)
+                o.put("mode", n.mode)
                 val msgs = JSONArray()
                 n.msgs.take(5).forEach { msgs.put(JSONObject().put("c", it.code).put("t", it.text).put("a", it.at)) }
                 o.put("msgs", msgs)
@@ -482,6 +488,8 @@ object SmsWatcher {
                     code = o.optString("code").ifEmpty { null },
                     app = o.optString("app"),
                     fresh = o.optBoolean("f"),
+                    used = o.optBoolean("u"),
+                    mode = o.optString("mode"),
                 )
                 val msgs = o.optJSONArray("msgs")
                 if (msgs != null) {
@@ -541,10 +549,12 @@ object SmsWatcher {
         started = true
         app = context.applicationContext
         store = app!!.getSharedPreferences("sms_store", Context.MODE_PRIVATE)
+        SmsAuth.init(context)
+        setLoggedIn(SmsAuth.session().isNotEmpty())
         load()
         loadCounters()
         scope.launch {
-            loadFeed()
+            if (loggedIn) loadFeed()
             var tick = 0
             while (true) {
                 delay(1000)
@@ -558,14 +568,12 @@ object SmsWatcher {
                     publishWaitingNumbers()
                     save()
                 }
-                if (!paused && tick % 5 == 0 && mine.any { it.code == null }) {
-                    pollForce++
-                    if (now - streamAliveAt >= 15000 || pollForce % 6 == 0) pollOtps()
+                if (loggedIn && !paused && tick % 5 == 0 && mine.any { it.code == null }) {
+                    pollOtps()
                 }
-                if (tick % 60 == 0) loadFeed()
+                if (tick % 60 == 0 && loggedIn) loadFeed()
             }
         }
-        scope.launch { streamLoop() }
     }
 
     fun loadFeed() {
@@ -593,34 +601,32 @@ object SmsWatcher {
     }
 
     /**
-     * Provisions one number, optionally screened by [SmsFresh] first. When
-     * [check] is set the loop fetches up to [SMS_FRESH_MAX_TRIES] numbers and
-     * keeps the first that comes back clean; the rest are discarded without
-     * ever entering [mine] or the store. A failed probe is not a pass, so it
-     * stops the run rather than returning an unverified number.
+     * Provisions one number through the KiloSMS ext API, which screens it
+     * server-side when [mode] is set. When the server could not verify
+     * (checker down) the on-device [SmsFresh] probe labels the number as a
+     * fallback instead of leaving it unknown.
      */
     fun provision(
         pat: String,
         replaceId: Long? = null,
-        check: Boolean = false,
+        mode: Char? = null,
         onDone: (SmsNum?) -> Unit
     ) {
         if (busy) {
             onDone(null)
             return
         }
+        if (!SmsGateway.isConfigured) {
+            fail("Login with Telegram first")
+            onDone(null)
+            return
+        }
         paused = false
         busy = true
         scope.launch {
-            // Every number the provider hands us is kept and listed, whether
-            // or not it passed the probe. A USED number is still a number the
-            // user paid for, and hiding it made the Skipped counter the only
-            // trace that anything had happened.
-            val kept = mutableListOf<SmsNum>()
-            var winner: SmsNum? = null
-            var tries = 0
+            val modeStr = mode?.toString() ?: ""
 
-            fun keep(g: SmsGateway.GatewayNumber, screened: Boolean): SmsNum {
+            fun keep(g: SmsGateway.GatewayNumber, screened: Boolean, usedMark: Boolean): SmsNum {
                 val (name, flag) = smsCountryForPrefix(pat.replace("X", "").replace("x", ""))
                 val actualName = if (g.country.isNotEmpty() && g.country != "Unknown") g.country else name
                 val n = SmsNum(
@@ -632,79 +638,66 @@ object SmsWatcher {
                     range = pat.uppercase(),
                     born = System.currentTimeMillis(),
                     fresh = screened,
+                    used = usedMark,
+                    mode = modeStr,
                 )
                 if (replaceId != null) {
                     mine.removeAll { it.id == replaceId }
                     expired.removeAll { it.id == replaceId }
                 }
                 mine.add(0, n)
-                kept.add(n)
                 publishWaitingNumbers()
                 save()
-                SmsLog.log(app, "GET", "provisioned ${n.display} range=$pat fresh=$screened")
+                SmsLog.log(app, "GET", "provisioned ${n.display} range=$pat mode=$modeStr fresh=$screened used=$usedMark")
                 return n
             }
 
-            if (check) {
-                while (tries < SMS_FRESH_MAX_TRIES) {
-                    tries++
-                    val c = withContext(Dispatchers.IO) { SmsGateway.provision(pat) }
-                    if (c == null || c.full.isEmpty()) break
-                    val r = withContext(Dispatchers.IO) { SmsFresh.check(c.full) }
+            val res = withContext(Dispatchers.IO) { SmsGateway.generate(pat, mode) }
+            if (res?.number != null) {
+                val g = res.number
+                bumpChecked(res.checked)
+                if (res.discarded > 0) bumpSkipped(res.discarded)
+                if (g.verified) bumpFresh()
+                busy = false
+                app?.let {
+                    SmsOtpService.start(it)
+                    armHeartbeat(it)
+                }
+                onDone(keep(g, g.verified, g.used))
+                return@launch
+            }
+            // Server could not serve a screened number: retry unchecked and
+            // label locally with the on-device probe as a fallback.
+            if (mode != null) {
+                val plain = withContext(Dispatchers.IO) { SmsGateway.generate(pat, null) }
+                val g = plain?.number
+                if (g != null && g.full.isNotEmpty()) {
+                    val r = withContext(Dispatchers.IO) { SmsFresh.check(g.full) }
+                    bumpChecked(1)
                     if (!r.ok) {
-                        // A check that could not run tells us nothing about
-                        // the number. Keep it listed and stop rather than
-                        // guess at its state.
-                        SmsLog.log(app, "CHECK", "${c.full} -> UNKNOWN (${r.error})")
-                        bumpChecked(tries)
-                        keep(c, false)
+                        SmsLog.log(app, "CHECK", "${g.full} -> UNKNOWN (${r.error})")
                         busy = false
                         fail("Fresh check unavailable, try again")
                         app?.let { SmsNotify.buzzFail(it) }
-                        onDone(kept.lastOrNull())
+                        onDone(keep(g, false, false))
                         return@launch
                     }
-                    if (r.fresh) {
-                        bumpFresh()
-                        winner = keep(c, true)
-                        break
+                    SmsLog.log(app, "CHECK", "${g.full} -> ${if (r.fresh) "FRESH" else "USED"} (local fallback)")
+                    if (r.fresh) bumpFresh() else bumpSkipped(1)
+                    busy = false
+                    app?.let {
+                        SmsOtpService.start(it)
+                        armHeartbeat(it)
                     }
-                    // Not fresh, but still listed so the user can see what
-                    // was spent. The loop continues for a fresh one.
-                    bumpSkipped(1)
-                    SmsLog.log(app, "CHECK", "${c.full} -> USED, kept in list")
-                    keep(c, false)
+                    onDone(keep(g, r.fresh, !r.fresh))
+                    return@launch
                 }
-                bumpChecked(tries)
-            } else {
-                val g = withContext(Dispatchers.IO) { SmsGateway.provision(pat) }
-                if (g != null && g.full.isNotEmpty()) winner = keep(g, false)
             }
-
             busy = false
-            if (kept.isEmpty()) {
-                if (check) {
-                    fail("No numbers available for $pat")
-                } else {
-                    fail("No numbers available, try again")
-                }
-                SmsLog.log(app, "GET", "provision FAILED for $pat")
-                app?.let { SmsNotify.buzzFail(it) }
-                onDone(null)
-                return@launch
-            }
-            if (check && winner == null) {
-                // Every number was usable, none were fresh. They are all in
-                // the list; say so rather than implying nothing happened.
-                fail("No fresh numbers in $tries checked for $pat, all kept in My numbers")
-            }
-            app?.let {
-                SmsOtpService.start(it)
-                armHeartbeat(it)
-            }
-            // Hand back the fresh one when there is one, otherwise the last
-            // number, so the sheet always opens on something real.
-            onDone(winner ?: kept.last())
+            fail(if (!res?.error.isNullOrEmpty()) res!!.error else "No numbers available, try again")
+            SmsLog.log(app, "GET", "provision FAILED for $pat")
+            app?.let { SmsNotify.buzzFail(it) }
+            onDone(null)
         }
     }
 
@@ -846,126 +839,5 @@ object SmsWatcher {
 
     private fun digitsOnly(s: String): String {
         return s.filter { it.isDigit() }
-    }
-
-    /**
-     * SSE push stream: one connection while any number is still waiting,
-     * subscribed to exactly those numbers. Reconnects with backoff, with
-     * fast-fail protection so a broken route can never hammer the backend:
-     * connections living under 15s count as fast fails; 3 in a row park
-     * the loop for 60s, and attempts are always >= 10s apart.
-     */
-    private suspend fun streamLoop() {
-        var backoff = 5000L
-        var fastFails = 0
-        var lastAttempt = 0L
-        while (true) {
-            val waiting = waitingNumbers.value
-            if (paused || waiting.isEmpty() || !SmsGateway.isConfigured) {
-                delay(5000)
-                continue
-            }
-            val sinceAttempt = System.currentTimeMillis() - lastAttempt
-            if (sinceAttempt < 10000) {
-                delay(10000 - sinceAttempt)
-            }
-            lastAttempt = System.currentTimeMillis()
-            val connectedAt = lastAttempt
-            try {
-                withContext(Dispatchers.IO) { readStream(waiting) }
-                // Clean server-side close proves nothing about liveness:
-                // drop the stream credit so the poll fallback covers the gap.
-                streamAliveAt = 0L
-                backoff = 5000L
-                fastFails = 0
-            } catch (e: Exception) {
-                // Same: a dead connection must not keep suppressing polls
-                // through backoff/park on a stale heartbeat timestamp.
-                streamAliveAt = 0L
-                SmsLog.log(app, "STREAM", "err ${e.message} fails=$fastFails")
-                val lived = System.currentTimeMillis() - connectedAt
-                if (lived < 15000) {
-                    fastFails++
-                } else {
-                    fastFails = 0
-                    backoff = 5000L
-                }
-                if (fastFails >= 3) {
-                    SmsLog.log(app, "STREAM", "parked 60s after 3 fast fails")
-                    delay(60000)
-                    fastFails = 0
-                    backoff = 10000L
-                } else {
-                    delay(backoff)
-                    backoff = (backoff * 2).coerceAtMost(30000L)
-                }
-            }
-        }
-    }
-
-    private fun readStream(numbers: List<String>) {
-        val subscribed = numbers.toSet()
-        val url = "${BuildConfig.SMS_GATEWAY_URL}/v1/stream?numbers=" + numbers.joinToString(",")
-        var conn: HttpURLConnection? = null
-        try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                setRequestProperty("Authorization", "Bearer ${BuildConfig.SMS_API_KEY}")
-                setRequestProperty("Accept", "text/event-stream")
-                connectTimeout = 15000
-                // Just above the 25s server heartbeat: a half-open socket
-                // (NAT/Doze drop with no FIN) throws here instead of
-                // blocking for a minute with polls suppressed.
-                readTimeout = 35000
-            }
-            if (conn.responseCode != 200) throw IllegalStateException("stream ${conn.responseCode}")
-            val reader: BufferedReader = conn.inputStream.bufferedReader()
-            var event = ""
-            var data = ""
-            while (true) {
-                val line = reader.readLine() ?: throw IllegalStateException("stream closed")
-                streamAliveAt = System.currentTimeMillis()
-                // Waiting set changed (new number, code arrived, expiry):
-                // reconnect so the subscription always matches.
-                if (waitingNumbers.value.toSet() != subscribed) {
-                    throw IllegalStateException("waiting set changed")
-                }
-                when {
-                    line.startsWith("event:") -> event = line.substringAfter(":").trim()
-                    line.startsWith("data:") -> data += line.substringAfter(":").trim()
-                    line.startsWith(":") -> Unit // heartbeat comment
-                    line.isEmpty() -> {
-                        if (event == "otp" && data.isNotEmpty()) onStreamOtp(data)
-                        event = ""
-                        data = ""
-                    }
-                }
-            }
-        } finally {
-            conn?.disconnect()
-        }
-    }
-
-    private fun onStreamOtp(data: String) {
-        // Mutations run on Main: mine/code are Main-confined elsewhere.
-        scope.launch {
-            try {
-                val o = JSONObject(data)
-                val number = digitsOnly(o.optString("number"))
-                val code = o.optString("code")
-                val text = o.optString("text")
-                val at = o.optLong("at")
-                val streamApp = o.optString("app")
-                if (number.isEmpty() || code.isEmpty()) return@launch
-                applyOtp(
-                    number = number,
-                    code = code,
-                    messages = listOf(SmsGateway.OtpMessage(code, text, at, streamApp)),
-                    appName = streamApp,
-                )
-            } catch (_: Exception) {
-                // Malformed event: polling fallback covers it.
-            }
-        }
     }
 }

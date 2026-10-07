@@ -2003,7 +2003,7 @@ class FloatingControlService : Service() {
                     .edit().putString(PREF_SMS_LAST_RANGE, typed).apply()
             } catch (_: Exception) {
             }
-            SmsWatcher.provision(parsed.range, check = parsed.check) { n ->
+            SmsWatcher.provision(parsed.range, mode = parsed.mode) { n ->
                 if (n == null) {
                     toast("No numbers available, try again")
                 } else {

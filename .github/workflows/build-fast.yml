@@ -11,9 +11,9 @@ on:
   push:
     branches: [ "master" ]
     # Allowlist, not a denylist: only paths Gradle actually reads may start a
-    # build. Commits that touch the Go gateway, Railway config, docs, plan.md
-    # or the in-progress monitor script must not burn an Android build. Adding
-    # a new non-Android top-level dir is then free by default.
+    # build. Commits that touch docs, plans or the in-progress monitor script
+    # must not burn an Android build. Adding a new non-Android top-level dir
+    # is then free by default.
     paths:
       - "app/**"                        # sources, res, jni, proguard rules
       - "gradle/**"                     # wrapper dist + any future version catalog
@@ -136,8 +136,7 @@ jobs:
           KILO_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KILO_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KILO_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-          SMS_API_KEY: ${{ secrets.SMS_API_KEY }}
-          SMS_GATEWAY_URL: ${{ secrets.SMS_GATEWAY_URL }}
+          KILOSMS_URL: ${{ secrets.KILOSMS_URL }}
           DRIVE_WEB_CLIENT_ID: ${{ secrets.DRIVE_WEB_CLIENT_ID }}
 
       # Publish as a real v<versionCode> release: the in-app updater reads

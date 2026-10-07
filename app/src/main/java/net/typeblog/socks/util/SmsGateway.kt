@@ -7,13 +7,14 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Minimal client for the Go SMS gateway (see sms core/).
+ * Minimal client for the KiloSMS bot ext API (see KiloSMS bot/server.js).
  * Stdlib HttpURLConnection + org.json only — no new dependencies.
- * Auth is the global app key baked via BuildConfig SMS_API_KEY.
+ * Auth is the Telegram-login admin session cookie, never a baked key.
  */
 object SmsGateway {
     private const val TAG = "SmsGateway"
     private const val TIMEOUT_MS = 15000
+    private const val GENERATE_TIMEOUT_MS = 120000
 
     data class FeedItem(
         val masked: String,
@@ -40,6 +41,8 @@ object SmsGateway {
         val display: String,
         val country: String,
         val range: String,
+        val verified: Boolean = false,
+        val used: Boolean = false,
     )
 
     data class OtpMessage(
@@ -55,79 +58,31 @@ object SmsGateway {
         val app: String = "",
     )
 
-    fun provision(range: String): GatewayNumber? {
-        if (!isConfigured) return null
-        var conn: HttpURLConnection? = null
-        return try {
-            val body = JSONObject().put("range", range).toString()
-            conn = (URL(BuildConfig.SMS_GATEWAY_URL + "/v1/numbers").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Authorization", "Bearer ${BuildConfig.SMS_API_KEY}")
-                setRequestProperty("Content-Type", "application/json")
-                connectTimeout = TIMEOUT_MS
-                readTimeout = TIMEOUT_MS
-                doOutput = true
-            }
-            conn.outputStream.bufferedWriter().use { it.write(body) }
-            if (conn.responseCode != 200) {
-                Log.w(TAG, "POST /v1/numbers -> ${conn.responseCode}")
-                return null
-            }
-            val root = JSONObject(conn.inputStream.bufferedReader().readText())
-            if (!root.optBoolean("ok")) return null
-            val n = root.optJSONObject("number") ?: return null
-            GatewayNumber(
-                full = n.optString("full"),
-                display = n.optString("display"),
-                country = n.optString("country"),
-                range = n.optString("range"),
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "POST /v1/numbers failed: ${e.message}")
-            null
-        } finally {
-            conn?.disconnect()
-        }
-    }
-
-    fun otp(number: String, since: Long = 0): OtpState? {
-        val root = get("/v1/otp?number=$number&since=$since") ?: return null
-        if (!root.optBoolean("ok")) return null
-        val msgs = mutableListOf<OtpMessage>()
-        val arr = root.optJSONArray("msgs")
-        var app = ""
-        if (arr != null) {
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val messageApp = o.optString("app")
-                msgs.add(
-                    OtpMessage(
-                        code = o.optString("code"),
-                        text = o.optString("text"),
-                        at = o.optLong("at"),
-                        app = messageApp,
-                    )
-                )
-                if (messageApp.isNotEmpty()) app = messageApp
-            }
-        }
-        val code = if (root.isNull("code")) null else root.optString("code")
-        return OtpState(code, msgs, app)
-    }
+    data class GenerateResult(
+        val number: GatewayNumber?,
+        val checked: Int = 0,
+        val discarded: Int = 0,
+        val checkerDown: Boolean = false,
+        val error: String = "",
+    )
 
     val isConfigured: Boolean
-        get() = BuildConfig.SMS_API_KEY.isNotEmpty()
+        get() = SmsAuth.session().isNotEmpty()
+
+    private fun authed(path: String, timeout: Int = TIMEOUT_MS): HttpURLConnection? {
+        val cookie = SmsAuth.session()
+        if (cookie.isEmpty()) return null
+        return (URL(BuildConfig.KILOSMS_URL + path).openConnection() as HttpURLConnection).apply {
+            setRequestProperty("Cookie", "admin_session=$cookie")
+            connectTimeout = TIMEOUT_MS
+            readTimeout = timeout
+        }
+    }
 
     private fun get(path: String): JSONObject? {
-        if (!isConfigured) return null
-        var conn: HttpURLConnection? = null
+        val conn = authed(path) ?: return null
         return try {
-            conn = (URL(BuildConfig.SMS_GATEWAY_URL + path).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                setRequestProperty("Authorization", "Bearer ${BuildConfig.SMS_API_KEY}")
-                connectTimeout = TIMEOUT_MS
-                readTimeout = TIMEOUT_MS
-            }
+            conn.requestMethod = "GET"
             if (conn.responseCode != 200) {
                 Log.w(TAG, "GET $path -> ${conn.responseCode}")
                 return null
@@ -137,31 +92,121 @@ object SmsGateway {
             Log.w(TAG, "GET $path failed: ${e.message}")
             null
         } finally {
-            conn?.disconnect()
+            conn.disconnect()
         }
     }
 
-    fun feed(limit: Int = 20): List<FeedItem>? {
-        val root = get("/v1/feed?limit=$limit") ?: return null
+    /**
+     * Server-checked provisioning: the bot round-robins its providers and
+     * screens every number through its checker fleet before keeping the
+     * ones matching [mode] (f = fresh, u = used, null = any).
+     * The response is NDJSON progress lines plus one final result line.
+     */
+    fun generate(range: String, mode: Char?): GenerateResult? {
+        val conn = authed("/api/ext/generate", GENERATE_TIMEOUT_MS) ?: return null
+        return try {
+            val body = JSONObject()
+                .put("range", range)
+                .put("mode", mode?.toString() ?: "any")
+                .put("count", 1)
+                .put("service", "SMS")
+                .toString()
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+            conn.outputStream.bufferedWriter().use { it.write(body) }
+            if (conn.responseCode != 200) {
+                Log.w(TAG, "POST /api/ext/generate -> ${conn.responseCode}")
+                return GenerateResult(null, error = "Server error ${conn.responseCode}")
+            }
+            val lines = conn.inputStream.bufferedReader().readLines()
+            for (i in lines.size - 1 downTo 0) {
+                val line = lines[i].trim()
+                if (!line.startsWith("{")) continue
+                val o = try {
+                    JSONObject(line)
+                } catch (_: Exception) {
+                    continue
+                }
+                when (o.optString("type")) {
+                    "result" -> {
+                        val arr = o.optJSONArray("numbers")
+                        val n = if (arr != null && arr.length() > 0) arr.optJSONObject(0) else null
+                        if (n == null) {
+                            val stats = o.optJSONObject("stats")
+                            val down = stats?.optBoolean("checkerDown") == true
+                            return GenerateResult(
+                                null,
+                                checked = stats?.optInt("checked") ?: 0,
+                                discarded = stats?.optInt("discarded") ?: 0,
+                                checkerDown = down,
+                                error = if (down) "checker unavailable" else "none matching",
+                            )
+                        }
+                        val fullNumber = n.optString("fullNumber")
+                        val digits = fullNumber.filter { it.isDigit() }
+                        val st = o.optJSONObject("stats")
+                        return GenerateResult(
+                            GatewayNumber(
+                                full = digits.ifEmpty { n.optString("number") },
+                                display = fullNumber.ifEmpty { "+" + n.optString("number") },
+                                country = n.optString("country").ifEmpty { "Unknown" },
+                                range = n.optString("range").ifEmpty { range },
+                                verified = n.optBoolean("verified"),
+                                used = n.optBoolean("used"),
+                            ),
+                            checked = st?.optInt("checked") ?: 0,
+                            discarded = st?.optInt("discarded") ?: 0,
+                            checkerDown = st?.optBoolean("checkerDown") == true,
+                        )
+                    }
+                    "error" -> return GenerateResult(null, error = o.optString("error").ifEmpty { "generate failed" })
+                    else -> Unit
+                }
+            }
+            GenerateResult(null, error = "empty response")
+        } catch (e: Exception) {
+            Log.w(TAG, "POST /api/ext/generate failed: ${e.message}")
+            null
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Latest OTP for one number. The bot keeps one match per number. */
+    fun otp(number: String, since: Long = 0): OtpState? {
+        val digits = number.filter { it.isDigit() }
+        val root = get("/api/ext/otp/$digits") ?: return null
+        if (!root.optBoolean("ok") || !root.optBoolean("found")) {
+            return OtpState(null, emptyList())
+        }
+        val code = root.optString("code").ifEmpty { null } ?: return OtpState(null, emptyList())
+        val text = root.optString("message")
+        return OtpState(code, listOf(OtpMessage(code, text, System.currentTimeMillis())))
+    }
+
+    private val codeRe = Regex("""\d{4,8}""")
+
+    fun feed(limit: Int = 100): List<FeedItem>? {
+        val root = get("/api/ext/feed?limit=$limit") ?: return null
         if (!root.optBoolean("ok")) return null
         val out = mutableListOf<FeedItem>()
-        val arr = root.optJSONArray("items") ?: return out
+        val arr = root.optJSONArray("feed") ?: return out
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
+            val msg = o.optString("message")
+            val range = o.optString("range")
+            if (range.isEmpty()) continue
             out.add(
                 FeedItem(
-                    masked = o.optString("masked"),
-                    svc = o.optString("svc"),
+                    masked = if (range.startsWith("+")) range else "+$range",
+                    svc = o.optString("sid"),
                     method = o.optString("method"),
                     app = o.optString("app"),
-                    code = o.optString("code"),
-                    msg = o.optString("msg"),
-                    range = o.optString("range"),
-                    at = o.optLong("at"),
-                    lang = o.optString("lang"),
-                    appLabel = o.optString("appLabel"),
-                    methodLabel = o.optString("methodLabel"),
-                    iso = o.optString("iso"),
+                    code = codeRe.find(msg.replace(" ", ""))?.value ?: "",
+                    msg = msg,
+                    range = range,
+                    at = o.optLong("time"),
                 )
             )
         }
@@ -169,7 +214,7 @@ object SmsGateway {
     }
 
     fun meta(): Pair<List<MetaCountry>, List<String>>? {
-        val root = get("/v1/meta") ?: return null
+        val root = get("/api/ext/meta") ?: return null
         if (!root.optBoolean("ok")) return null
         val countries = mutableListOf<MetaCountry>()
         val cArr = root.optJSONArray("countries")

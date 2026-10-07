@@ -2,18 +2,15 @@
 
 Executable config wins over prose. If this file conflicts with CI/Gradle/manifest, trust the executable file.
 
-## Repo units (three independent units)
+## Repo units
 - `app/` is the only Android module (`:app`, package `net.typeblog.socks`, appId `com.kiloapp.app`).
-- `sms core/` is a stdlib-only Go 1.22 gateway. Only `providers.go` contacts upstreams; `cli/` calls the gateway, not providers directly.
-- `.railway/` deploys only `kilosms-gateway` from `sms core`, never Android.
-- Railway changes use `.railway/railway.ts` (`railway config plan` then `apply`); do not add deprecated `railway.json/toml`.
-- Gateway secrets come from environment variables/Railway `preserve()`; never commit them. If `KILO_API_KEY` or `ADMIN_KEY` is unset locally, gateway auth is bypassed; never expose that run.
+- SMS backend is the KiloSMS bot ext API (`/api/ext/*` on the `kilosms` InstaCloud service, repo `Cryptoistaken/KiloSMS`): server-side provisioning with fresh/used screening, single-match OTP, feed and meta aggregates. No gateway code lives here.
 - `plan.md` and `spec/` describe intent; CI/workflow files define what actually runs.
 
 ## Build (never local)
 - Never build Android locally. Work on `master`.
 - Push to `master` runs `.github/workflows/build-fast.yml` (arm64 debug, release-signed, publishes `v<code>` release for the in-app updater).
-- The push lane is path-filtered: only `app/**`, `gradle/**`, `gradle.properties`, `build.gradle`, `settings.gradle`, the wrapper scripts, and `build-fast.yml` itself start a build. Go gateway, `.railway/`, `plan.md`, `AGENTS.md`, `docs/` and `monitor-build.go` commits skip it. `workflow_dispatch` is never filtered.
+- The push lane is path-filtered: only `app/**`, `gradle/**`, `gradle.properties`, `build.gradle`, `settings.gradle`, the wrapper scripts, and `build-fast.yml` itself start a build. `plan.md`, `AGENTS.md`, `docs/` and `monitor-build.go` commits skip it. `workflow_dispatch` is never filtered.
 - Version code stays monotonic under filtering: it is `max(run_number + 100, latest release + 1)`, and the release term is what carries it forward when skipped runs make `run_number` lag.
 - `.github/workflows/build.yml` is PR/manual full release only; not the push lane.
 - After every push: `go run ./monitor-build.go [run-id]` (repo-root stdlib waiter: polls every 5s; exits 0 success, 1 failure, 2 infrastructure/timeout).
@@ -31,11 +28,10 @@ Executable config wins over prose. If this file conflicts with CI/Gradle/manifes
 - Shared CI version code: `max(GITHUB_RUN_NUMBER + 100, latest numeric release tag + 1)`; per-ABI codes still exist.
 - The in-app updater reads the latest `v<number>` GitHub release and prefers the arm64 asset.
 - Release signing uses CI env `KILO_KEYSTORE_*`, else debug.
-- `SMS_GATEWAY_URL` and `SMS_API_KEY` are baked into `BuildConfig`; rotating them requires a CI rebuild/release.
+- `KILOSMS_URL` is baked into `BuildConfig`; SMS auth is the Telegram-login session cookie, so no API key exists in the app or CI. Rotating the URL requires a CI rebuild/release.
 - Do not claim local Gradle verification.
 
 ## Checks
-- Go focused check from `sms core/` (the repo root has no Go module): `go vet ./... && go build ./...`.
 - Android has no test/lint/codegen suite configured; do not invent one.
 
 ## Architecture boundaries

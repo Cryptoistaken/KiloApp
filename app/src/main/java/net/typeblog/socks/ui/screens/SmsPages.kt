@@ -8,9 +8,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,15 +19,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,11 +43,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
 import net.typeblog.socks.R
 import net.typeblog.socks.ui.components.SsBanner
@@ -246,62 +239,19 @@ internal fun MainPage(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
-                // Writable in both directions: tapping the box appends or
-                // removes the C, and typing a C ticks it. Both go through
-                // onRange, so the field and the box cannot disagree.
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .defaultMinSize(minHeight = 28.dp)
-                        .toggleable(
-                            value = parsed?.check == true,
-                            enabled = parsed != null,
-                            role = Role.Checkbox,
-                            onValueChange = { want ->
-                                val base = rangeText.trim().uppercase()
-                                    .replace(Regex("C\\d{0,2}$"), "")
-                                onRange(if (want) base + "C" else base)
-                            }
-                        )
-                ) {
-                    // This M3 version's colors() has no uncheckedBorderColor,
-                    // and a transparent unchecked fill leaves the box
-                    // invisible. Draw the outline as an overlay so it lines up
-                    // with the indicator rather than sitting beside it.
-                    // 14dp against 10sp text: the stock 18dp indicator read as
-                    // big next to a caption-sized label.
-                    Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
-                        if (parsed?.check != true) {
-                            Box(
-                                Modifier
-                                    .size(13.dp)
-                                    .border(
-                                        1.5.dp,
-                                        MaterialTheme.colorScheme.onSurfaceVariant,
-                                        RoundedCornerShape(2.dp)
-                                    )
-                            )
-                        }
-                        Checkbox(
-                            checked = parsed?.check == true,
-                            onCheckedChange = null,
-                            enabled = parsed != null,
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = MaterialTheme.colorScheme.onSurface,
-                                uncheckedColor = Color.Transparent,
-                                checkmarkColor = MaterialTheme.colorScheme.surface,
-                            ),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "generate fresh number",
-                        fontSize = 10.sp,
-                        color = if (parsed != null) MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                // Suffix hint, writable by typing: F asks for a fresh
+                // number, U for a used one, neither means any number.
+                val modeHint = when (parsed?.mode) {
+                    'F' -> "F - Fresh number (never used on Facebook)"
+                    'U' -> "U - Used number (already on Facebook)"
+                    else -> "Tip: add F for fresh, U for used (e.g. 23762XXXF)"
                 }
+                Text(
+                    text = modeHint,
+                    fontSize = 10.sp,
+                    color = if (parsed != null) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = { onGet(rangeText.trim()) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                     Text(if (busy) "..." else "Get number")
@@ -388,8 +338,13 @@ internal fun NumsPage(
         val rangeHit = smsSingleRange(q)
         if (rangeHit != null) {
             Spacer(Modifier.height(8.dp))
+            val modeLabel = when (rangeHit.mode) {
+                'F' -> " (Fresh)"
+                'U' -> " (Used)"
+                else -> ""
+            }
             Button(onClick = { onRangeGo(q.uppercase()) }, modifier = Modifier.fillMaxWidth()) {
-                Text("Get Facebook number - ${rangeHit.range}")
+                Text("Get Facebook number - ${rangeHit.range}$modeLabel")
             }
         }
         Spacer(Modifier.height(8.dp))
