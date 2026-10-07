@@ -6,6 +6,7 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import com.google.android.gms.auth.api.identity.Identity
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -109,7 +110,7 @@ fun BackupScreen(
     var staged by remember { mutableStateOf<StagedBackup?>(null) }
     // Consent continuation: when Google answers authorize with "show the
     // consent screen", the flow pauses here and resumes after it returns OK.
-    var retryAfterConsent by remember { mutableStateOf<(suspend () -> Unit)?>(null) }
+    var retryAfterConsent by remember { mutableStateOf<(suspend (String) -> Unit)?>(null) }
 
     // Pairs the bytes with the current state, so the dialog can show what
     // replacing would gain as well as what it would drop.
@@ -211,11 +212,15 @@ fun BackupScreen(
     ) { res ->
         val retry = retryAfterConsent
         retryAfterConsent = null
-        if (res.resultCode == Activity.RESULT_OK && retry != null) {
+        if (res.resultCode == Activity.RESULT_OK && retry != null && res.data != null) {
             scope.launch {
                 busy = true
                 try {
-                    retry()
+                    // Official flow: the token comes back in the result
+                    // intent itself — no second authorize call needed.
+                    val authRes = Identity.getAuthorizationClient(context)
+                        .getAuthorizationResultFromIntent(res.data)
+                    retry(authRes.accessToken ?: throw IllegalStateException("Empty access token"))
                 } catch (e: Exception) {
                     DriveSync.setLastError(context, DriveSync.failureReason(e))
                     toast(context, "Drive failed.")
@@ -235,7 +240,7 @@ fun BackupScreen(
         try {
             block(DriveSync.authorize(act))
         } catch (e: DriveSync.DriveResolutionRequired) {
-            retryAfterConsent = { block(DriveSync.authorize(act)) }
+            retryAfterConsent = block
             resolveLauncher.launch(IntentSenderRequest.Builder(e.resolution.intentSender).build())
         }
     }
