@@ -1,5 +1,6 @@
 package net.typeblog.socks.ui.screens
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -44,6 +45,8 @@ import net.typeblog.socks.ui.components.rememberPref
 import net.typeblog.socks.ui.screens.sheet.toast
 import net.typeblog.socks.util.Constants.PREF_BACKUP_DIR
 import net.typeblog.socks.util.Constants.PREF_BACKUP_ENABLED
+import net.typeblog.socks.util.Constants.PREF_DRIVE_ENABLED
+import net.typeblog.socks.util.sheet.DriveSync
 import net.typeblog.socks.util.DocNames
 import net.typeblog.socks.util.sheet.SheetBackup
 import net.typeblog.socks.util.sheet.SheetStore
@@ -85,6 +88,21 @@ fun BackupScreen(
     var lastAt by remember { mutableStateOf(SheetBackup.lastAt(context)) }
     var lastSize by remember { mutableStateOf(SheetBackup.lastSize(context)) }
     var lastError by remember { mutableStateOf(SheetBackup.lastError(context)) }
+    // Google Drive: account + last sync, re-read after every Drive action
+    // because the push runs inside backupNow, not in this composable.
+    var driveAccount by remember { mutableStateOf(DriveSync.account(context)) }
+    var driveLastAt by remember { mutableStateOf(DriveSync.lastAt(context)) }
+    var driveLastError by remember { mutableStateOf(DriveSync.lastError(context)) }
+    var driveAuto by rememberPref(prefs, PREF_DRIVE_ENABLED) {
+        it.getBoolean(PREF_DRIVE_ENABLED, true)
+    }
+    val activity = context as? Activity
+
+    fun refreshDrive() {
+        driveAccount = DriveSync.account(context)
+        driveLastAt = DriveSync.lastAt(context)
+        driveLastError = DriveSync.lastError(context)
+    }
     // A restore is staged first: the file is parsed and counted, and what
     // the app holds right now is captured alongside, before anyone is asked.
     var staged by remember { mutableStateOf<StagedBackup?>(null) }
@@ -228,6 +246,7 @@ fun BackupScreen(
                             lastAt = SheetBackup.lastAt(context)
                             lastSize = SheetBackup.lastSize(context)
                             lastError = SheetBackup.lastError(context)
+                            refreshDrive()
                             toast(
                                 context,
                                 if (written > 0) "Backup saved." else "Backup failed."
@@ -263,6 +282,166 @@ fun BackupScreen(
                     description = lastBackupLabel(lastAt, lastSize, lastError),
                     showChevron = false
                 )
+            }
+
+            // Hidden until a Web client ID is baked in: without it sign-in
+            // can never succeed, so the section would only confuse.
+            if (DriveSync.configured()) {
+                item {
+                    SectionTitle(text = "Google Drive")
+                    if (driveAccount == null) {
+                        SettingsItem(
+                            icon = painterResource(R.drawable.ic_name_person),
+                            label = "Sign in with Google",
+                            description = "Back up to your Google Drive",
+                            showChevron = false,
+                            enabled = !busy,
+                            onClick = {
+                                val act = activity
+                                if (act == null) {
+                                    toast(context, "Open the app to sign in.")
+                                } else {
+                                    scope.launch {
+                                        busy = true
+                                        try {
+                                            val who = DriveSync.signIn(act)
+                                            DriveSync.authorize(act)
+                                            val written = withContext(Dispatchers.IO) {
+                                                SheetBackup.backupNow(context)
+                                            }
+                                            lastAt = SheetBackup.lastAt(context)
+                                            lastSize = SheetBackup.lastSize(context)
+                                            lastError = SheetBackup.lastError(context)
+                                            refreshDrive()
+                                            toast(
+                                                context,
+                                                if (written > 0) "Signed in as " + who.email
+                                                else "Signed in. Backup failed."
+                                            )
+                                        } catch (_: Exception) {
+                                            toast(context, "Sign in failed.")
+                                        }
+                                        busy = false
+                                    }
+                                }
+                            }
+                        )
+                    } else {
+                        SettingsItem(
+                            icon = painterResource(R.drawable.ic_name_person),
+                            label = driveAccount ?: "",
+                            description = "Google account",
+                            showChevron = false
+                        )
+                        SettingsItem(
+                            icon = painterResource(R.drawable.lucide_rotate_cw),
+                            label = "Drive auto-sync",
+                            description = if (driveAuto) "On" else "Off",
+                            showChevron = false,
+                            trailing = {
+                                ProtonSwitch(
+                                    checked = driveAuto,
+                                    onCheckedChange = { on ->
+                                        driveAuto = on
+                                        prefs.edit().putBoolean(PREF_DRIVE_ENABLED, on).apply()
+                                    }
+                                )
+                            }
+                        )
+                        SettingsItem(
+                            icon = painterResource(R.drawable.lucide_check),
+                            label = "Last Drive sync",
+                            description = driveLabel(driveLastAt, driveLastError),
+                            showChevron = false
+                        )
+                        SettingsItem(
+                            icon = painterResource(R.drawable.ic_ss_upload),
+                            label = "Sync now",
+                            description = "Write a fresh copy to Drive",
+                            showChevron = false,
+                            enabled = !busy,
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    val written = withContext(Dispatchers.IO) {
+                                        SheetBackup.backupNow(context)
+                                    }
+                                    busy = false
+                                    lastAt = SheetBackup.lastAt(context)
+                                    lastSize = SheetBackup.lastSize(context)
+                                    lastError = SheetBackup.lastError(context)
+                                    refreshDrive()
+                                    toast(
+                                        context,
+                                        when {
+                                            written <= 0 -> "Backup failed."
+                                            DriveSync.lastError(context) != null -> "Saved locally. Drive failed."
+                                            else -> "Synced to Drive."
+                                        }
+                                    )
+                                }
+                            }
+                        )
+                        SettingsItem(
+                            icon = painterResource(R.drawable.ic_ss_restore),
+                            label = "Restore from Drive",
+                            description = "Replace everything from your Drive copy",
+                            showChevron = false,
+                            enabled = !busy,
+                            onClick = {
+                                val act = activity
+                                if (act == null) {
+                                    toast(context, "Open the app to restore.")
+                                } else {
+                                    scope.launch {
+                                        busy = true
+                                        var bytes: ByteArray? = null
+                                        var failed = false
+                                        try {
+                                            val token = DriveSync.authorize(act)
+                                            bytes = withContext(Dispatchers.IO) {
+                                                val folders = DriveSync.cachedFolders(context)
+                                                    ?: DriveSync.ensureFolders(context, token)
+                                                DriveSync.pullBackupJson(token, folders)
+                                            }
+                                        } catch (_: Exception) {
+                                            failed = true
+                                        }
+                                        busy = false
+                                        if (failed) {
+                                            toast(context, "Could not reach Drive.")
+                                        } else {
+                                            val snap = try {
+                                                bytes?.let { SheetBackup.parse(it) }
+                                            } catch (_: Exception) {
+                                                null
+                                            }
+                                            if (bytes == null || snap == null) {
+                                                toast(context, "No Drive backup yet.")
+                                            } else {
+                                                staged = stage(bytes, "Google Drive", snap)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                        SettingsItem(
+                            icon = painterResource(R.drawable.ic_exit_duotone),
+                            label = "Sign out",
+                            description = "Stop syncing this device",
+                            showChevron = false,
+                            enabled = !busy,
+                            onClick = {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) { DriveSync.signOut(context) }
+                                    refreshDrive()
+                                    toast(context, "Signed out.")
+                                }
+                            }
+                        )
+                    }
+                }
             }
 
             item {
@@ -387,6 +566,12 @@ private fun lastBackupLabel(at: Long, size: Long, error: String?): String {
     if (error != null) return "Failed: $error"
     if (at <= 0L) return "Not backed up yet"
     return "${timeLabel(at)}, ${sizeText(size)}"
+}
+
+private fun driveLabel(at: Long, error: String?): String {
+    if (error != null) return "Failed: $error"
+    if (at <= 0L) return "Not synced yet"
+    return timeLabel(at)
 }
 
 private fun timeLabel(at: Long): String =
