@@ -243,15 +243,17 @@ object DriveSync {
         }
     }
 
-    fun cachedFolders(context: Context): FolderIds? = try {
-        val j = JSONObject(folderJson(context) ?: return null)
-        val root = j.optString("root", "")
-        if (root.isEmpty()) return null
-        val kids = SUBFOLDERS.associateWith { j.optString(it, "") }.filterValues { it.isNotEmpty() }
-        if (kids.size != SUBFOLDERS.size) return null
-        FolderIds(root, kids)
-    } catch (_: Exception) {
-        null
+    fun cachedFolders(context: Context): FolderIds? {
+        return try {
+            val j = JSONObject(folderJson(context) ?: return null)
+            val root = j.optString("root", "")
+            if (root.isEmpty()) return null
+            val kids = SUBFOLDERS.associateWith { j.optString(it, "") }.filterValues { it.isNotEmpty() }
+            if (kids.size != SUBFOLDERS.size) return null
+            FolderIds(root, kids)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun folderJson(context: Context): String? =
