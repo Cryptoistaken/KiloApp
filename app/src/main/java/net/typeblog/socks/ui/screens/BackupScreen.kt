@@ -318,7 +318,9 @@ fun BackupScreen(
                                                 if (written > 0) "Signed in as " + who.email
                                                 else "Signed in. Backup failed."
                                             )
-                                        } catch (_: Exception) {
+                                        } catch (e: Exception) {
+                                            DriveSync.setLastError(context, DriveSync.failureReason(e))
+                                            refreshDrive()
                                             toast(context, "Sign in failed.")
                                         }
                                         busy = false

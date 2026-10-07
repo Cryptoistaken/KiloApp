@@ -6,14 +6,18 @@ import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
 import androidx.preference.PreferenceManager
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
+import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.Scope
 import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.Tasks
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -61,7 +65,11 @@ object DriveSync {
             .build()
         val resp = CredentialManager.create(activity)
             .getCredential(activity, GetCredentialRequest(listOf(opt)))
-        val cred = GoogleIdTokenCredential.createFrom(resp.credential.data)
+        val raw = resp.credential
+        if (raw.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+            throw IllegalStateException("Not a Google account")
+        }
+        val cred = GoogleIdTokenCredential.createFrom(raw.data)
         prefs(activity).edit().putString(PREF_DRIVE_ACCOUNT, cred.id).apply()
         return SignIn(cred.id)
     }
@@ -258,6 +266,27 @@ object DriveSync {
 
     fun folderJson(context: Context): String? =
         prefs(context).getString(PREF_DRIVE_FOLDER_IDS, null)?.takeIf { it.isNotBlank() }
+
+    /** Short human reason for a sign-in/authorize failure. Shown on the
+     *  Backup page, so a failure reports itself instead of "Sign in failed"
+     *  with nothing behind it. */
+    fun failureReason(e: Exception): String {
+        Log.e(TAG, "Drive auth failed", e)
+        return when (e) {
+            is GetCredentialCancellationException -> "Sign in cancelled"
+            is NoCredentialException -> "No Google account on device"
+            is GoogleIdTokenParsingException -> "Bad token response"
+            is ApiException -> when (e.statusCode) {
+                7 -> "No connection"
+                10 -> "App not registered (SHA-1)"
+                16 -> "Sign in cancelled"
+                12500 -> "Google rejected sign in (account?)"
+                12501 -> "Sign in cancelled"
+                else -> "Google error " + e.statusCode
+            }
+            else -> (e.message?.take(80)?.ifBlank { null } ?: "Sign in failed")
+        }
+    }
 
     private fun silentToken(context: Context): String? = try {
         val req = AuthorizationRequest.builder()
