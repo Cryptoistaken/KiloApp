@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -106,6 +107,9 @@ fun BackupScreen(
     // A restore is staged first: the file is parsed and counted, and what
     // the app holds right now is captured alongside, before anyone is asked.
     var staged by remember { mutableStateOf<StagedBackup?>(null) }
+    // Consent continuation: when Google answers authorize with "show the
+    // consent screen", the flow pauses here and resumes after it returns OK.
+    var retryAfterConsent by remember { mutableStateOf<suspend () -> Unit?>(null) }
 
     // Pairs the bytes with the current state, so the dialog can show what
     // replacing would gain as well as what it would drop.
@@ -199,6 +203,40 @@ fun BackupScreen(
             } else {
                 staged = stage(stagedResult.first, stagedResult.third, stagedResult.second)
             }
+        }
+    }
+
+    val resolveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { res ->
+        val retry = retryAfterConsent
+        retryAfterConsent = null
+        if (res.resultCode == Activity.RESULT_OK && retry != null) {
+            scope.launch {
+                busy = true
+                try {
+                    retry()
+                } catch (e: Exception) {
+                    DriveSync.setLastError(context, DriveSync.failureReason(e))
+                    toast(context, "Drive failed.")
+                }
+                busy = false
+                refreshDrive()
+            }
+        } else {
+            toast(context, "Drive permission declined.")
+        }
+    }
+
+    // Runs block with a Drive token, pausing for Google's consent screen
+    // when asked and resuming after it returns OK. Used by sign-in and
+    // restore-from-Drive.
+    suspend fun withDriveToken(act: Activity, block: suspend (String) -> Unit) {
+        try {
+            block(DriveSync.authorize(act))
+        } catch (e: DriveSync.DriveResolutionRequired) {
+            retryAfterConsent = { block(DriveSync.authorize(act)) }
+            resolveLauncher.launch(IntentSenderRequest.Builder(e.resolution.intentSender).build())
         }
     }
 
@@ -305,19 +343,20 @@ fun BackupScreen(
                                         busy = true
                                         try {
                                             val who = DriveSync.signIn(act)
-                                            DriveSync.authorize(act)
-                                            val written = withContext(Dispatchers.IO) {
-                                                SheetBackup.backupNow(context)
+                                            withDriveToken(act) {
+                                                val written = withContext(Dispatchers.IO) {
+                                                    SheetBackup.backupNow(context)
+                                                }
+                                                lastAt = SheetBackup.lastAt(context)
+                                                lastSize = SheetBackup.lastSize(context)
+                                                lastError = SheetBackup.lastError(context)
+                                                refreshDrive()
+                                                toast(
+                                                    context,
+                                                    if (written > 0) "Signed in as " + who.email
+                                                    else "Signed in. Backup failed."
+                                                )
                                             }
-                                            lastAt = SheetBackup.lastAt(context)
-                                            lastSize = SheetBackup.lastSize(context)
-                                            lastError = SheetBackup.lastError(context)
-                                            refreshDrive()
-                                            toast(
-                                                context,
-                                                if (written > 0) "Signed in as " + who.email
-                                                else "Signed in. Backup failed."
-                                            )
                                         } catch (e: Exception) {
                                             DriveSync.setLastError(context, DriveSync.failureReason(e))
                                             refreshDrive()
@@ -397,33 +436,30 @@ fun BackupScreen(
                                 } else {
                                     scope.launch {
                                         busy = true
-                                        var bytes: ByteArray? = null
-                                        var failed = false
                                         try {
-                                            val token = DriveSync.authorize(act)
-                                            bytes = withContext(Dispatchers.IO) {
-                                                val folders = DriveSync.cachedFolders(context)
-                                                    ?: DriveSync.ensureFolders(context, token)
-                                                DriveSync.pullBackupJson(token, folders)
+                                            withDriveToken(act) { token ->
+                                                val bytes = withContext(Dispatchers.IO) {
+                                                    val folders = DriveSync.cachedFolders(context)
+                                                        ?: DriveSync.ensureFolders(context, token)
+                                                    DriveSync.pullBackupJson(token, folders)
+                                                }
+                                                val snap = try {
+                                                    bytes?.let { SheetBackup.parse(it) }
+                                                } catch (_: Exception) {
+                                                    null
+                                                }
+                                                if (bytes == null || snap == null) {
+                                                    toast(context, "No Drive backup yet.")
+                                                } else {
+                                                    staged = stage(bytes, "Google Drive", snap)
+                                                }
                                             }
-                                        } catch (_: Exception) {
-                                            failed = true
+                                        } catch (e: Exception) {
+                                            DriveSync.setLastError(context, DriveSync.failureReason(e))
+                                            refreshDrive()
+                                            toast(context, "Could not reach Drive.")
                                         }
                                         busy = false
-                                        if (failed) {
-                                            toast(context, "Could not reach Drive.")
-                                        } else {
-                                            val snap = try {
-                                                bytes?.let { SheetBackup.parse(it) }
-                                            } catch (_: Exception) {
-                                                null
-                                            }
-                                            if (bytes == null || snap == null) {
-                                                toast(context, "No Drive backup yet.")
-                                            } else {
-                                                staged = stage(bytes, "Google Drive", snap)
-                                            }
-                                        }
                                     }
                                 }
                             }

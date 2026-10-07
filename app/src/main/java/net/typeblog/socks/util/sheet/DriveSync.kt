@@ -1,6 +1,7 @@
 package net.typeblog.socks.util.sheet
 
 import android.app.Activity
+import android.app.PendingIntent
 import android.content.Context
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
@@ -75,13 +76,22 @@ object DriveSync {
     }
 
     // One consent screen for drive.file: the app sees only files it created.
-    // Returns a short-lived access token for Drive REST calls.
+    // Returns a short-lived access token for Drive REST calls. When Google
+    // wants the consent screen first, the result carries a PendingIntent
+    // instead of a token: launch it and call authorize again after it
+    // returns OK. Swallowing that answer is exactly the "Empty access
+    // token" failure.
+    class DriveResolutionRequired(val resolution: PendingIntent) : Exception("Needs consent")
+
     suspend fun authorize(activity: Activity): String {
         val req = AuthorizationRequest.builder()
             .setRequestedScopes(listOf(Scope(DRIVE_FILE_SCOPE)))
             .build()
-        return Identity.getAuthorizationClient(activity).authorize(req).await().accessToken
-            ?: throw IllegalStateException("Empty access token")
+        val res = Identity.getAuthorizationClient(activity).authorize(req).await()
+        res.accessToken?.let { return it }
+        throw DriveResolutionRequired(
+            res.pendingIntent ?: throw IllegalStateException("Empty access token")
+        )
     }
 
     // KiloApp/ + the four mirror subfolders, created once then cached by id.
@@ -273,6 +283,7 @@ object DriveSync {
     fun failureReason(e: Exception): String {
         Log.e(TAG, "Drive auth failed", e)
         return when (e) {
+            is DriveResolutionRequired -> "Needs consent"
             is GetCredentialCancellationException -> "Sign in cancelled"
             is NoCredentialException -> "No Google account on device"
             is GoogleIdTokenParsingException -> "Bad token response"
