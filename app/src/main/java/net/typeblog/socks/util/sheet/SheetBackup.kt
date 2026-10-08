@@ -297,7 +297,7 @@ object SheetBackup {
         val tmp = File.createTempFile("backup-stamp", ".db", app.cacheDir)
         try {
             tmp.writeBytes(snap)
-            val db = SQLiteDatabase.openDatabase(tmp.path, null, null, SQLiteDatabase.OPEN_READWRITE)
+            val db = SQLiteDatabase.openDatabase(tmp.path, null, SQLiteDatabase.OPEN_READWRITE)
             try {
                 stampBackupTables(db, app)
             } finally {
@@ -393,7 +393,7 @@ object SheetBackup {
         val tmp = File.createTempFile("backup-read", ".db", context.applicationContext.cacheDir)
         try {
             tmp.writeBytes(bytes)
-            val db = SQLiteDatabase.openDatabase(tmp.path, null, null, SQLiteDatabase.OPEN_READONLY)
+            val db = SQLiteDatabase.openDatabase(tmp.path, null, SQLiteDatabase.OPEN_READONLY)
             try {
                 fun count(sql: String): Int = try {
                     db.rawQuery(sql, null).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
@@ -461,7 +461,7 @@ object SheetBackup {
         val tmp = File.createTempFile("backup-apply", ".db", app.cacheDir)
         try {
             tmp.writeBytes(bytes)
-            val db = SQLiteDatabase.openDatabase(tmp.path, null, null, SQLiteDatabase.OPEN_READONLY)
+            val db = SQLiteDatabase.openDatabase(tmp.path, null, SQLiteDatabase.OPEN_READONLY)
             try {
                 val byStore = mutableMapOf<String, MutableList<ProfileEntry>>()
                 try {
