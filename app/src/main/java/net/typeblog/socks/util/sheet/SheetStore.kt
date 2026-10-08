@@ -1369,6 +1369,35 @@ class SheetStore private constructor(context: Context) {
         true
     }
 
+    /**
+     * Swaps the live database file for backup bytes. The caller refreshes
+     * views afterwards (onBackupRestored + refresh). Serialized with every
+     * other mutation, so no writer runs mid-swap. Blocking: IO only.
+     */
+    fun replaceDatabase(bytes: ByteArray): Boolean = locked {
+        try {
+            db.close()
+        } catch (_: Exception) {
+        }
+        try {
+            val f = appContext.getDatabasePath(SheetDb.DB_NAME)
+            f.parentFile?.mkdirs()
+            for (sfx in listOf("-journal", "-wal", "-shm")) {
+                try {
+                    java.io.File(f.path + sfx).delete()
+                } catch (_: Exception) {
+                }
+            }
+            f.writeBytes(bytes)
+            // Reopen now: a bad file fails here, not on the next user write.
+            db.readableDatabase.close()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Database replace failed", e)
+            false
+        }
+    }
+
     companion object {
         @Volatile
         private var instance: SheetStore? = null

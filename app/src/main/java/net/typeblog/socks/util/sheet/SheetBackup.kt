@@ -15,6 +15,7 @@ import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import net.typeblog.socks.util.Constants
 import net.typeblog.socks.util.Constants.PREF_BACKUP_DIR
 import net.typeblog.socks.util.Constants.PREF_BACKUP_ENABLED
 import net.typeblog.socks.util.Constants.PREF_BACKUP_LAST_AT
@@ -23,42 +24,35 @@ import net.typeblog.socks.util.Constants.PREF_BACKUP_LAST_SIZE
 import net.typeblog.socks.util.Constants.PREF_BACKUP_XLSX
 import net.typeblog.socks.util.ProfileEntry
 import net.typeblog.socks.util.ProfileManager
-import org.json.JSONArray
-import org.json.JSONObject
 
 /**
- * Owns one full snapshot of everything the Sheet tab stores, and writes it in
- * two shapes to one place outside the app sandbox:
+ * Full-app backup. One file is the whole restore story:
  *
- *   kiloapp-backup.json  lossless, the only supported restore path
- *   kiloapp-backup.xlsx  the same snapshot as a workbook, for a human to read
+ *   backup/backup.db   sheet.db plus two stamped tables (backup_meta,
+ *                      backup_prefs: allowlisted app prefs, sms prefs and
+ *                      decrypted proxy profiles). The ONLY restore source.
  *
- * Both renderers consume the same [BackupSnapshot], so they cannot drift.
+ * Human copies, never restore sources:
  *
- * Why not the database: /data/data and Android/data are both deleted on
- * uninstall and on clear app data, so a backup kept inside either is gone
- * exactly when it is needed. MediaStore Downloads survives both and needs no
- * permission on API 29+, so it is the always-on destination; a folder the
- * user picks through the Storage Access Framework is the optional addition
- * that can live on an SD card or in a cloud drive.
+ *   files/<Name>.xlsx     one active Sheet file, same bytes as Download
+ *   archive/<Name>.xlsx   one archived Sheet file, same bytes as Download
+ *   profiles/<Name>.xlsx  one proxy string per profile (server:port:user:pass)
+ *
+ * Both live outside the app sandbox: MediaStore Downloads survives uninstall
+ * and clear-data (API 29+), and a user-picked SAF folder can sit on an SD
+ * card or cloud drive. Drive mirrors the same set.
  */
 object SheetBackup {
-    const val FORMAT = 1
-    const val JSON_NAME = "kiloapp-backup.json"
-    const val XLSX_NAME = "kiloapp-backup.xlsx"
-    const val PREV_JSON_NAME = "kiloapp-backup.prev.json"
+    const val DB_NAME = "backup.db"
     const val DOWNLOAD_SUBDIR = "KiloApp"
 
-    // Layout inside the KiloApp folder. Grouping by kind keeps it browsable:
-    // backup/ is the canonical pair, files/ and archive/ hold the per-file
-    // workbooks, config/ holds the proxy profiles.
+    // Layout inside the KiloApp folder: backup/ restores everything, the
+    // rest is grouped by kind so the folder stays browsable.
     private const val DIR_BACKUP = "backup"
     private const val DIR_FILES = "files"
     private const val DIR_ARCHIVE = "archive"
-    private const val DIR_CONFIG = "config"
-    private const val REL_JSON = DIR_BACKUP + "/kiloapp-backup.json"
-    private const val REL_ALL = DIR_BACKUP + "/kiloapp-backup.xlsx"
-    private const val REL_CONFIG = DIR_CONFIG + "/profiles.txt"
+    private const val DIR_PROFILES = "profiles"
+    private const val REL_DB = DIR_BACKUP + "/backup.db"
 
     private const val TAG = "SheetBackup"
     private const val DEBOUNCE_MS = 10_000L
@@ -155,15 +149,10 @@ object SheetBackup {
 
     /**
      * Everything the mirror writes, keyed by its path inside the KiloApp
-     * folder. Grouped by kind so the folder is browsable instead of one pile:
+     * folder. backup/backup.db restores the whole app; files/, archive/
+     * and profiles/ are human copies that restore never reads.
      *
-     *   backup/   the canonical pair - json restores everything, xlsx is the
-     *             whole app as one workbook
-     *   files/    one workbook per active Sheet file
-     *   archive/  one workbook per archived Sheet file
-     *   config/   proxy profiles, readable
-     *
-     * Returns the JSON size, or -1 when nothing could be written. Never
+     * Returns the db size, or -1 when nothing could be written. Never
      * throws: a backup failure must not take the edit that triggered it down.
      */
     fun backupNow(context: Context): Int {
@@ -171,7 +160,7 @@ object SheetBackup {
         return try {
             val snap = dump(app)
             val artifacts = artifacts(app, snap)
-            val json = artifacts[REL_JSON] ?: ByteArray(0)
+            val dbBytes = artifacts[REL_DB] ?: ByteArray(0)
 
             var written = 0
             var error: String? = null
@@ -182,7 +171,7 @@ object SheetBackup {
                 val ok = writeDownloads(app, dir, name, mimeFor(name), bytes)
                 if (!ok) {
                     if (error == null) error = "Could not write $name to Downloads"
-                } else if (rel == REL_JSON) {
+                } else if (rel == REL_DB) {
                     writeLocalRotating(app, bytes)
                     written = bytes.size
                 }
@@ -227,12 +216,14 @@ object SheetBackup {
 
     internal fun artifacts(context: Context, s: BackupSnapshot): Map<String, ByteArray> {
         val out = linkedMapOf<String, ByteArray>()
-        out[REL_JSON] = toJson(s).toByteArray(Charsets.UTF_8)
-        out[REL_ALL] = SheetBackupXlsx.write(s)
+        // The one file restore reads. Stamped with prefs below, so it backs
+        // up the whole app, not just the Sheet tables.
+        out[REL_DB] = backupDbBytes(context)
 
         // Archived files are exports like any other, but keeping them apart
         // stops the archive from crowding the files a user is working on.
-        val used = mutableSetOf(REL_ALL.substringAfterLast('/').lowercase())
+        // Byte-identical to Download/Share (same builder, same data guard).
+        val used = mutableSetOf<String>()
         for (f in s.files) {
             val rows = s.rows[f.id].orEmpty()
             if (rows.none { it.isData(f.preset.columns) }) continue
@@ -242,9 +233,298 @@ object SheetBackup {
             out[rel] = bytes
         }
 
-        out[REL_CONFIG] = ProfileManager.getInstance(context).exportReadable()
-            .toByteArray(Charsets.UTF_8)
+        // One proxy string per profile (server:port:user:pass, the same
+        // string the app copies). Human copy only: restore reads the
+        // decrypted profiles stamped into backup.db instead.
+        val usedProfiles = mutableSetOf<String>()
+        val manager = ProfileManager.getInstance(context)
+        for (name in manager.getProfiles()) {
+            val p = try {
+                manager.getProfile(name)
+            } catch (_: Exception) {
+                null
+            } ?: continue
+            val line = "${p.getServer()}:${p.getPort()}:${p.getUsername()}:${p.getPassword()}"
+            if (line.isBlank() || line == ":::") continue
+            val sheet = SheetXlsx.XlsxSheet(
+                SheetXlsx.safeSheetName(name.ifBlank { "profile" }, usedProfiles),
+                listOf("proxy"), listOf(listOf(line))
+            )
+            val fname = fileSafeName(name.ifBlank { "profile" }, usedProfiles)
+            out[DIR_PROFILES + "/" + fname] = SheetXlsx.buildWorkbook(listOf(sheet))
+        }
         return out
+    }
+
+    // ── Full-app database ──────────────────────────────────────────────
+
+    /** First bytes of every SQLite file. Restore rejects anything else. */
+    private const val SQLITE_MAGIC = "SQLite format 3\u0000"
+
+    fun isBackupDb(bytes: ByteArray): Boolean =
+        bytes.size > SQLITE_MAGIC.length &&
+            String(bytes, 0, SQLITE_MAGIC.length, Charsets.UTF_8) == SQLITE_MAGIC
+
+    /**
+     * Default prefs that travel with the backup. Everything else (bubble
+     * position, backup/sync bookkeeping, Drive state, update checks) is
+     * per-device or regenerated, so it stays behind.
+     */
+    private val DEFAULT_PREF_ALLOW = setOf(
+        Constants.PREF_THEME_MODE, Constants.PREF_AUTO_STOP,
+        Constants.PREF_VPN_ACCELERATOR, Constants.PREF_ACCEL_PRIMARY, Constants.PREF_ACCEL_MODE,
+        Constants.PREF_ACCEL_CACHE_IP, Constants.PREF_ACCEL_PROBE, Constants.PREF_ACCEL_INTERVAL_MS,
+        Constants.PREF_ACCEL_DNS_CACHE, Constants.PREF_FLOATING_CONTROL, Constants.PREF_BUBBLE_STYLE,
+        Constants.PREF_CIRCLE_ALIGN, Constants.PREF_CIRCLE_SIZE, Constants.PREF_SHEET_BUBBLE_FILE_ID,
+        Constants.PREF_SMS_LAST_RANGE, Constants.PREF_ADV_PER_APP, Constants.PREF_ADV_APP_BYPASS,
+        Constants.PREF_ADV_APP_LIST, Constants.PREF_SPLIT_SINGLE_MODE_MIGRATED,
+        "ss_autoCheck", "ss_pageSimple", "ss_pageAdvanced", "ss_fileView",
+    )
+
+    /** sms_store keys that travel. tg_session never does: re-login after restore. */
+    private val SMS_PREF_ALLOW = setOf(
+        "nums_v1", "next_id", "fresh_checked", "fresh_fresh", "fresh_skipped",
+    )
+
+    /**
+     * Full-app backup bytes: the live db plus stamped meta + prefs tables.
+     * The live db is untouched; the stamping happens on a temp copy.
+     * Blocking: call from Dispatchers.IO only.
+     */
+    internal fun backupDbBytes(context: Context): ByteArray {
+        val app = context.applicationContext
+        val snap = SheetDb(app).snapshotBytes(app)
+        val tmp = File.createTempFile("backup-stamp", ".db", app.cacheDir)
+        try {
+            tmp.writeBytes(snap)
+            val db = SQLiteDatabase.openDatabase(tmp.path, null, null, SQLiteDatabase.OPEN_READWRITE)
+            try {
+                stampBackupTables(db, app)
+            } finally {
+                try {
+                    db.close()
+                } catch (_: Exception) {
+                }
+            }
+            return tmp.readBytes()
+        } finally {
+            try {
+                tmp.delete()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun stampBackupTables(db: SQLiteDatabase, app: Context) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS backup_meta(k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS backup_prefs(store TEXT NOT NULL, key TEXT NOT NULL, type TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(store, key))")
+        db.delete("backup_meta", null, null)
+        db.delete("backup_prefs", null, null)
+        insertMeta(db, "at", System.currentTimeMillis().toString())
+        insertMeta(db, "app", "kiloapp")
+        insertMeta(db, "format", "2")
+        snapshotPrefsInto(
+            db, "default",
+            PreferenceManager.getDefaultSharedPreferences(app).all, DEFAULT_PREF_ALLOW
+        )
+        snapshotPrefsInto(
+            db, "sms",
+            app.getSharedPreferences("sms_store", Context.MODE_PRIVATE).all, SMS_PREF_ALLOW
+        )
+        for (e in ProfileManager.getInstance(app).exportEntries()) {
+            insertPref(db, "profile", e.key, e.type, e.value)
+        }
+    }
+
+    private fun snapshotPrefsInto(
+        db: SQLiteDatabase, store: String, all: Map<String, *>, allow: Set<String>
+    ) {
+        for ((k, v) in all) {
+            if (k !in allow) continue
+            val (t, s) = when (v) {
+                is String -> "s" to v
+                is Int -> "i" to v.toString()
+                is Boolean -> "b" to v.toString()
+                is Float -> "f" to v.toString()
+                is Long -> "l" to v.toString()
+                else -> continue
+            }
+            insertPref(db, store, k, t, s)
+        }
+    }
+
+    private fun insertMeta(db: SQLiteDatabase, k: String, v: String) {
+        val c = ContentValues().apply {
+            put("k", k)
+            put("v", v)
+        }
+        db.insertWithOnConflict("backup_meta", null, c, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    private fun insertPref(db: SQLiteDatabase, store: String, k: String, t: String, v: String) {
+        val c = ContentValues().apply {
+            put("store", store)
+            put("key", k)
+            put("type", t)
+            put("value", v)
+        }
+        db.insertWithOnConflict("backup_prefs", null, c, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    data class BackupSummary(
+        val at: Long,
+        val fileCount: Int,
+        val rowCount: Int,
+        val checkCount: Int,
+        val reqCount: Int,
+        val styleCount: Int,
+        val hiddenCount: Int,
+        val txCount: Int,
+        val balance: Double,
+        val profileCount: Int,
+    )
+
+    /**
+     * Counts for the restore confirm dialog. Throws when the bytes are not
+     * a backup db. Blocking: call from Dispatchers.IO only.
+     */
+    fun summarize(context: Context, bytes: ByteArray): BackupSummary {
+        if (!isBackupDb(bytes)) throw IllegalArgumentException("Not a KiloApp backup")
+        val tmp = File.createTempFile("backup-read", ".db", context.applicationContext.cacheDir)
+        try {
+            tmp.writeBytes(bytes)
+            val db = SQLiteDatabase.openDatabase(tmp.path, null, null, SQLiteDatabase.OPEN_READONLY)
+            try {
+                fun count(sql: String): Int = try {
+                    db.rawQuery(sql, null).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+                } catch (_: Exception) {
+                    0
+                }
+                fun meta(k: String): String = try {
+                    db.rawQuery("SELECT v FROM backup_meta WHERE k='$k'", null).use { c ->
+                        if (c.moveToFirst()) c.getString(0) else ""
+                    }
+                } catch (_: Exception) {
+                    ""
+                }
+                val balance = try {
+                    db.rawQuery("SELECT v FROM wallet_kv WHERE k='balance'", null).use { c ->
+                        if (c.moveToFirst()) c.getString(0)?.toDoubleOrNull() ?: 0.0 else 0.0
+                    }
+                } catch (_: Exception) {
+                    0.0
+                }
+                return BackupSummary(
+                    at = meta("at").toLongOrNull() ?: 0L,
+                    fileCount = count("SELECT COUNT(*) FROM files"),
+                    rowCount = count("SELECT COUNT(*) FROM rows"),
+                    checkCount = count("SELECT COUNT(*) FROM row_checks"),
+                    reqCount = count("SELECT COUNT(*) FROM check_reqs"),
+                    styleCount = count("SELECT COUNT(*) FROM styles"),
+                    hiddenCount = count("SELECT COUNT(*) FROM hidden_cols"),
+                    txCount = count("SELECT COUNT(*) FROM wallet_tx"),
+                    balance = balance,
+                    profileCount = count("SELECT COUNT(*) FROM backup_prefs WHERE store='profile'"),
+                )
+            } finally {
+                try {
+                    db.close()
+                } catch (_: Exception) {
+                }
+            }
+        } finally {
+            try {
+                tmp.delete()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
+     * Replaces the live db from backup bytes, then writes the stamped prefs
+     * back (default + sms prefs, proxy profiles). The db swap lands first:
+     * prefs apply only after it succeeded, so a bad file never leaves a
+     * half-restored install. Blocking: call from Dispatchers.IO only. The
+     * caller refreshes live views afterwards (SheetStore.onBackupRestored on
+     * any thread, SmsWatcher.reloadAfterRestore on Main).
+     */
+    fun restore(context: Context, bytes: ByteArray) {
+        if (!isBackupDb(bytes)) throw IllegalArgumentException("Not a KiloApp backup")
+        val app = context.applicationContext
+        if (!SheetStore.get(app).replaceDatabase(bytes)) {
+            throw IllegalStateException("Could not replace database")
+        }
+        applyBackupPrefs(app, bytes)
+    }
+
+    private fun applyBackupPrefs(app: Context, bytes: ByteArray) {
+        val tmp = File.createTempFile("backup-apply", ".db", app.cacheDir)
+        try {
+            tmp.writeBytes(bytes)
+            val db = SQLiteDatabase.openDatabase(tmp.path, null, null, SQLiteDatabase.OPEN_READONLY)
+            try {
+                val byStore = mutableMapOf<String, MutableList<ProfileEntry>>()
+                try {
+                    db.rawQuery("SELECT store, key, type, value FROM backup_prefs", null).use { c ->
+                        while (c.moveToNext()) {
+                            val store = c.getString(0)
+                            val e = ProfileEntry(
+                                key = c.getString(1),
+                                type = c.getString(2),
+                                value = c.getString(3)
+                            )
+                            byStore.getOrPut(store) { mutableListOf() }.add(e)
+                        }
+                    }
+                } catch (_: Exception) {
+                    // No stamped prefs (e.g. a raw db handed in by hand):
+                    // the tables alone still restored above.
+                    return
+                }
+                applyPrefStore(
+                    PreferenceManager.getDefaultSharedPreferences(app),
+                    byStore["default"].orEmpty(), DEFAULT_PREF_ALLOW
+                )
+                applyPrefStore(
+                    app.getSharedPreferences("sms_store", Context.MODE_PRIVATE),
+                    byStore["sms"].orEmpty(), SMS_PREF_ALLOW
+                )
+                val profiles = byStore["profile"].orEmpty()
+                if (profiles.isNotEmpty()) {
+                    ProfileManager.getInstance(app).importEntries(profiles)
+                }
+            } finally {
+                try {
+                    db.close()
+                } catch (_: Exception) {
+                }
+            }
+        } finally {
+            try {
+                tmp.delete()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun applyPrefStore(
+        prefs: android.content.SharedPreferences,
+        entries: List<ProfileEntry>,
+        allow: Set<String>
+    ) {
+        if (entries.isEmpty()) return
+        val ed = prefs.edit()
+        for (e in entries) {
+            if (e.key !in allow) continue
+            when (e.type) {
+                "s" -> ed.putString(e.key, e.value)
+                "i" -> e.value.toIntOrNull()?.let { ed.putInt(e.key, it) }
+                "b" -> ed.putBoolean(e.key, e.value.toBoolean())
+                "f" -> e.value.toFloatOrNull()?.let { ed.putFloat(e.key, it) }
+                "l" -> e.value.toLongOrNull()?.let { ed.putLong(e.key, it) }
+            }
+        }
+        ed.apply()
     }
 
     /** Filesystem-safe export name. Wider than the workbook's own 31-character
@@ -295,10 +575,12 @@ object SheetBackup {
             // with a spreadsheet MIME, so MediaStore appended an extension and
             // every run added another "profiles.txt (N).xlsx". Those rows were
             // never in the tracked set, so clear them once. Bounded, inside our
-            // own config folder, and matched on our own naming pattern only.
-            deleteDownloads(app, DIR_CONFIG, "profiles.txt.xlsx")
+            // own retired config folder, and matched on our own naming only.
+            // The old kiloapp-backup.json/xlsx and profiles.txt need no
+            // special case: they were tracked, so the loop above prunes them.
+            deleteDownloads(app, "config", "profiles.txt.xlsx")
             for (n in 1..20) {
-                if (!deleteDownloads(app, DIR_CONFIG, "profiles.txt ($n).xlsx")) break
+                if (!deleteDownloads(app, "config", "profiles.txt ($n).xlsx")) break
             }
         }
         prefs(app).edit().putStringSet(PREF_BACKUP_XLSX, keep.toSet()).apply()
@@ -312,6 +594,7 @@ object SheetBackup {
     internal fun mimeFor(name: String): String = when {
         name.endsWith(".json") -> JSON_MIME
         name.endsWith(".txt") -> "text/plain"
+        name.endsWith(".db") -> "application/octet-stream"
         else -> XLSX_MIME
     }
 
@@ -323,15 +606,19 @@ object SheetBackup {
         return if (dir.isBlank()) base + "/" else "$base/$dir/"
     }
 
+    private const val LOCAL_DIR = "backup"
+    private const val LOCAL_DB = "backup.db"
+    private const val LOCAL_PREV_DB = "backup.prev.db"
+
     /** App-private copy of the last two generations. Dies with the install
      *  like the database does, but costs nothing and gives in-app restore a
      *  source when the user has not picked a folder yet. */
     private fun writeLocalRotating(context: Context, bytes: ByteArray) {
         try {
-            val dir = File(context.applicationContext.filesDir, "backup").apply { mkdirs() }
-            val current = File(dir, JSON_NAME)
+            val dir = File(context.applicationContext.filesDir, LOCAL_DIR).apply { mkdirs() }
+            val current = File(dir, LOCAL_DB)
             if (current.exists() && current.length() > 0) {
-                current.copyTo(File(dir, PREV_JSON_NAME), overwrite = true)
+                current.copyTo(File(dir, LOCAL_PREV_DB), overwrite = true)
             }
             current.writeBytes(bytes)
         } catch (e: Exception) {
@@ -339,13 +626,13 @@ object SheetBackup {
         }
     }
 
-    fun localPrevious(context: Context): String? = readLocal(context, PREV_JSON_NAME)
+    fun localPrevious(context: Context): ByteArray? = readLocal(context, LOCAL_PREV_DB)
 
-    fun localCurrent(context: Context): String? = readLocal(context, JSON_NAME)
+    fun localCurrent(context: Context): ByteArray? = readLocal(context, LOCAL_DB)
 
-    private fun readLocal(context: Context, name: String): String? = try {
-        File(File(context.applicationContext.filesDir, "backup"), name)
-            .takeIf { it.exists() && it.length() > 0 }?.readText()
+    private fun readLocal(context: Context, name: String): ByteArray? = try {
+        File(File(context.applicationContext.filesDir, LOCAL_DIR), name)
+            .takeIf { it.exists() && it.length() > 0 }?.readBytes()
     } catch (e: Exception) {
         Log.w(TAG, "Could not read $name", e)
         null
@@ -456,270 +743,6 @@ object SheetBackup {
         }
     }
 
-// ── JSON: the lossless, canonical shape ────────────────────────────────
-
-    fun toJson(s: BackupSnapshot): String {
-        val root = JSONObject()
-        root.put("format", FORMAT)
-        root.put("app", "kiloapp")
-        root.put("at", s.at)
-
-        val files = JSONArray()
-        val rows = JSONArray()
-        val styles = JSONArray()
-        val hidden = JSONArray()
-        val checks = JSONArray()
-        val reqs = JSONArray()
-
-        for (f in s.files) {
-            files.put(
-                JSONObject()
-                    .put("id", f.id).put("name", f.name).put("preset", f.preset.name)
-                    .put("password", f.password).put("archived", f.archived)
-                    .put("deletedAt", f.deletedAt).put("createdAt", f.createdAt)
-                    .put("updatedAt", f.updatedAt).put("seq", f.seq)
-            )
-            for (r in s.rows[f.id].orEmpty()) {
-                rows.put(
-                    JSONObject()
-                        .put("fileId", f.id).put("rowIdx", r.rowIdx)
-                        .put("cookies", r.cookies).put("twofakey", r.twofakey)
-                        .put("uid", r.uid).put("status", r.status)
-                        .put("hold", r.hold).put("approved", r.approved).put("dead", r.dead)
-                )
-            }
-            for ((key, st) in s.styles[f.id].orEmpty()) {
-                styles.put(
-                    JSONObject()
-                        .put("fileId", f.id).put("key", key)
-                        .put("bg", st.bg).put("color", st.color).put("bold", st.bold)
-                )
-            }
-            s.hidden[f.id].orEmpty().forEach { hidden.put(JSONObject().put("fileId", f.id).put("colKey", it)) }
-            for ((idx, c) in s.checks[f.id].orEmpty()) {
-                checks.put(
-                    JSONObject()
-                        .put("fileId", f.id).put("rowIdx", idx).put("checkedAt", c.checkedAt)
-                        .put("uidOk", c.uidOk).put("uidError", c.uidError)
-                        .put("simplePage", c.simplePage).put("simpleNumber", c.simpleNumber)
-                        .put("simpleError", c.simpleError).put("advEligible", c.advEligible)
-                        .put("advPage", c.advPage).put("advNumber", c.advNumber)
-                        .put("advBan", c.advBan).put("advError", c.advError)
-                )
-            }
-            for ((idx, list) in s.reqs[f.id].orEmpty()) {
-                for ((i, q) in list.withIndex()) {
-                    reqs.put(
-                        JSONObject()
-                            .put("fileId", f.id).put("rowIdx", idx).put("seq", i)
-                            .put("kind", q.kind).put("method", q.method).put("url", q.url)
-                            .put("status", q.status).put("durationMs", q.durationMs)
-                            .put("reqNote", q.reqNote).put("resNote", q.resNote)
-                            .put("error", q.error).put("at", q.at)
-                    )
-                }
-            }
-        }
-        root.put("files", files)
-        root.put("rows", rows)
-        root.put("styles", styles)
-        root.put("hidden", hidden)
-        root.put("checks", checks)
-        root.put("reqs", reqs)
-        root.put("balance", s.balance)
-
-        val txs = JSONArray()
-        for (t in s.txs) {
-            txs.put(
-                JSONObject()
-                    .put("id", t.id).put("createdAt", t.createdAt).put("type", t.type)
-                    .put("amount", t.amount).put("balanceAfter", t.balanceAfter)
-                    .put("title", t.title).put("detail", t.detail)
-            )
-        }
-        root.put("txs", txs)
-
-        val profiles = JSONArray()
-        for (p in s.profiles) {
-            profiles.put(
-                JSONObject().put("k", p.key).put("t", p.type).put("v", p.value)
-            )
-        }
-        root.put("profiles", profiles)
-        return root.toString()
-    }
-
-    fun fromJson(raw: String): BackupSnapshot {
-        val root = JSONObject(raw)
-        if (root.optInt("format", 0) > FORMAT) {
-            throw IllegalArgumentException("Backup is from a newer version of the app")
-        }
-        val rows = mutableMapOf<String, MutableList<SheetRow>>()
-        val styles = mutableMapOf<String, MutableMap<String, CellStyle>>()
-        val hidden = mutableMapOf<String, MutableSet<String>>()
-        val checks = mutableMapOf<String, MutableMap<Int, RowCheck>>()
-        val reqs = mutableMapOf<String, MutableMap<Int, MutableList<CheckReq>>>()
-
-        val filesJson = root.optJSONArray("files") ?: JSONArray()
-        val files = mutableListOf<SheetFile>()
-        for (i in 0 until filesJson.length()) {
-            val o = filesJson.getJSONObject(i)
-            files.add(
-                SheetFile(
-                    id = o.getString("id"), name = o.getString("name"),
-                    preset = SheetPreset.of(o.getString("preset")), password = o.getString("password"),
-                    archived = o.optBoolean("archived", false), deletedAt = o.optLong("deletedAt", 0L),
-                    createdAt = o.optLong("createdAt", 0L), updatedAt = o.optLong("updatedAt", 0L),
-                    seq = o.optLong("seq", 0L)
-                )
-            )
-        }
-
-        val rowsJson = root.optJSONArray("rows") ?: JSONArray()
-        for (i in 0 until rowsJson.length()) {
-            val o = rowsJson.getJSONObject(i)
-            val id = o.getString("fileId")
-            rows.getOrPut(id) { mutableListOf() }.add(
-                SheetRow(
-                    rowIdx = o.getInt("rowIdx"),
-                    cookies = o.optString("cookies", ""),
-                    twofakey = o.optString("twofakey", ""),
-                    uid = o.optString("uid", ""),
-                    status = o.optString("status", ""),
-                    hold = o.optBoolean("hold", false),
-                    approved = o.optBoolean("approved", false),
-                    dead = o.optBoolean("dead", false)
-                )
-            )
-        }
-
-        val stylesJson = root.optJSONArray("styles") ?: JSONArray()
-        for (i in 0 until stylesJson.length()) {
-            val o = stylesJson.getJSONObject(i)
-            styles.getOrPut(o.getString("fileId")) { mutableMapOf() }[o.getString("key")] = CellStyle(
-                bg = o.optStringOrNull("bg"), color = o.optStringOrNull("color"),
-                bold = o.optBoolean("bold", false)
-            )
-        }
-
-        val hiddenJson = root.optJSONArray("hidden") ?: JSONArray()
-        for (i in 0 until hiddenJson.length()) {
-            val o = hiddenJson.getJSONObject(i)
-            hidden.getOrPut(o.getString("fileId")) { mutableSetOf() }.add(o.getString("colKey"))
-        }
-
-        val checksJson = root.optJSONArray("checks") ?: JSONArray()
-        for (i in 0 until checksJson.length()) {
-            val o = checksJson.getJSONObject(i)
-            checks.getOrPut(o.getString("fileId")) { mutableMapOf() }[o.getInt("rowIdx")] = RowCheck(
-                checkedAt = o.optLong("checkedAt", 0L),
-                uidOk = o.optBooleanOrNull("uidOk"),
-                uidError = o.optStringOrNull("uidError"),
-                simplePage = o.optStringOrNull("simplePage"),
-                simpleNumber = o.optStringOrNull("simpleNumber"),
-                simpleError = o.optStringOrNull("simpleError"),
-                advEligible = o.optBoolean("advEligible", false),
-                advPage = o.optStringOrNull("advPage"),
-                advNumber = o.optStringOrNull("advNumber"),
-                advBan = o.optStringOrNull("advBan"),
-                advError = o.optStringOrNull("advError")
-            )
-        }
-
-        val reqsJson = root.optJSONArray("reqs") ?: JSONArray()
-        for (i in 0 until reqsJson.length()) {
-            val o = reqsJson.getJSONObject(i)
-            reqs.getOrPut(o.getString("fileId")) { mutableMapOf() }
-                .getOrPut(o.getInt("rowIdx")) { mutableListOf() }
-                .add(
-                    CheckReq(
-                        kind = o.optString("kind", ""), method = o.optString("method", ""),
-                        url = o.optString("url", ""), status = o.optInt("status", 0),
-                        durationMs = o.optLong("durationMs", 0L),
-                        reqNote = o.optStringOrNull("reqNote"), resNote = o.optStringOrNull("resNote"),
-                        error = o.optStringOrNull("error"), at = o.optLong("at", 0L)
-                    )
-                )
-        }
-
-        val txsJson = root.optJSONArray("txs") ?: JSONArray()
-        val txs = mutableListOf<WalletTx>()
-        for (i in 0 until txsJson.length()) {
-            val o = txsJson.getJSONObject(i)
-            txs.add(
-                WalletTx(
-                    id = o.getString("id"), createdAt = o.optLong("createdAt", 0L),
-                    type = o.optString("type", ""), amount = o.optDouble("amount", 0.0),
-                    balanceAfter = o.optDouble("balanceAfter", 0.0), title = o.optString("title", ""),
-                    detail = o.optStringOrNull("detail")
-                )
-            )
-        }
-
-        val profilesJson = root.optJSONArray("profiles") ?: JSONArray()
-        val profiles = mutableListOf<ProfileEntry>()
-        for (i in 0 until profilesJson.length()) {
-            val o = profilesJson.getJSONObject(i)
-            profiles.add(
-                ProfileEntry(
-                    key = o.getString("k"), type = o.optString("t", "s"),
-                    value = o.optString("v", "")
-                )
-            )
-        }
-
-        return BackupSnapshot(
-            at = root.optLong("at", 0L), files = files, rows = rows, styles = styles,
-            hidden = hidden, checks = checks, reqs = reqs,
-            balance = root.optDouble("balance", 0.0), txs = txs, profiles = profiles
-        )
-    }
-
-    private fun JSONObject.optStringOrNull(key: String): String? =
-        if (!has(key) || isNull(key)) null else optString(key, "")
-
-    private fun JSONObject.optBooleanOrNull(key: String): Boolean? =
-        if (!has(key) || isNull(key)) null else optBoolean(key, false)
-
-// ── Restore ────────────────────────────────────────────────────────────
-
-    /** Replaces every sheet-owned table in one transaction, and overwrites the
-     *  profile settings alongside. Either the whole snapshot lands or none of
-     *  the database does, so a bad file can never leave a half-restored
-     *  install. Profiles go first: that write is cheap and can fail on its
-     *  own, and doing it before the transaction means a rejected profile
-     *  import leaves the larger sheet data untouched. Returns the file, row
-     *  and profile counts on success. */
-    fun restore(context: Context, bytes: ByteArray): Triple<Int, Int, Int> {
-        val snap = parse(bytes)
-        if (snap.profiles.isNotEmpty()) {
-            ProfileManager.getInstance(context.applicationContext).importEntries(snap.profiles)
-        }
-        val db = SheetDb(context.applicationContext)
-        db.tx { d: SQLiteDatabase ->
-            db.clearAllSheets(d)
-            for (f in snap.files) db.insertFile(d, f)
-            for (f in snap.files) {
-                val id = f.id
-                snap.rows[id]?.let { db.saveAllRows(d, id, it) }
-                snap.styles[id]?.forEach { (key, st) ->
-                    val parts = key.split(':', limit = 2)
-                    if (parts.size == 2) {
-                        val rowIdx = parts[0].toIntOrNull() ?: 0
-                        db.saveStyle(d, id, rowIdx, parts[1], st)
-                    }
-                }
-                snap.hidden[id]?.let { db.saveHidden(d, id, it) }
-                val ck = snap.checks[id].orEmpty()
-                val rq = snap.reqs[id].orEmpty()
-                if (ck.isNotEmpty() || rq.isNotEmpty()) db.saveCheckDetails(d, id, ck, rq)
-            }
-            db.setWalletBalance(d, snap.balance)
-            for (t in snap.txs) db.insertWalletTx(d, t)
-        }
-        return Triple(snap.files.size, snap.rowCount, snap.profileCount)
-    }
-
 // ── Pre-destructive snapshots ──────────────────────────────────────────
 
     private const val SNAP_DIR = "snapshots"
@@ -730,6 +753,8 @@ object SheetBackup {
 
     /**
      * Copy the current state aside before something that can destroy it.
+     * A full backup.db per action: the same bytes the mirror writes, so a
+     * snapshot restores through the same path.
      *
      * The rolling current/previous pair only remembers one step back, so two
      * destructive actions in a row overwrite the last good copy with an
@@ -747,8 +772,8 @@ object SheetBackup {
             val dir = File(File(app.filesDir, "backup"), SNAP_DIR).apply { mkdirs() }
             val safe = label.map { if (it.isLetterOrDigit()) it else '_' }
                 .joinToString("").trim('_').take(40).ifBlank { "change" }
-            val out = File(dir, "$SNAP_PREFIX${safe}_${System.currentTimeMillis()}.json")
-            out.writeBytes(toJson(dump(app)).toByteArray(Charsets.UTF_8))
+            val out = File(dir, "$SNAP_PREFIX${safe}_${System.currentTimeMillis()}.db")
+            out.writeBytes(backupDbBytes(app))
             pruneSnapshots(dir)
         } catch (e: Exception) {
             // A snapshot that fails must never block the action it protects.
@@ -771,10 +796,10 @@ object SheetBackup {
      *  the list needs no parse. */
     fun listSnapshots(context: Context): List<Snapshot> {
         val dir = File(File(context.applicationContext.filesDir, "backup"), SNAP_DIR)
-        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }
+        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".db") }
             ?: return emptyList()
         return files.sortedByDescending { it.lastModified() }.mapNotNull { f ->
-            val stem = f.name.removePrefix(SNAP_PREFIX).removeSuffix(".json")
+            val stem = f.name.removePrefix(SNAP_PREFIX).removeSuffix(".db")
             val cut = stem.lastIndexOf('_')
             if (cut <= 0) return@mapNotNull null
             Snapshot(
@@ -786,34 +811,10 @@ object SheetBackup {
         }
     }
 
-    fun readSnapshot(s: Snapshot): String? = try {
-        s.file.readText()
+    fun readSnapshot(s: Snapshot): ByteArray? = try {
+        s.file.takeIf { it.exists() && it.length() > 0 }?.readBytes()
     } catch (e: Exception) {
-        Log.w(TAG, "Could not read snapshot ${s.file.name}", e)
+        Log.w(TAG, "Could not read snapshot " + s.file.name, e)
         null
     }
-
-// ── The readable twin, and the reader for it ───────────────────────────
-
-    /**
-     * Load backup: accept either shape. The JSON dump is the canonical path
-     * and the only one that carries styles, hidden columns and check history;
-     * the workbook is the fallback for when all that survives is the file the
-     * user could see and open. Detected by content, not by extension, because
-     * a provider can hand back any name and a spreadsheet app may rewrite one.
-     */
-    fun parse(bytes: ByteArray): BackupSnapshot {
-        if (isWorkbook(bytes)) {
-            return SheetBackupXlsx.read(bytes)
-                ?: throw IllegalArgumentException("Not a KiloApp backup workbook")
-        }
-        return fromJson(String(bytes, Charsets.UTF_8))
-    }
-
-    /** Local files every PKZip file starts with, so an xlsx is recognised
-     *  without trusting the name the picker reported. Public because a
-     *  workbook carries no dump timestamp, and the restore confirmation
-     *  should not claim a date it does not have. */
-    fun isWorkbook(bytes: ByteArray): Boolean =
-        bytes.size >= 2 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()
 }

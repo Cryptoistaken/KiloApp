@@ -47,7 +47,7 @@ import kotlin.coroutines.resumeWithException
 object DriveSync {
     const val DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
     const val FOLDER_NAME = "KiloApp"
-    val SUBFOLDERS = listOf("backup", "files", "archive", "config")
+    val SUBFOLDERS = listOf("backup", "files", "archive", "profiles")
     private const val FOLDER_MIME = "application/vnd.google-apps.folder"
     private const val TIMEOUT_MS = 20000
 
@@ -217,19 +217,19 @@ object DriveSync {
         return PushResult(uploaded, pruned)
     }
 
-    /** Raw bytes of backup/kiloapp-backup.json, or null when it is not there.
-     *  Feeds SheetBackup.restore in Phase 3. */
-    fun pullBackupJson(token: String, folders: FolderIds): ByteArray? {
+    /** Raw bytes of backup/backup.db, or null when it is not there.
+     *  Feeds SheetBackup.restore. */
+    fun pullBackupDb(token: String, folders: FolderIds): ByteArray? {
         val fid = folders.childFor("backup") ?: return null
-        val id = listFiles(token, fid)[SheetBackup.JSON_NAME]?.id ?: return null
+        val id = listFiles(token, fid)[SheetBackup.DB_NAME]?.id ?: return null
         return driveBytes(token, id)
     }
 
-    /** Remote modifiedTime of the canonical json, 0 when absent/unreadable. */
-    fun remoteJsonTime(token: String, folders: FolderIds): Long {
+    /** Remote modifiedTime of the backup db, 0 when absent/unreadable. */
+    fun remoteDbTime(token: String, folders: FolderIds): Long {
         return try {
             val fid = folders.childFor("backup") ?: return 0
-            val id = listFiles(token, fid)[SheetBackup.JSON_NAME]?.id ?: return 0
+            val id = listFiles(token, fid)[SheetBackup.DB_NAME]?.id ?: return 0
             val t = driveCall(token, "GET", "https://www.googleapis.com/drive/v3/files/$id?fields=modifiedTime", null)
                 .optString("modifiedTime", "")
             parseTime(t)
@@ -248,7 +248,7 @@ object DriveSync {
             if (!configured() || !enabled(app) || account(app) == null) return
             val token = silentToken(app) ?: run { setLastError(app, "Sign in again"); return }
             val folders = cachedFolders(app) ?: ensureFolders(app, token)
-            if (remoteJsonTime(token, folders) > snapAt) {
+            if (remoteDbTime(token, folders) > snapAt) {
                 setLastError(app, "Drive has a newer backup")
                 return
             }

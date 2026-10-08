@@ -12,9 +12,40 @@ private const val SHEET_HISTORY_LIMIT = 20
 // crashes and app updates. Online sync (when added) only backs this up.
 // Note: Android deletes app-private data on uninstall, so uninstall survival
 // needs a SAF export copy or an online backup, never this DB alone.
-class SheetDb(context: Context) : SQLiteOpenHelper(context, "sheet.db", null, 3) {
+class SheetDb(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 3) {
+    companion object {
+        const val DB_NAME = "sheet.db"
+    }
+
     init {
         setWriteAheadLoggingEnabled(true)
+    }
+
+    /**
+     * Consistent bytes of the whole database for backup. The WAL is
+     * checkpointed back into the main file first, so the single main file
+     * is the complete database. Best-effort retries: even if a writer is
+     * mid-flight, the main file alone is still a consistent snapshot
+     * (the in-flight frames simply stay in the WAL and are left out).
+     * Blocking: call from Dispatchers.IO only.
+     */
+    fun snapshotBytes(context: Context): ByteArray {
+        val db = writableDatabase
+        for (i in 0 until 5) {
+            var clean = false
+            try {
+                db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { c ->
+                    clean = c.moveToFirst() && c.getInt(0) == 0
+                }
+            } catch (_: Exception) {
+            }
+            if (clean) break
+            try {
+                Thread.sleep(100)
+            } catch (_: Exception) {
+            }
+        }
+        return context.getDatabasePath(DB_NAME).readBytes()
     }
 
     override fun onCreate(db: SQLiteDatabase) {

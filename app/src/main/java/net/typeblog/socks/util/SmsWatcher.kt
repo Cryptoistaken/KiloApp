@@ -527,6 +527,16 @@ object SmsWatcher {
         paused = false
     }
 
+    /**
+     * Reloads numbers and counters from prefs after a backup replaced them.
+     * Main thread only: the lists are Compose state.
+     */
+    fun reloadAfterRestore() {
+        load()
+        loadCounters()
+        publishWaitingNumbers()
+    }
+
     fun pauseWaiting(context: Context) {
         paused = true
         cancelHeartbeat(context)

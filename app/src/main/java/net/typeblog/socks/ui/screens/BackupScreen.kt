@@ -50,6 +50,7 @@ import net.typeblog.socks.util.Constants.PREF_BACKUP_ENABLED
 import net.typeblog.socks.util.Constants.PREF_DRIVE_ENABLED
 import net.typeblog.socks.util.sheet.DriveSync
 import net.typeblog.socks.util.DocNames
+import net.typeblog.socks.util.SmsWatcher
 import net.typeblog.socks.util.sheet.SheetBackup
 import net.typeblog.socks.util.sheet.SheetStore
 
@@ -117,24 +118,22 @@ fun BackupScreen(
     fun stage(
         bytes: ByteArray,
         source: String,
-        snap: net.typeblog.socks.util.sheet.SheetBackup.BackupSnapshot
+        sum: net.typeblog.socks.util.sheet.SheetBackup.BackupSummary
     ): StagedBackup {
         val live = liveFiles + liveArchive
         return StagedBackup(
             bytes = bytes,
             source = source,
-            // A workbook carries no dump time, and the moment it was read
-            // would look like a fresh backup.
-            takenAt = if (SheetBackup.isWorkbook(bytes)) null else snap.at.takeIf { it > 0L },
-            fileCount = snap.files.size,
-            rowCount = snap.rowCount,
-            checkCount = snap.checks.values.sumOf { it.size },
-            reqCount = snap.reqs.values.sumOf { it.values.sumOf { l -> l.size } },
-            styleCount = snap.styles.values.sumOf { it.size },
-            hiddenCount = snap.hidden.values.sumOf { it.size },
-            txCount = snap.txs.size,
-            profileCount = snap.profileCount,
-            balance = snap.balance,
+            takenAt = sum.at.takeIf { it > 0L },
+            fileCount = sum.fileCount,
+            rowCount = sum.rowCount,
+            checkCount = sum.checkCount,
+            reqCount = sum.reqCount,
+            styleCount = sum.styleCount,
+            hiddenCount = sum.hiddenCount,
+            txCount = sum.txCount,
+            profileCount = sum.profileCount,
+            balance = sum.balance,
             currentFiles = live.size,
             currentRows = live.sumOf { it.rowCount },
             currentTxCount = liveTxs.size
@@ -143,14 +142,13 @@ fun BackupScreen(
 
     // Reads a local generation and stages it behind the same confirmation the
     // file picker uses, so every restore path reports what it will replace.
-    fun stageLocal(read: (Context) -> String?, missing: String, source: String) {
+    fun stageLocal(read: (Context) -> ByteArray?, missing: String, source: String) {
         scope.launch {
             busy = true
-            val local = withContext(Dispatchers.IO) { read(context) }
-            val bytes = local?.toByteArray(Charsets.UTF_8)
-            val snap = if (bytes == null) null else withContext(Dispatchers.IO) {
+            val bytes = withContext(Dispatchers.IO) { read(context) }
+            val sum = if (bytes == null) null else withContext(Dispatchers.IO) {
                 try {
-                    SheetBackup.parse(bytes)
+                    SheetBackup.summarize(context, bytes)
                 } catch (_: Exception) {
                     null
                 }
@@ -158,8 +156,8 @@ fun BackupScreen(
             busy = false
             when {
                 bytes == null -> toast(context, missing)
-                snap == null -> toast(context, "That copy could not be read.")
-                else -> staged = stage(bytes, source, snap)
+                sum == null -> toast(context, "That copy could not be read.")
+                else -> staged = stage(bytes, source, sum)
             }
         }
     }
@@ -191,9 +189,8 @@ fun BackupScreen(
                 try {
                     val bytes = context.contentResolver.openInputStream(uri)
                         ?.use { it.readBytes() } ?: return@withContext null
-                    // SheetBackup.parse sniffs JSON vs workbook by content.
                     val name = DocNames.display(context, uri, "the file you picked")
-                    Triple(bytes, SheetBackup.parse(bytes), name)
+                    Triple(bytes, SheetBackup.summarize(context, bytes), name)
                 } catch (_: Exception) {
                     null
                 }
@@ -446,17 +443,17 @@ fun BackupScreen(
                                                 val bytes = withContext(Dispatchers.IO) {
                                                     val folders = DriveSync.cachedFolders(context)
                                                         ?: DriveSync.ensureFolders(context, token)
-                                                    DriveSync.pullBackupJson(token, folders)
+                                                    DriveSync.pullBackupDb(token, folders)
                                                 }
-                                                val snap = try {
-                                                    bytes?.let { SheetBackup.parse(it) }
+                                                val sum = try {
+                                                    bytes?.let { SheetBackup.summarize(context, it) }
                                                 } catch (_: Exception) {
                                                     null
                                                 }
-                                                if (bytes == null || snap == null) {
+                                                if (bytes == null || sum == null) {
                                                     toast(context, "No Drive backup yet.")
                                                 } else {
-                                                    staged = stage(bytes, "Google Drive", snap)
+                                                    staged = stage(bytes, "Google Drive", sum)
                                                 }
                                             }
                                         } catch (e: Exception) {
@@ -492,10 +489,10 @@ fun BackupScreen(
                 SettingsItem(
                     icon = painterResource(R.drawable.ic_ss_upload),
                     label = "Load backup",
-                    description = "Replace everything from a .json or .xlsx backup",
+                    description = "Replace everything from a backup.db file",
                     showChevron = false,
                     enabled = !busy,
-                    onClick = { loadLauncher.launch(arrayOf("application/json", "*/*")) }
+                    onClick = { loadLauncher.launch(arrayOf("*/*")) }
                 )
                 SettingsItem(
                     icon = painterResource(R.drawable.lucide_rotate_cw),
@@ -538,25 +535,24 @@ fun BackupScreen(
                             showChevron = false,
                             enabled = !busy,
                             onClick = {
-                                val raw = SheetBackup.readSnapshot(s)
-                                if (raw == null) {
+                                val bytes = SheetBackup.readSnapshot(s)
+                                if (bytes == null) {
                                     toast(context, "That copy could not be read.")
                                 } else {
                                     scope.launch {
                                         busy = true
-                                        val bytes = raw.toByteArray(Charsets.UTF_8)
-                                        val snap = withContext(Dispatchers.IO) {
+                                        val sum = withContext(Dispatchers.IO) {
                                             try {
-                                                SheetBackup.parse(bytes)
+                                                SheetBackup.summarize(context, bytes)
                                             } catch (_: Exception) {
                                                 null
                                             }
                                         }
                                         busy = false
-                                        if (snap == null) {
+                                        if (sum == null) {
                                             toast(context, "That copy could not be read.")
                                         } else {
-                                            staged = stage(bytes, "Saved before ${s.label}", snap)
+                                            staged = stage(bytes, "Saved before ${s.label}", sum)
                                         }
                                     }
                                 }
@@ -589,6 +585,7 @@ fun BackupScreen(
                         // Every cached view in the store predates
                         // the tables we just replaced.
                         SheetStore.get(context).onBackupRestored()
+                        SmsWatcher.reloadAfterRestore()
                         toast(context, "Backup restored.")
                     } else {
                         toast(context, "That backup could not be restored.")
