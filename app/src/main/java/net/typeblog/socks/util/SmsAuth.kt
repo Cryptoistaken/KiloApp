@@ -98,6 +98,31 @@ object SmsAuth {
         }
     }
 
+    /**
+     * Role check for the saved session. Null on non-200 or parse failure,
+     * else the boxed isAdmin flag. Blocking: call from Dispatchers.IO only.
+     */
+    fun me(): Boolean? {
+        val cookie = session()
+        if (cookie.isEmpty()) return null
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (URL(BuildConfig.KILOSMS_URL + "/admin/api/me").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("Cookie", "admin_session=$cookie")
+                connectTimeout = TIMEOUT_MS
+                readTimeout = TIMEOUT_MS
+            }
+            if (conn.responseCode != 200) return null
+            JSONObject(conn.inputStream.bufferedReader().readText()).optBoolean("isAdmin")
+        } catch (e: Exception) {
+            Log.w(TAG, "me failed: ${e.message}")
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
     /** Best-effort server-side logout. Blocking: call from Dispatchers.IO only. */
     fun logoutRemote() {
         val cookie = session()

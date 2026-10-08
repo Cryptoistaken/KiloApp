@@ -96,13 +96,20 @@ object SmsGateway {
         }
     }
 
+    private fun safeStr(o: JSONObject, key: String): String {
+        if (o.isNull(key)) return ""
+        val v = o.optString(key)
+        if (v.isBlank() || v.equals("null", ignoreCase = true)) return ""
+        return v
+    }
+
     /**
      * Server-checked provisioning: the bot round-robins its providers and
      * screens every number through its checker fleet before keeping the
      * ones matching [mode] (f = fresh, u = used, null = any).
      * The response is NDJSON progress lines plus one final result line.
      */
-    fun generate(range: String, mode: Char?): GenerateResult? {
+    fun generate(range: String, mode: Char?, onProgress: ((String) -> Unit)? = null): GenerateResult? {
         val conn = authed("/api/ext/generate", GENERATE_TIMEOUT_MS) ?: return null
         return try {
             val body = JSONObject()
@@ -119,7 +126,25 @@ object SmsGateway {
                 Log.w(TAG, "POST /api/ext/generate -> ${conn.responseCode}")
                 return GenerateResult(null, error = "Server error ${conn.responseCode}")
             }
-            val lines = conn.inputStream.bufferedReader().readLines()
+            val lines = mutableListOf<String>()
+            conn.inputStream.bufferedReader().use { r ->
+                while (true) {
+                    val line = r.readLine() ?: break
+                    val t = line.trim()
+                    if (t.startsWith("{")) {
+                        try {
+                            val o = JSONObject(t)
+                            if (o.optString("type") == "progress") {
+                                val text = safeStr(o, "text")
+                                if (text.isNotEmpty()) onProgress?.invoke(text)
+                                continue
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                    lines.add(line)
+                }
+            }
             for (i in lines.size - 1 downTo 0) {
                 val line = lines[i].trim()
                 if (!line.startsWith("{")) continue
@@ -143,15 +168,15 @@ object SmsGateway {
                                 error = if (down) "checker unavailable" else "none matching",
                             )
                         }
-                        val fullNumber = n.optString("fullNumber")
+                        val fullNumber = safeStr(n, "fullNumber")
                         val digits = fullNumber.filter { it.isDigit() }
                         val st = o.optJSONObject("stats")
                         return GenerateResult(
                             GatewayNumber(
-                                full = digits.ifEmpty { n.optString("number") },
-                                display = fullNumber.ifEmpty { "+" + n.optString("number") },
-                                country = n.optString("country").ifEmpty { "Unknown" },
-                                range = n.optString("range").ifEmpty { range },
+                                full = digits.ifEmpty { safeStr(n, "number") },
+                                display = fullNumber.ifEmpty { "+" + safeStr(n, "number") },
+                                country = safeStr(n, "country").ifEmpty { "Unknown" },
+                                range = safeStr(n, "range").ifEmpty { range },
                                 verified = n.optBoolean("verified"),
                                 used = n.optBoolean("used"),
                             ),
@@ -180,8 +205,8 @@ object SmsGateway {
         if (!root.optBoolean("ok") || !root.optBoolean("found")) {
             return OtpState(null, emptyList())
         }
-        val code = root.optString("code").ifEmpty { null } ?: return OtpState(null, emptyList())
-        val text = root.optString("message")
+        val code = safeStr(root, "code").ifEmpty { null } ?: return OtpState(null, emptyList())
+        val text = safeStr(root, "message")
         return OtpState(code, listOf(OtpMessage(code, text, System.currentTimeMillis())))
     }
 
@@ -194,15 +219,15 @@ object SmsGateway {
         val arr = root.optJSONArray("feed") ?: return out
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
-            val msg = o.optString("message")
-            val range = o.optString("range")
+            val msg = safeStr(o, "message")
+            val range = safeStr(o, "range")
             if (range.isEmpty()) continue
             out.add(
                 FeedItem(
                     masked = if (range.startsWith("+")) range else "+$range",
-                    svc = o.optString("sid"),
-                    method = o.optString("method"),
-                    app = o.optString("app"),
+                    svc = safeStr(o, "sid"),
+                    method = safeStr(o, "method"),
+                    app = safeStr(o, "app"),
                     code = codeRe.find(msg.replace(" ", ""))?.value ?: "",
                     msg = msg,
                     range = range,

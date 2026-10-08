@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -61,6 +62,7 @@ import net.typeblog.socks.util.SMS_EXPIRE_SEC
 import net.typeblog.socks.util.SmsCountry
 import net.typeblog.socks.util.SmsMsg
 import net.typeblog.socks.util.SmsNum
+import net.typeblog.socks.util.SmsWatcher
 import net.typeblog.socks.util.smsTimeAgo
 import kotlin.math.roundToInt
 
@@ -476,7 +478,17 @@ internal fun ConfirmSheet(country: SmsCountry, busy: Boolean, onGet: (String) ->
             enabled = !busy,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (busy) "..." else "Get number")
+            Text(if (busy) "Waiting..." else "Get number")
+        }
+        if (busy) {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = SmsWatcher.progress.ifEmpty { "Getting numbers..." },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -529,8 +541,9 @@ internal fun ItemSheet(
             ExpiryRing(left, SMS_EXPIRE_SEC, expired)
         }
         if (waiting) {
+            val waitingText = SmsWatcher.progress.ifEmpty { "Waiting for SMS..." }
             Text(
-                text = "Waiting for SMS...",
+                text = waitingText,
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)

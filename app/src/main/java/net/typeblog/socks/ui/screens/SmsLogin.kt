@@ -71,8 +71,15 @@ internal fun SmsLoginGate() {
             }
             if (cookie != null) {
                 SmsAuth.saveSession(cookie)
-                SmsWatcher.loggedIn = true
-                SmsWatcher.refreshNow()
+                val admin = withContext(Dispatchers.IO) { SmsAuth.me() }
+                if (admin == null) {
+                    SmsAuth.clear()
+                    error = "Login rejected. Ask admin for access."
+                } else {
+                    SmsWatcher.isAdmin = admin
+                    SmsWatcher.loggedIn = true
+                    SmsWatcher.refreshNow()
+                }
             } else {
                 error = "Not yet verified. Tap Login in the bot and try again."
             }

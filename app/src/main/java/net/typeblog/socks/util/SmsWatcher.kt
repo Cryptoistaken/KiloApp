@@ -372,10 +372,12 @@ object SmsWatcher {
     val countries = mutableStateListOf<SmsCountry>()
     var now by mutableLongStateOf(System.currentTimeMillis())
     var busy by mutableStateOf(false)
+    var progress by mutableStateOf("")
     var error by mutableStateOf("")
     var errorAt by mutableLongStateOf(0L)
     var revision by mutableLongStateOf(0L)
     var loggedIn by mutableStateOf(false)
+    var isAdmin by mutableStateOf(false)
 
     /** Immediate feed refresh, e.g. right after login instead of the 60s tick. */
     fun refreshNow() {
@@ -647,13 +649,16 @@ object SmsWatcher {
                 return n
             }
 
-            val res = withContext(Dispatchers.IO) { SmsGateway.generate(pat, mode) }
+            val res = withContext(Dispatchers.IO) {
+                SmsGateway.generate(pat, mode) { text -> scope.launch { progress = text } }
+            }
             if (res?.number != null) {
                 val g = res.number
                 bumpChecked(res.checked)
                 if (res.discarded > 0) bumpSkipped(res.discarded)
                 if (g.verified) bumpFresh()
                 busy = false
+                progress = ""
                 app?.let {
                     SmsOtpService.start(it)
                     armHeartbeat(it)
@@ -664,7 +669,9 @@ object SmsWatcher {
             // Server could not serve a screened number: retry unchecked and
             // label locally with the on-device probe as a fallback.
             if (mode != null) {
-                val plain = withContext(Dispatchers.IO) { SmsGateway.generate(pat, null) }
+                val plain = withContext(Dispatchers.IO) {
+                    SmsGateway.generate(pat, null) { text -> scope.launch { progress = text } }
+                }
                 val g = plain?.number
                 if (g != null && g.full.isNotEmpty()) {
                     val r = withContext(Dispatchers.IO) { SmsFresh.check(g.full) }
@@ -672,6 +679,7 @@ object SmsWatcher {
                     if (!r.ok) {
                         SmsLog.log(app, "CHECK", "${g.full} -> UNKNOWN (${r.error})")
                         busy = false
+                        progress = ""
                         fail("Fresh check unavailable, try again")
                         app?.let { SmsNotify.buzzFail(it) }
                         onDone(keep(g, false, false))
@@ -680,6 +688,7 @@ object SmsWatcher {
                     SmsLog.log(app, "CHECK", "${g.full} -> ${if (r.fresh) "FRESH" else "USED"} (local fallback)")
                     if (r.fresh) bumpFresh() else bumpSkipped(1)
                     busy = false
+                    progress = ""
                     app?.let {
                         SmsOtpService.start(it)
                         armHeartbeat(it)
@@ -689,6 +698,7 @@ object SmsWatcher {
                 }
             }
             busy = false
+            progress = ""
             fail(if (!res?.error.isNullOrEmpty()) res!!.error else "No numbers available, try again")
             SmsLog.log(app, "GET", "provision FAILED for $pat")
             app?.let { SmsNotify.buzzFail(it) }

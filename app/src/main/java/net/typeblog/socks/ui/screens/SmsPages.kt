@@ -254,7 +254,17 @@ internal fun MainPage(
                 )
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = { onGet(rangeText.trim()) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (busy) "..." else "Get number")
+                    Text(if (busy) "Waiting..." else "Get number")
+                }
+                if (busy) {
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = SmsWatcher.progress.ifEmpty { "Getting numbers..." },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
             SectionHead("My numbers", onOpenNums)

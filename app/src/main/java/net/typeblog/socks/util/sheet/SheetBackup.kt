@@ -234,7 +234,9 @@ object SheetBackup {
         // stops the archive from crowding the files a user is working on.
         val used = mutableSetOf(REL_ALL.substringAfterLast('/').lowercase())
         for (f in s.files) {
-            val bytes = SheetBackupXlsx.writeFile(s, f.id) ?: continue
+            val rows = s.rows[f.id].orEmpty()
+            if (rows.none { it.isData(f.preset.columns) }) continue
+            val bytes = SheetXlsx.build(f.preset.columns, rows)
             val name = fileSafeName(f.name.ifBlank { f.preset.title }, used)
             val rel = (if (f.archived) DIR_ARCHIVE else DIR_FILES) + "/" + name
             out[rel] = bytes
