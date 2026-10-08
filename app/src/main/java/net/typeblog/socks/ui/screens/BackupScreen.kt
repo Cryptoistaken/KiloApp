@@ -413,7 +413,6 @@ fun BackupScreen(
                             },
                             showChevron = false,
                             enabled = !busy && !signingIn,
-                            iconSpinning = signingIn,
                             onClick = {
                                 val act = activity
                                 if (act == null) {
