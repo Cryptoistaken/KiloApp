@@ -73,4 +73,4 @@ How to fill: plain lines. Example:
 ## 7. Constraints (do not break)
 - Never touch: `SocksVpnService.kt`, `IVpnService.aidl`, `Utility.kt`, `ProfileManager.kt`.
 - Mutations via `persistRowsLocked():479`. Prefs via `rememberPref`. ASCII text only.
-- Push to `master`, CI `build-fast.yml`, wait `go run ./monitor-build.go [run-id]`.
+- Push to `master`, CI `build-fast.yml`, wait `gh run watch <run-id> --interval 5`.
