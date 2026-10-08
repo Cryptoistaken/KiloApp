@@ -7,15 +7,22 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import com.google.android.gms.auth.api.identity.Identity
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -87,7 +94,17 @@ fun BackupScreen(
     // Re-read when the page is entered, so copies taken from a destructive
     // action elsewhere in the app are listed by the time the user looks.
     var snapshots by remember { mutableStateOf(SheetBackup.listSnapshots(context)) }
-    LaunchedEffect(Unit) { snapshots = SheetBackup.listSnapshots(context) }
+    // Lightweight flags for the expandable device-copy row: counts only,
+    // bytes load on tap. Refreshed with the snapshots after every backup.
+    var hasCurrent by remember { mutableStateOf(SheetBackup.hasLocalCurrent(context)) }
+    var hasPrevious by remember { mutableStateOf(SheetBackup.hasLocalPrevious(context)) }
+    var deviceExpanded by remember { mutableStateOf(false) }
+    fun refreshLocalCopies() {
+        snapshots = SheetBackup.listSnapshots(context)
+        hasCurrent = SheetBackup.hasLocalCurrent(context)
+        hasPrevious = SheetBackup.hasLocalPrevious(context)
+    }
+    LaunchedEffect(Unit) { refreshLocalCopies() }
     var lastAt by remember { mutableStateOf(SheetBackup.lastAt(context)) }
     var lastSize by remember { mutableStateOf(SheetBackup.lastSize(context)) }
     var lastError by remember { mutableStateOf(SheetBackup.lastError(context)) }
@@ -271,33 +288,86 @@ fun BackupScreen(
                 .padding(horizontal = 16.dp)
         ) {
             item {
-                SectionTitle(text = "Backup")
-                SettingsItem(
-                    icon = painterResource(R.drawable.ic_ss_download),
-                    label = "Back up now",
-                    description = if (busy) "Working" else "Write a fresh copy to Downloads",
-                    showChevron = false,
-                    enabled = !busy,
-                    onClick = {
-                        scope.launch {
-                            busy = true
-                            val written = withContext(Dispatchers.IO) { SheetBackup.backupNow(context) }
-                            busy = false
-                            lastAt = SheetBackup.lastAt(context)
-                            lastSize = SheetBackup.lastSize(context)
-                            lastError = SheetBackup.lastError(context)
-                            refreshDrive()
-                            toast(
-                                context,
-                                if (written > 0) "Backup saved." else "Backup failed."
+                // Status card: the one-glance state. Headline shows backed up /
+                // failed / never, detail shows date + size, Drive line shows
+                // sync state. All read-only; the button below is the action.
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    tonalElevation = 1.dp
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        val failed = lastError != null
+                        val never = !failed && lastAt <= 0L
+                        Text(
+                            text = when {
+                                failed -> "Backup failed"
+                                never -> "Not backed up yet"
+                                else -> "Backed up"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            color = when {
+                                failed -> MaterialTheme.colorScheme.error
+                                never -> MaterialTheme.colorScheme.onSurfaceVariant
+                                else -> MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                        if (!never) {
+                            Text(
+                                text = if (failed) "Failed: $lastError"
+                                else "${timeLabel(lastAt)}, ${sizeText(lastSize)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
                             )
                         }
+                        if (DriveSync.configured() && driveAccount != null) {
+                            val driveLine = if (driveLastError != null) "Drive sync failed"
+                            else if (driveLastAt > 0L) "Also on Drive - ${timeLabel(driveLastAt)}"
+                            else null
+                            if (driveLine != null) {
+                                Text(
+                                    text = driveLine,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    val written = withContext(Dispatchers.IO) { SheetBackup.backupNow(context) }
+                                    busy = false
+                                    lastAt = SheetBackup.lastAt(context)
+                                    lastSize = SheetBackup.lastSize(context)
+                                    lastError = SheetBackup.lastError(context)
+                                    withContext(Dispatchers.IO) { refreshLocalCopies() }
+                                    refreshDrive()
+                                    toast(
+                                        context,
+                                        if (written > 0) "Backup saved." else "Backup failed."
+                                    )
+                                }
+                            },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (busy) "Backing up..." else "Back up now")
+                        }
                     }
-                )
+                }
+            }
+            item {
+                SectionTitle(text = "Backup settings")
                 SettingsItem(
                     icon = painterResource(R.drawable.lucide_rotate_cw),
                     label = "Auto-backup",
-                    description = if (auto) "On" else "Off",
+                    description = if (auto) "On, backs up after every change" else "Off, back up manually",
                     showChevron = false,
                     trailing = {
                         ProtonSwitch(
@@ -315,12 +385,6 @@ fun BackupScreen(
                     description = folderLabel(folder),
                     showChevron = true,
                     onClick = { folderLauncher.launch(null) }
-                )
-                SettingsItem(
-                    icon = painterResource(R.drawable.lucide_check),
-                    label = "Last backup",
-                    description = lastBackupLabel(lastAt, lastSize, lastError),
-                    showChevron = false
                 )
             }
 
@@ -373,7 +437,9 @@ fun BackupScreen(
                         SettingsItem(
                             icon = painterResource(R.drawable.ic_name_person),
                             label = driveAccount ?: "",
-                            description = "Google account",
+                            description = if (driveLastError != null) "Failed: $driveLastError"
+                            else if (driveLastAt > 0L) "Synced ${timeLabel(driveLastAt)}"
+                            else "Not synced yet",
                             showChevron = false
                         )
                         SettingsItem(
@@ -392,12 +458,6 @@ fun BackupScreen(
                             }
                         )
                         SettingsItem(
-                            icon = painterResource(R.drawable.lucide_check),
-                            label = "Last Drive sync",
-                            description = driveLabel(driveLastAt, driveLastError),
-                            showChevron = false
-                        )
-                        SettingsItem(
                             icon = painterResource(R.drawable.ic_ss_upload),
                             label = "Sync now",
                             description = "Write a fresh copy to Drive",
@@ -413,6 +473,7 @@ fun BackupScreen(
                                     lastAt = SheetBackup.lastAt(context)
                                     lastSize = SheetBackup.lastSize(context)
                                     lastError = SheetBackup.lastError(context)
+                                    withContext(Dispatchers.IO) { refreshLocalCopies() }
                                     refreshDrive()
                                     toast(
                                         context,
@@ -428,7 +489,7 @@ fun BackupScreen(
                         SettingsItem(
                             icon = painterResource(R.drawable.ic_ss_restore),
                             label = "Restore from Drive",
-                            description = "Replace everything from your Drive copy",
+                            description = "Replace everything with your Drive copy",
                             showChevron = false,
                             enabled = !busy,
                             onClick = {
@@ -472,6 +533,7 @@ fun BackupScreen(
                             description = "Stop syncing this device",
                             showChevron = false,
                             enabled = !busy,
+                            iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
                             onClick = {
                                 scope.launch {
                                     withContext(Dispatchers.IO) { DriveSync.signOut(context) }
@@ -488,45 +550,42 @@ fun BackupScreen(
                 SectionTitle(text = "Restore")
                 SettingsItem(
                     icon = painterResource(R.drawable.ic_ss_upload),
-                    label = "Load backup",
-                    description = "Replace everything from a backup.db file",
+                    label = "Restore from file",
+                    description = "Pick a backup.db file to replace everything",
                     showChevron = false,
                     enabled = !busy,
                     onClick = { loadLauncher.launch(arrayOf("*/*")) }
                 )
-                SettingsItem(
-                    icon = painterResource(R.drawable.lucide_rotate_cw),
-                    label = "Restore last saved copy",
-                    description = "The copy this app kept on the device",
-                    showChevron = false,
-                    enabled = !busy,
-                    onClick = {
-                        stageLocal(
-                            SheetBackup::localCurrent,
-                            "No saved copy on this device.",
-                            "The copy this app kept on this device"
+                val deviceCount =
+                    (if (hasCurrent) 1 else 0) + (if (hasPrevious) 1 else 0) + snapshots.size
+                if (deviceCount > 0) {
+                    SettingsItem(
+                        icon = painterResource(R.drawable.lucide_rotate_cw),
+                        label = "Restore a device copy",
+                        description = "$deviceCount copies on this device",
+                        showChevron = true,
+                        enabled = !busy,
+                        onClick = { deviceExpanded = !deviceExpanded }
+                    )
+                }
+                if (deviceCount > 0 && deviceExpanded) {
+                    if (hasCurrent) {
+                        SettingsItem(
+                            icon = painterResource(R.drawable.lucide_rotate_cw),
+                            label = "Last saved copy",
+                            description = "The copy this app kept on the device",
+                            showChevron = false,
+                            enabled = !busy,
+                            modifier = Modifier.padding(start = 16.dp),
+                            onClick = {
+                                stageLocal(
+                                    SheetBackup::localCurrent,
+                                    "No saved copy on this device.",
+                                    "The copy this app kept on this device"
+                                )
+                            }
                         )
                     }
-                )
-                SettingsItem(
-                    icon = painterResource(R.drawable.lucide_server),
-                    label = "Restore previous copy",
-                    description = "The generation before the last one",
-                    showChevron = false,
-                    enabled = !busy,
-                    onClick = {
-                        stageLocal(
-                            SheetBackup::localPrevious,
-                            "No previous copy on this device.",
-                            "The previous copy on this device"
-                        )
-                    }
-                )
-            }
-
-            if (snapshots.isNotEmpty()) {
-                item {
-                    SectionTitle(text = "Saved copies")
                     for (s in snapshots) {
                         SettingsItem(
                             icon = painterResource(R.drawable.ic_ss_archive_idle),
@@ -534,6 +593,7 @@ fun BackupScreen(
                             description = "${timeLabel(s.at)}, ${sizeText(s.size)}",
                             showChevron = false,
                             enabled = !busy,
+                            modifier = Modifier.padding(start = 16.dp),
                             onClick = {
                                 val bytes = SheetBackup.readSnapshot(s)
                                 if (bytes == null) {
@@ -556,6 +616,23 @@ fun BackupScreen(
                                         }
                                     }
                                 }
+                            }
+                        )
+                    }
+                    if (hasPrevious) {
+                        SettingsItem(
+                            icon = painterResource(R.drawable.lucide_server),
+                            label = "Previous copy",
+                            description = "The generation before the last one",
+                            showChevron = false,
+                            enabled = !busy,
+                            modifier = Modifier.padding(start = 16.dp),
+                            onClick = {
+                                stageLocal(
+                                    SheetBackup::localPrevious,
+                                    "No previous copy on this device.",
+                                    "The previous copy on this device"
+                                )
                             }
                         )
                     }
@@ -600,18 +677,6 @@ fun BackupScreen(
 private fun folderLabel(uri: String): String = when {
     uri.isBlank() -> "Downloads (default). Pick a folder for cloud or SD card"
     else -> uri.substringAfterLast('/').substringAfterLast(':').ifBlank { "Folder set" }
-}
-
-private fun lastBackupLabel(at: Long, size: Long, error: String?): String {
-    if (error != null) return "Failed: $error"
-    if (at <= 0L) return "Not backed up yet"
-    return "${timeLabel(at)}, ${sizeText(size)}"
-}
-
-private fun driveLabel(at: Long, error: String?): String {
-    if (error != null) return "Failed: $error"
-    if (at <= 0L) return "Not synced yet"
-    return timeLabel(at)
 }
 
 private fun timeLabel(at: Long): String =

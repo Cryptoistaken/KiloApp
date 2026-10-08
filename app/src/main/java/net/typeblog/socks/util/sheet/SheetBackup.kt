@@ -668,6 +668,19 @@ object SheetBackup {
 
     fun localCurrent(context: Context): ByteArray? = readLocal(context, LOCAL_DB)
 
+    /** Lightweight existence check for the expandable device-copy row.
+     *  Reads no bytes: the row only needs a count, the bytes load on tap. */
+    fun hasLocalCurrent(context: Context): Boolean = localExists(context, LOCAL_DB)
+
+    fun hasLocalPrevious(context: Context): Boolean = localExists(context, LOCAL_PREV_DB)
+
+    private fun localExists(context: Context, name: String): Boolean = try {
+        File(File(context.applicationContext.filesDir, LOCAL_DIR), name)
+            .let { it.exists() && it.length() > 0 }
+    } catch (_: Exception) {
+        false
+    }
+
     private fun readLocal(context: Context, name: String): ByteArray? = try {
         File(File(context.applicationContext.filesDir, LOCAL_DIR), name)
             .takeIf { it.exists() && it.length() > 0 }?.readBytes()
