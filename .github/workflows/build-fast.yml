@@ -112,7 +112,9 @@ jobs:
       # Shared monotonic counter (same rule as the release lane): run_number
       # counts per workflow, so take max(run+100, latest release+1). Used for
       # the APK internal code AND the release tag, so fast and release builds
-      # update across each other in either order.
+      # update across each other in either order. Floor 600 is one-time
+      # (Oct 2026): it clears the legacy per-ABI-inflated manifests (max 507)
+      # so the tag, manifest code and BuildConfig.VERSION_CODE stay identical.
       - name: Compute version code
         id: vc
         env:
@@ -122,6 +124,7 @@ jobs:
           case "$LATEST" in ''|*[!0-9]*) LATEST=0;; esac
           CODE=$(( ${{ github.run_number }} + 100 ))
           if [ "$LATEST" -ge "$CODE" ]; then CODE=$(( LATEST + 1 )); fi
+          if [ "$CODE" -lt 600 ]; then CODE=600; fi
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
 
       # Debug + single ABI: skips R8/shrinking and 3/4 of the native
