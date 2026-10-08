@@ -125,25 +125,63 @@ object SheetBackup {
 
     private val scheduler by lazy { Executors.newSingleThreadScheduledExecutor() }
     private val scheduled = AtomicBoolean(false)
+    private val flushLock = Any()
+    private var pending: java.util.concurrent.ScheduledFuture<*>? = null
 
     /** Coalescing post-change mirror. Every caller within the debounce window
      *  collapses into one write, so a burst of cell edits writes once. */
     fun schedule(context: Context) {
         val app = context.applicationContext
         if (!enabled(app)) return
-        if (!scheduled.compareAndSet(false, true)) return
-        try {
-            scheduler.schedule({
+        synchronized(flushLock) {
+            if (!scheduled.compareAndSet(false, true)) return
+            try {
+                pending = scheduler.schedule({
+                    synchronized(flushLock) {
+                        scheduled.set(false)
+                        pending = null
+                    }
+                    try {
+                        backupNow(app)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Auto backup failed", e)
+                    }
+                }, DEBOUNCE_MS, TimeUnit.MILLISECONDS)
+            } catch (e: Exception) {
                 scheduled.set(false)
+                pending = null
+                Log.e(TAG, "Could not schedule auto backup", e)
+            }
+        }
+    }
+
+    /** Immediate flush for app background. Runs the pending mirror now on the
+     *  backup thread instead of waiting out the debounce, so closing the app
+     *  right after an edit still mirrors. No-op when nothing is pending. */
+    fun flush(context: Context) {
+        val app = context.applicationContext
+        if (!enabled(app)) return
+        val hadPending = synchronized(flushLock) {
+            if (!scheduled.get()) return@synchronized false
+            try {
+                pending?.cancel(false)
+            } catch (_: Exception) {
+            }
+            pending = null
+            scheduled.set(false)
+            true
+        }
+        if (!hadPending) return
+        try {
+            scheduler.execute {
                 try {
                     backupNow(app)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Auto backup failed", e)
+                    Log.e(TAG, "Flush backup failed", e)
                 }
-            }, DEBOUNCE_MS, TimeUnit.MILLISECONDS)
+            }
         } catch (e: Exception) {
-            scheduled.set(false)
-            Log.e(TAG, "Could not schedule auto backup", e)
+            Log.e(TAG, "Could not flush backup", e)
         }
     }
 

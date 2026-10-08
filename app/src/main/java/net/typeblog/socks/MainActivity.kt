@@ -138,6 +138,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStop() {
+        super.onStop()
+        // Flush the debounced mirror now: closing right after an edit would
+        // otherwise leave Downloads + Drive stale until the next launch.
+        try {
+            net.typeblog.socks.util.sheet.SheetBackup.flush(this)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun startFloatingControlIfPersisted() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         if (!prefs.getBoolean(PREF_FLOATING_CONTROL, false)) return
