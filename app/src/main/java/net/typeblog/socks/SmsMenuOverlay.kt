@@ -425,7 +425,8 @@ class SmsMenuOverlay(
             code = row.findViewById(R.id.sms_row_code),
         )
         try {
-            views.spin.indeterminateTintList = ColorStateList.valueOf(SPIN_TINT)
+            val tint = if (ThemeMode.isDarkTheme(activeInflateContext)) NIGHT_SPIN_TINT else SPIN_TINT
+            views.spin.indeterminateTintList = ColorStateList.valueOf(tint)
         } catch (_: Exception) {
         }
         return views
@@ -434,7 +435,7 @@ class SmsMenuOverlay(
     private fun updateRow(views: RowViews, n: SmsNum) {
         val code = n.code
         views.flag.text = n.flag
-        views.name.text = n.display
+        views.name.text = n.display.ifEmpty { "+" + n.full.filter { it.isDigit() } }
         if (code != null) {
             views.time.visibility = View.GONE
             views.spin.visibility = View.GONE
@@ -582,5 +583,6 @@ class SmsMenuOverlay(
     private companion object {
         // Pre-parsed @ColorInt spinner tint; was Color.parseColor per row bind.
         private const val SPIN_TINT = 0xFF0C0C14.toInt()
+        private const val NIGHT_SPIN_TINT = 0xFFFAFAFA.toInt()
     }
 }
