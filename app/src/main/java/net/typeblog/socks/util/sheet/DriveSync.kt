@@ -16,7 +16,7 @@ import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.Scope
 import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.Tasks
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import java.net.HttpURLConnection
@@ -58,17 +58,16 @@ object DriveSync {
     fun webClientId(): String = BuildConfig.DRIVE_WEB_CLIENT_ID
     fun configured(): Boolean = webClientId().isNotEmpty()
 
-    // Bottom-sheet account picker. First run shows every Google account on
-    // the device (no pre-filter); later runs can filter to authorized ones.
+    // Button flow per the Sign in with Google guide: GetSignInWithGoogleOption
+    // always shows the account picker on tap. GetGoogleIdOption is the
+    // bottom-sheet API and on some devices (notably Android 14+ with several
+    // accounts) shows no dialog at all - the dead-button symptom.
     // Bounded by a timeout: a known Play-services failure mode leaves the
     // sheet unshown and the call hanging forever with no error, which used
     // to wedge the Backup page on a dead button. A timeout turns that into
     // a visible error instead.
     suspend fun signIn(activity: Activity): SignIn {
-        val opt = GetGoogleIdOption.Builder()
-            .setFilterByAuthorizedAccounts(false)
-            .setServerClientId(webClientId())
-            .build()
+        val opt = GetSignInWithGoogleOption.Builder(webClientId()).build()
         val resp = withTimeout(60_000) {
             CredentialManager.create(activity)
                 .getCredential(activity, GetCredentialRequest(listOf(opt)))
