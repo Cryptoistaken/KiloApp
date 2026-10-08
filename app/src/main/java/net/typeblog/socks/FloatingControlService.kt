@@ -862,20 +862,36 @@ class FloatingControlService : Service() {
             }
             if (countryCode.isNotEmpty()) {
                 val flag = Utility.countryCodeToFlag(countryCode)
-                val ip = try {
-                    vpnService?.currentIp ?: ""
-                } catch (e: Exception) {
-                    ""
-                }
-                val lastOctet = when {
-                    ip.contains('.') -> ip.substringAfterLast('.')
-                    ip.contains(':') -> ip.substringAfterLast(':').takeLast(4)
-                    else -> ""
-                }
-                text.text = if (lastOctet.isNotEmpty()) {
-                    "$flag $countryCode $lastOctet"
+                if (isCircleStyle()) {
+                    // No white pill: the menu-open green sub-label lives
+                    // under the trigger while the menu is closed. Hidden
+                    // while the menu is open (the Proxy item shows it).
+                    if (circleMenu?.isShowing() == true) {
+                        pill.visibility = View.GONE
+                        return
+                    }
+                    pill.background = null
+                    text.setTextColor(lockGreen())
+                    text.textSize = 11f
+                    text.text = "$flag $countryCode"
                 } else {
-                    "$flag $countryCode"
+                    val ip = try {
+                        vpnService?.currentIp ?: ""
+                    } catch (e: Exception) {
+                        ""
+                    }
+                    val lastOctet = when {
+                        ip.contains('.') -> ip.substringAfterLast('.')
+                        ip.contains(':') -> ip.substringAfterLast(':').takeLast(4)
+                        else -> ""
+                    }
+                    text.setTextColor(Color.BLACK)
+                    text.textSize = 10f
+                    text.text = if (lastOctet.isNotEmpty()) {
+                        "$flag $countryCode $lastOctet"
+                    } else {
+                        "$flag $countryCode"
+                    }
                 }
                 pill.visibility = View.VISIBLE
                 updateFlagPillPosition()
