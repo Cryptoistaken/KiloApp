@@ -91,6 +91,9 @@ fun BackupScreen(
         it.getString(PREF_BACKUP_DIR, "") ?: ""
     }
     var busy by remember { mutableStateOf(false) }
+    // Sign-in has its own flag so the row answers the tap synchronously and
+    // keeps its own "Signing in..." state apart from backup's busy.
+    var signingIn by remember { mutableStateOf(false) }
     // Re-read when the page is entered, so copies taken from a destructive
     // action elsewhere in the app are listed by the time the user looks.
     var snapshots by remember { mutableStateOf(SheetBackup.listSnapshots(context)) }
@@ -243,7 +246,13 @@ fun BackupScreen(
                 refreshDrive()
             }
         } else {
-            toast(context, "Drive permission declined.")
+            // No usable grant: drop the account sign-in saved before consent,
+            // or the page would show a signed-in state with a dead token.
+            scope.launch {
+                withContext(Dispatchers.IO) { DriveSync.signOut(context) }
+                refreshDrive()
+                toast(context, "Drive permission declined.")
+            }
         }
     }
 
@@ -397,18 +406,28 @@ fun BackupScreen(
                         SettingsItem(
                             icon = painterResource(R.drawable.ic_name_person),
                             label = "Sign in with Google",
-                            description = "Back up to your Google Drive",
+                            description = when {
+                                signingIn -> "Signing in..."
+                                driveLastError != null -> driveLastError
+                                else -> "Back up to your Google Drive"
+                            },
                             showChevron = false,
-                            enabled = !busy,
+                            enabled = !busy && !signingIn,
+                            iconSpinning = signingIn,
                             onClick = {
                                 val act = activity
                                 if (act == null) {
                                     toast(context, "Open the app to sign in.")
                                 } else {
+                                    // Set synchronously: if Play-services hangs
+                                    // (documented no-sheet hang), the row still
+                                    // answers the tap instead of looking dead.
+                                    signingIn = true
                                     scope.launch {
                                         busy = true
                                         try {
                                             val who = DriveSync.signIn(act)
+                                            signingIn = false
                                             withDriveToken(act) {
                                                 val written = withContext(Dispatchers.IO) {
                                                     SheetBackup.backupNow(context)
@@ -424,6 +443,7 @@ fun BackupScreen(
                                                 )
                                             }
                                         } catch (e: Exception) {
+                                            signingIn = false
                                             DriveSync.setLastError(context, DriveSync.failureReason(e))
                                             refreshDrive()
                                             toast(context, "Sign in failed.")

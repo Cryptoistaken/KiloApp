@@ -28,6 +28,7 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import net.typeblog.socks.BuildConfig
 import net.typeblog.socks.util.Constants.PREF_DRIVE_ACCOUNT
 import net.typeblog.socks.util.Constants.PREF_DRIVE_ENABLED
@@ -59,13 +60,19 @@ object DriveSync {
 
     // Bottom-sheet account picker. First run shows every Google account on
     // the device (no pre-filter); later runs can filter to authorized ones.
+    // Bounded by a timeout: a known Play-services failure mode leaves the
+    // sheet unshown and the call hanging forever with no error, which used
+    // to wedge the Backup page on a dead button. A timeout turns that into
+    // a visible error instead.
     suspend fun signIn(activity: Activity): SignIn {
         val opt = GetGoogleIdOption.Builder()
             .setFilterByAuthorizedAccounts(false)
             .setServerClientId(webClientId())
             .build()
-        val resp = CredentialManager.create(activity)
-            .getCredential(activity, GetCredentialRequest(listOf(opt)))
+        val resp = withTimeout(60_000) {
+            CredentialManager.create(activity)
+                .getCredential(activity, GetCredentialRequest(listOf(opt)))
+        }
         val raw = resp.credential
         if (raw.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
             throw IllegalStateException("Not a Google account")
@@ -87,7 +94,11 @@ object DriveSync {
         val req = AuthorizationRequest.builder()
             .setRequestedScopes(listOf(Scope(DRIVE_FILE_SCOPE)))
             .build()
-        val res = Identity.getAuthorizationClient(activity).authorize(req).await()
+        // Same hang guard as sign-in: the Task backs a Play-services UI that
+        // can fail to appear without ever completing.
+        val res = withTimeout(60_000) {
+            Identity.getAuthorizationClient(activity).authorize(req).await()
+        }
         res.accessToken?.let { return it }
         throw DriveResolutionRequired(
             res.pendingIntent ?: throw IllegalStateException("Empty access token")
@@ -284,6 +295,7 @@ object DriveSync {
         Log.e(TAG, "Drive auth failed", e)
         return when (e) {
             is DriveResolutionRequired -> "Needs consent"
+            is kotlinx.coroutines.TimeoutCancellationException -> "Google did not respond"
             is GetCredentialCancellationException -> "Sign in cancelled"
             is NoCredentialException -> "No Google account on device"
             is GoogleIdTokenParsingException -> "Bad token response"
