@@ -34,6 +34,13 @@ android {
     } else {
         baseVersionCode = gitCommitCount + 100
     }
+    // One-time floor (Oct 2026): fast-lane arm64 APKs shipped with an
+    // inflated manifest code (base + 2*67, max 507) from the per-ABI
+    // override this file used to carry. The next base must clear 507 or
+    // installs fail with VERSION_DOWNGRADE. Retires itself: the shared
+    // counter passes 600 on its own within months, and max() keeps the
+    // higher of the two either way.
+    baseVersionCode = Math.max(baseVersionCode, 600)
 
     // -Pabi=<abi> restricts native compilation AND apk splits to one ABI
     // (fast single-ABI debug builds: CI fast lane + local dev). Release
@@ -166,21 +173,11 @@ kotlin {
     }
 }
 
-// Modern variant API: per-ABI unique versionCode override
-// (replaces the obsolete applicationVariants API).
-// Map for the version code that gives each ABI a unique version code.
-def versionCodes = ['armeabi-v7a': 1, 'arm64-v8a': 2, 'x86': 3, 'x86_64': 4]
-androidComponents {
-    onVariants(selector().all()) { variant ->
-        variant.outputs.each { output ->
-            def abi = output.filters.find { it.identifier == 'abi' }?.value
-            if (abi != null) {
-                output.versionCode.set(
-                        versionCodes.get(abi) * 67 + variant.versionCode.get())
-            }
-        }
-    }
-}
+// No per-ABI versionCode override on purpose. An override (e.g. abi*67)
+// makes the manifest code differ from the release tag and from
+// BuildConfig.VERSION_CODE, which permanently breaks the in-app updater's
+// tag == installed-code comparison (Oct 2026: it reported "up to date"
+// forever). Direct installs need no distinct per-ABI codes.
 
 tasks.configureEach { task ->
     if (task.name.toLowerCase().contains("nativebuild") || task.name.toLowerCase().contains("ndkbuild")) {

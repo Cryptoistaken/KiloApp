@@ -23,7 +23,7 @@ Executable config wins over prose. If this file conflicts with CI/Gradle/manifes
 
 ## Toolchain (compact)
 - compile/target 36, min 21, Java/Kotlin 17, NDK 27.0.12077973, AGP 9.2.1.
-- Shared CI version code: `max(GITHUB_RUN_NUMBER + 100, latest numeric release tag + 1)`; per-ABI codes still exist.
+- Shared CI version code: `max(GITHUB_RUN_NUMBER + 100, latest numeric release tag + 1)`; `app/build.gradle` floors it at 600 (one-time Oct 2026: clears legacy per-ABI-inflated manifests, max 507). Tag, manifest code and `BuildConfig.VERSION_CODE` must stay identical — the in-app updater compares the tag number against the installed code.
 - The in-app updater reads the latest `v<number>` GitHub release and prefers the arm64 asset.
 - Release signing uses CI env `KILO_KEYSTORE_*`, else debug.
 - `KILOSMS_URL` is baked into `BuildConfig`; SMS auth is the Telegram-login session cookie, so no API key exists in the app or CI. Rotating the URL requires a CI rebuild/release.
