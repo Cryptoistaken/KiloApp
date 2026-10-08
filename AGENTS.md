@@ -10,12 +10,10 @@ Executable config wins over prose. If this file conflicts with CI/Gradle/manifes
 ## Build (never local)
 - Never build Android locally. Work on `master`.
 - Push to `master` runs `.github/workflows/build-fast.yml` (arm64 debug, release-signed, publishes `v<code>` release for the in-app updater).
-- The push lane is path-filtered: only `app/**`, `gradle/**`, `gradle.properties`, `build.gradle`, `settings.gradle`, the wrapper scripts, and `build-fast.yml` itself start a build. `plan.md`, `AGENTS.md`, `docs/` and `monitor-build.go` commits skip it. `workflow_dispatch` is never filtered.
+- The push lane is path-filtered: only `app/**`, `gradle/**`, `gradle.properties`, `build.gradle`, `settings.gradle`, the wrapper scripts, and `build-fast.yml` itself start a build. Anything else (`plan.md`, `admin-panel-plan.md`, `AGENTS.md`, `docs/`) commits skip it. `workflow_dispatch` is never filtered.
 - Version code stays monotonic under filtering: it is `max(run_number + 100, latest release + 1)`, and the release term is what carries it forward when skipped runs make `run_number` lag.
 - `.github/workflows/build.yml` is PR/manual full release only; not the push lane.
-- After every push: `go run ./monitor-build.go [run-id]` (repo-root stdlib waiter: polls every 5s; exits 0 success, 1 failure, 2 infrastructure/timeout).
-- With no arg it follows the newest run repo-wide, not necessarily the current branch; pass the intended run id explicitly.
-- No fixed sleeps, no manual polling. Requires `gh` auth.
+- After every push: watch the CI run to green with `gh run watch <run-id> --interval 5` (exits 0 success, 1 failure). With no run id, use `gh run list --branch master --limit 1` to find it first. No fixed sleeps, no manual polling. Requires `gh` auth.
 - On CI failure: read the failing step, fix, commit, push again.
 
 ## Commit and push
