@@ -7,7 +7,8 @@ Server hosts admin-only panel. App is user-only (even admin in app = user). Admi
 
 ## 2. Architecture
 - Phone stays source of truth: `app/src/main/java/net/typeblog/socks/util/sheet/SheetDb.kt` + `SheetStore.kt`, backup via `SheetBackup.kt`.
-- One-way upload: app `dump()` -> `POST /api/files/upload` -> Postgres.
+- Full backup (2026-10-08, commit 2d475ba): one restore file `backup/backup.db` = WAL-checkpointed `sheet.db` + stamped `backup_meta`/`backup_prefs` (allowlisted default prefs, sms_store minus tg_session, decrypted profiles). Human copies only, never restore: `files/<Name>.xlsx`, `archive/<Name>.xlsx` (Download-identical via `SheetXlsx.build`), `profiles/<Name>.xlsx` (proxy string `server:port:user:pass`). No json/xlsx dumps. Snapshots + local rotating copies are .db.
+- One-way upload: app `dump():104` -> POST /api/files/upload -> Postgres. `toJson` was deleted in 2d475ba, so upload needs a new lean serializer from `dump()` (sheets + wallet only, no prefs/sms/profiles). `backup.db` never uploads (holds credentials).
 - Server has: ingest API (user) + admin API + panel (admin-only). No sync-back to phone.
 - Auth user: same as `SmsAuth.kt` device flow, new `KILOADMIN_URL` like `KILOSMS_URL` in `app/build.gradle`.
 - Auth admin: copy SheetSubmit `backend/src/lib/session.ts` (`ss_session` cookie) + `isAdmin = ADMIN_IDS.includes(uid)` in `backend/src/routes/admin.ts`.
@@ -28,10 +29,10 @@ CANNOT:
 - Edit cookies/twofakey/uid, `PUT persist`, `PUT file`, `DELETE file/user`, `clearAllSheets`, ban/unban, wallet credit, pool approve/price/flags.
 
 ## 4. Data flow + backup
-- Upload: `SheetBackup.dump():110` (`allFiles:134`, `loadRows:196`, `loadStyles`, `loadHidden`, `loadRowChecks:310`) -> `toJson():459` -> server `file_index/file_rows/file_meta/file_logs`.
+- Upload: `SheetBackup.dump():104` (allFiles, loadRows, loadStyles, loadHidden, loadRowChecks) -> new lean JSON serializer (sheets + wallet only) -> server `file_index/file_rows/file_meta/file_logs`.
 - Server `archived` flag is server-owned, phone upload never overwrites it.
-- Phone keeps 4-way mirror (`SheetBackup.artifacts():228` + Drive `DriveSync.kt`). Server adds standby copy like SheetSubmit `backend/src/lib/backup.ts` (`BACKUP_DATABASE_URL`, 30min).
-- Server restore = per-file snapshot only. Full `kiloapp-backup.json` restore stays phone-only in `BackupScreen.kt`.
+- Phone keeps 4-way mirror (`SheetBackup.artifacts():217` + Drive `DriveSync.kt` `maybeAutoPush:245`). Tree: `backup/backup.db`, `files/`, `archive/`, `profiles/`. Drive pull is `pullBackupDb`. Server adds standby copy like SheetSubmit `backend/src/lib/backup.ts` (`BACKUP_DATABASE_URL`, 30min).
+- Server restore = per-file snapshot only. Full `backup/backup.db` restore stays phone-only (`SheetBackup.restore():451`, `summarize():391`, UI in `BackupScreen.kt`).
 
 ## 5. SPECS - WRITE WHAT YOU WANT BELOW (your turn)
 <!--
@@ -67,7 +68,7 @@ How to fill: plain lines. Example:
 2. GETs + panel list/detail/logs/dbhealth.
 3. Download + paging (max 1000).
 4. Archive/unarchive + snapshot restore + audit.
-5. App SyncUpload hooked to `SheetBackup.schedule():137` + standby job.
+5. App SyncUpload hooked to `SheetBackup.schedule():131` + standby job.
 
 ## 7. Constraints (do not break)
 - Never touch: `SocksVpnService.kt`, `IVpnService.aidl`, `Utility.kt`, `ProfileManager.kt`.
